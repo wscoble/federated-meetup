@@ -1,0 +1,193 @@
+# 02 — The Protocol
+
+**Scope:** This document defines the open protocol that any host can implement to participate in the federation. The protocol is free as in speech. It does not encode commercial policy. It does not encode UX decisions. It does not encode the tariff. It is the substrate on which commercial products are built.
+
+**Out of scope:** The host product, the tariff, the UX, the event-operations feature set, the reputation-aggregation services, the discovery layer, the customer support model, the growth strategy. Those are in `03-PRODUCT.md` and `04-TARIFF.md`. If a question is "what does the *host* do?", it does not belong in this document.
+
+---
+
+## 1. The model in one paragraph
+
+A **group** is a sovereign object identified by a cryptographic keypair. The group's *state* (member list, event history, steward set, fork history, signed attestations) is a replicated state machine, addressable by the group's public key. Any number of **hosts** can serve a group by storing a copy of the state and providing a UI on top. A **user** has a cryptographic identity, lives on at least one host, and can interact with any group in the federation regardless of which host serves the group or which host serves the user. **Stewards** are the humans who control the group's keypair. **Forks** are new sovereign groups whose state diverges from a parent group at a chosen snapshot. **Mirrors** are read-only (or eventually-consistent write) copies of a group's state hosted by a different host for performance and redundancy.
+
+## 2. Identities
+
+### 2.1 Group identity
+
+Each group has an Ed25519 keypair. The public key is the group's canonical identifier on the network. The private key is held by the group's stewards, distributed across them with a threshold signature scheme (e.g., 2-of-3, 3-of-5, 5-of-7 — the group's stewards choose at creation time, the protocol does not pick).
+
+The private key is the source of truth for *who speaks for the group*. If 2-of-3 stewards must sign a state transition, the protocol enforces that. The protocol does not care *which* 2-of-3 — that is the group's policy.
+
+The keypair is created at group creation. The private key is the most security-critical object in the system. The protocol specifies a wallet-style key-custody model (cold storage for primary key, hot steward signatures for routine operations) but does not require a specific implementation.
+
+### 2.2 User identity
+
+Each user has an Ed25519 keypair. The public key is the user's canonical identifier. Users can hold multiple identities (work, personal, anonymous for sensitive meetups) — the protocol does not require a single identity per human.
+
+A user's identity is portable across hosts. If a user is on Host A and wants to attend an event on a group served by Host B, the user does not need an account on Host B. The user signs the RSVP with their private key, the RSVP travels with the signature, and Host B can verify the signature against the user's public key (which is in the public key directory).
+
+### 2.3 Steward identity
+
+A steward is a user identity that has been added to a group's steward set. The group's state machine records steward additions, removals, and threshold changes as signed transitions.
+
+The protocol does not distinguish "steward" from "user" at the cryptographic level. A steward is a user identity with a signed role-attestation from the group.
+
+## 3. State machine
+
+The group's state is a Merkle-tree-addressable key-value store. State transitions are signed messages. Every transition has:
+
+- A reference to the prior state root (snapshot)
+- The new state (a set of key-value changes)
+- A signature from the group's threshold of stewards
+- A timestamp (signed, host-agnostic)
+- The type of transition (a string from a small enum, defined below)
+
+The state machine is a CRDT-ish structure: transitions are total-ordered by the state root they reference. Conflicts (two transitions at the same snapshot) are resolved by the group's policy, which is itself a state transition.
+
+### 3.1 Transition types
+
+The protocol defines a small set of canonical transition types. Hosts and clients may add custom types as opaque payloads, but the canonical types are what make two hosts interoperable.
+
+- `CREATE_GROUP` — initial state, sets the steward set, threshold, group name, and metadata
+- `ADD_STEWARD` — adds a user identity to the steward set
+- `REMOVE_STEWARD` — removes a user identity from the steward set
+- `CHANGE_THRESHOLD` — changes the steward signing threshold
+- `ADD_MEMBER` — adds a user to the group's member list
+- `REMOVE_MEMBER` — removes a user from the group's member list
+- `CREATE_EVENT` — creates a new event (title, time, location, capacity, free/paid, ticket info)
+- `UPDATE_EVENT` — modifies event fields
+- `CANCEL_EVENT` — marks an event as cancelled
+- `RSVP` — a user signing that they will attend an event
+- `CANCEL_RSVP` — a user retracting an RSVP
+- `ATTEST` — a signed attestation from one identity to another (used for reviews, endorsements, and the reputation layer)
+- `FORK` — creates a new group whose state diverges from this group at a given snapshot
+- `MIGRATE` — moves a group's hosting from one host to another (signed by the steward threshold)
+
+Hosts and clients may add custom transition types for product features, but those types do not need to be implemented by every host to maintain interop — they will be ignored or shown as opaque data by hosts that do not implement them.
+
+### 3.2 What the protocol does NOT define
+
+- The format of event locations (freeform string vs. structured address vs. venue object)
+- The format of ticketing, prices, payment rails
+- The format of reputation aggregation
+- The format of group descriptions, member profiles, photo storage
+- Any UX decision
+
+These are product concerns. Hosts and clients may define their own formats and exchange them as opaque blobs within the state. Cross-host compatibility is a goal but not a protocol requirement.
+
+## 4. Forks
+
+A fork creates a new group whose initial state is a snapshot of the parent group's state at a chosen block-height. The fork is its own sovereign group, with its own keypair, its own stewards, its own state machine. The fork and the parent are siblings, not parent-child. The protocol records the fork lineage, but lineage does not confer authority.
+
+A fork is signed by a single steward of the parent group. The protocol's job is to make the fork easy. The group's policy may impose a higher threshold (e.g., "forks require 2-of-3 steward signatures") by encoding that as a state-transition rule, but the protocol itself does not require it.
+
+This is the design choice that resolves the "dead owner" / "incapable owner" / "stolen group" problem. A steward who disagrees with the group's direction can fork. The original group keeps going. The fork is a new group. The community arbitrates by showing up. The protocol does not pick winners.
+
+## 5. Hosts
+
+A host is a service that stores a group's state and serves it to clients. The protocol does not require any specific host architecture. A host may be a single server, a replicated database, a CDN, a peer-to-peer node, or a self-hosted Raspberry Pi.
+
+### 5.1 What a host must do
+
+- Accept and verify signed state transitions from a group's stewards
+- Persist the state in a way that other hosts can replicate
+- Serve the state to clients
+- Reject state transitions that are not properly signed or that conflict with prior state
+- Provide a discovery endpoint so clients can find the group (see section 7)
+
+### 5.2 What a host may do
+
+- Impose commercial terms (subscription, fees, tariffs)
+- Add value-added services (ticketing, payments, analytics, recommendations)
+- Curate groups (refuse to host certain groups)
+- Brand the experience (own logo, own colors, own UX)
+- Add or hide product features
+
+### 5.3 What a host must not do
+
+- Modify the group's state without a valid signed transition
+- Hold a group's private key (the key is held by the stewards, not the host)
+- Refuse to let a group migrate to a different host (a group can always sign a `MIGRATE` transition and leave)
+- Discriminate between groups in ways that violate the host's published policy
+
+The protocol enforces 5.3 at the cryptographic level (the steward key controls the state), not at the social level (the host can still de-platform, the protocol cannot stop that). The mitigation for de-platforming is mirrors: a group mirrored across multiple hosts cannot be killed by any single host.
+
+## 6. Users
+
+A user signs state transitions with their private key. A user can interact with any group in the federation. A user does not need an account on every host — they need an account on at least one host, and they need their private key.
+
+### 6.1 What the protocol does for users
+
+- Verifies signatures
+- Resolves user identities across hosts
+- Resolves groups across hosts
+- Routes RSVPs, attestations, and other signed messages to the right group and host
+
+### 6.2 What the protocol does not do for users
+
+- Recover lost keys
+- Moderate abusive users
+- Provide customer support
+- Provide discovery or recommendations
+
+## 7. Discovery
+
+Discovery is the part of the system that lets a user find a group, given a human-readable name. The protocol defines a thin layer:
+
+- Every group has at least one **canonical name** (a string, like `vegas-programmers` or `lv-wordpress`)
+- A name is resolved to a group identifier through a **public directory**
+- A public directory is a service that maps names to group identifiers (and the current host serving them)
+- A public directory is itself a service that any party can run
+- A public directory is a host (it speaks the protocol) and can be queried by clients
+
+The protocol does not require a single canonical directory. There can be many. A client picks one (or runs its own). A name registered in one directory is not automatically registered in another — but directories can sync via a published protocol (a draft is in section 11).
+
+This is the model that makes the protocol "free as in speech" at the discovery layer. No one party controls the name space. Different directories can have different policies (e.g., a directory that requires verification for a `vegas-programmers` name, vs. an open directory that lets anyone claim any name).
+
+## 8. The reputation layer
+
+The protocol supports a reputation layer through the `ATTEST` transition. An attestation is a signed message from one user identity to another, with a schema and a payload.
+
+The protocol does not aggregate attestations. The protocol does not produce reputation scores. The protocol does not decide what makes a good attestation. The protocol just makes attestations portable.
+
+Reputation aggregation is a product-layer service. There can be many aggregators. A user picks which aggregator to trust. Aggregators can compete on the quality of their models. Aggregators can be public-good, commercial, or community-run.
+
+The protocol's only job in the reputation layer is to ensure that an attestation follows the attested identity across hosts. A user on Host A who has been attested by 50 organizers on Host B is verifiable on Host A. That is the structural property that makes reputation portable.
+
+## 9. Mirrors
+
+A mirror is a host that stores a read-only (or eventually-consistent write) copy of a group's state. Mirrors serve two purposes: performance (a user in Europe can read a US-hosted group from a European mirror) and resilience (if the primary host goes down, the mirror still serves the group's read state).
+
+The protocol defines a replication format: a stream of state transitions, signed, that a mirror can verify and replay. The format is content-addressed (transitions are identified by their hash) so that mirrors can deduplicate and verify.
+
+Writes still go to the primary host (the host whose steward threshold is signing the transitions). Mirrors either accept read-only clients or buffer writes for re-submission to the primary.
+
+The protocol does not require a specific mirror architecture. A mirror may be a CDN, a peer-to-peer node, a backup service, or a self-hosted server.
+
+## 10. Migration
+
+A group can migrate from one host to another. Migration is a `MIGRATE` transition, signed by the steward threshold, that names the new host and a deadline after which the old host is no longer the canonical host for the group.
+
+The protocol's job is to make migration atomic and verifiable. Both the old host and the new host can serve the group during the migration window. After the deadline, the new host is canonical. The old host can choose to keep serving the group as a mirror.
+
+Migration is the property that prevents host lock-in. A group can always leave. This is the property that makes the protocol free as in speech in a stronger sense than the AGPL-style "you can fork the code" freedom — a group can leave a host without forking the code or forking the group.
+
+## 11. Open protocol questions
+
+These are not in the spec yet:
+
+- The exact format of the public directory sync protocol
+- The exact threshold signature scheme (FROST, Ed25519 threshold, or other)
+- The exact state-encoding format (Protobuf, CBOR, custom)
+- The exact transition-canonicalization rules
+- The exact reputation-aggregation protocols
+
+These are open because they need to be implemented, tested, and broken before they can be specified. The protocol can ship with placeholders and a roadmap for filling them in.
+
+## 12. What the protocol is not
+
+- Not a platform. No host, no user, no event is privileged by the protocol.
+- Not a product. The protocol does not have a UX, a brand, a logo, or a tariff.
+- Not a company. The protocol is a public good, published openly, implementable by anyone.
+- Not a moderator. The protocol does not decide what groups, hosts, or users are acceptable. That is a host, directory, or community policy decision.
+- Not finished. The protocol will evolve. Changes require consensus among the implementers, and the protocol is designed to be forkable if consensus fails.
