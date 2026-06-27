@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: MIT
+//
+// federated-meetup client RPC surface — the open client protobuf standard.
+//
+// ConnectRPC (https://connectrpc.com) over HTTP/2. Implementations:
+//   - Client: any ConnectRPC client. We ship a Go reference impl (OSS).
+//   - Server: any host that speaks the protocol. We ship a Go reference impl
+//     (OSS for the wire layer; closed-source for the product features).
+//
+// Server-to-server federation traffic uses a SEPARATE WireGuard-only transport.
+// It is intentionally NOT exposed here. See docs/02-PROTOCOL.md section 5.
+
+syntax = "proto3";
+
+package federated_meetup.v1;
+
+option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1";
+
+import "federated_meetup/v1/state.proto";
+
+// =============================================================================
+// Read RPCs
+// =============================================================================
+
+message GetGroupRequest {
+  // Either a public key (preferred) or a canonical name. If name, the host
+  // resolves it via the public directory it has been configured with.
+  oneof identifier {
+    PublicKey group_key = 1;
+    string canonical_name = 2;
+  }
+}
+
+message GetGroupResponse {
+  StateSnapshot snapshot = 1;
+  // Current steward set + threshold, for client-side verification.
+  repeated PublicKey stewards = 2;
+  uint32 threshold = 3;
+}
+
+message GetEventRequest {
+  PublicKey group_key = 1;
+  string event_id = 2;
+}
+
+message GetEventResponse {
+  CreateEventPayload event = 1;
+  // Current RSVP list (public keys only).
+  repeated PublicKey rsvps = 2;
+  bool cancelled = 3;
+}
+
+message ListEventsRequest {
+  PublicKey group_key = 1;
+  // Pagination cursor — opaque to the client.
+  string cursor = 2;
+  uint32 page_size = 3;
+}
+
+message ListEventsResponse {
+  repeated CreateEventPayload events = 1;
+  string next_cursor = 2;
+}
+
+message ListGroupsRequest {
+  // Optional substring filter on canonical name.
+  string name_contains = 1;
+  string cursor = 2;
+  uint32 page_size = 3;
+}
+
+message ListGroupsResponse {
+  message GroupSummary {
+    PublicKey group_key = 1;
+    string canonical_name = 2;
+    string display_name = 3;
+  }
+  repeated GroupSummary groups = 1;
+  string next_cursor = 2;
+}
+
+// =============================================================================
+// Write RPCs
+// =============================================================================
+
+message SubmitTransitionRequest {
+  PublicKey group_key = 1;
+  Transition transition = 2;
+}
+
+message SubmitTransitionResponse {
+  StateSnapshot new_snapshot = 1;
+  uint64 transition_index = 2;
+}
+
+message SubmitUserActionRequest {
+  PublicKey group_key = 1;
+  TransitionType type = 2;
+  SignedEnvelope user_envelope = 3;
+  // The transition payload, embedded for convenience. Hosts re-derive this
+  // from the signed bytes for verification.
+  bytes transition_payload = 4;
+}
+
+message SubmitUserActionResponse {
+  StateSnapshot new_snapshot = 1;
+}
+
+// =============================================================================
+// Discovery
+// =============================================================================
+
+message ResolveNameRequest {
+  string canonical_name = 1;
+}
+
+message ResolveNameResponse {
+  PublicKey group_key = 1;
+  // The hosts currently serving this group, ordered by canonicalness.
+  repeated string hosts = 2;
+}
+
+// =============================================================================
+// Service
+// =============================================================================
+
+service HostService {
+  // Reads.
+  rpc GetGroup(GetGroupRequest) returns (GetGroupResponse);
+  rpc GetEvent(GetEventRequest) returns (GetEventResponse);
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
+
+  // Writes. SubmitTransition is for steward-signed transitions (CREATE_GROUP,
+  // ADD_STEWARD, FORK, MIGRATE, etc.). SubmitUserAction is for user-signed
+  // actions (RSVP, ATTEST).
+  rpc SubmitTransition(SubmitTransitionRequest) returns (SubmitTransitionResponse);
+  rpc SubmitUserAction(SubmitUserActionRequest) returns (SubmitUserActionResponse);
+
+  // Discovery.
+  rpc ResolveName(ResolveNameRequest) returns (ResolveNameResponse);
+}

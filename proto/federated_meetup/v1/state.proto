@@ -1,0 +1,248 @@
+// SPDX-License-Identifier: MIT
+//
+// federated-meetup state schema — the open client protobuf standard.
+//
+// This is part of the public protocol spec (docs/02-PROTOCOL.md, section 3).
+// Anyone can implement a client or host that speaks this schema. The ConnectRPC
+// service in rpc.proto is the canonical client-facing surface. Server-to-server
+// federation uses a separate WireGuard-only transport (NOT this RPC).
+
+syntax = "proto3";
+
+package federated_meetup.v1;
+
+option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// Identity
+// =============================================================================
+
+// A public key wrapper. Ed25519 only for now.
+message PublicKey {
+  // 32 bytes for Ed25519.
+  bytes raw = 1;
+}
+
+// A signature wrapper. Ed25519 produces 64-byte signatures.
+message Signature {
+  bytes raw = 1;
+}
+
+// A multisig envelope. A transition is valid when >= threshold of these
+// signatures verify against the steward set's public keys at the snapshot the
+// transition references. See docs/02-PROTOCOL.md section 3.
+//
+// TODO(section 11): replace with FROST threshold signatures when the crypto
+// question is settled. Multisig envelope is the v1 implementation.
+message Multisig {
+  repeated Signature signatures = 1;
+  // How many signatures are required. Set at group creation; may be changed by
+  // a CHANGE_THRESHOLD transition signed by the current threshold.
+  uint32 threshold = 2;
+}
+
+// =============================================================================
+// State
+// =============================================================================
+
+// The key-value state of a group is a Merkle tree. We expose the root hash and
+// a sorted set of entries for canonical serialization. Transitions reference
+// the prior state root and apply a (small) set of changes.
+message StateRoot {
+  // SHA-256 of the canonical CBOR / protobuf-encoded entries.
+  bytes hash = 1;
+}
+
+message StateEntry {
+  string key = 1;
+  bytes value = 2;
+  // Monotonic per-key sequence number. Used by the host to detect out-of-order
+  // writes. Not part of the cryptographic history — only used for ordering
+  // within a single key.
+  uint64 seq = 3;
+}
+
+message StateSnapshot {
+  StateRoot root = 1;
+  repeated StateEntry entries = 2;
+}
+
+// =============================================================================
+// Transitions
+// =============================================================================
+
+// The canonical transition types from docs/02-PROTOCOL.md section 3.1.
+// Hosts MUST implement all canonical types. Custom types may be added by
+// embedding the Custom payload — other hosts will surface them opaquely.
+enum TransitionType {
+  TRANSITION_TYPE_UNSPECIFIED = 0;
+  TRANSITION_TYPE_CREATE_GROUP = 1;
+  TRANSITION_TYPE_ADD_STEWARD = 2;
+  TRANSITION_TYPE_REMOVE_STEWARD = 3;
+  TRANSITION_TYPE_CHANGE_THRESHOLD = 4;
+  TRANSITION_TYPE_ADD_MEMBER = 5;
+  TRANSITION_TYPE_REMOVE_MEMBER = 6;
+  TRANSITION_TYPE_CREATE_EVENT = 7;
+  TRANSITION_TYPE_UPDATE_EVENT = 8;
+  TRANSITION_TYPE_CANCEL_EVENT = 9;
+  TRANSITION_TYPE_RSVP = 10;
+  TRANSITION_TYPE_CANCEL_RSVP = 11;
+  TRANSITION_TYPE_ATTEST = 12;
+  TRANSITION_TYPE_FORK = 13;
+  TRANSITION_TYPE_MIGRATE = 14;
+}
+
+message Transition {
+  // Type discriminator.
+  TransitionType type = 1;
+
+  // Reference to the prior state root. Must match the current canonical state
+  // of the group on the host. Conflicts (two transitions at the same parent)
+  // are resolved by group policy.
+  StateRoot prior_state = 2;
+
+  // Per-type payload. Oneof so the schema is open and forwards-compatible.
+  oneof payload {
+    CreateGroupPayload create_group = 10;
+    AddStewardPayload add_steward = 11;
+    RemoveStewardPayload remove_steward = 12;
+    ChangeThresholdPayload change_threshold = 13;
+    AddMemberPayload add_member = 14;
+    RemoveMemberPayload remove_member = 15;
+    CreateEventPayload create_event = 16;
+    UpdateEventPayload update_event = 17;
+    CancelEventPayload cancel_event = 18;
+    RsvpPayload rsvp = 19;
+    CancelRsvpPayload cancel_rsvp = 20;
+    AttestPayload attest = 21;
+    ForkPayload fork = 22;
+    MigratePayload migrate = 23;
+    // Product-specific extensions. Other hosts display as opaque.
+    bytes custom = 99;
+  }
+
+  // Wall-clock timestamp from the signer (host-agnostic).
+  google.protobuf.Timestamp signed_at = 30;
+
+  // Group signature. Verifies against the steward set at prior_state.
+  Multisig steward_signatures = 31;
+}
+
+// =============================================================================
+// Payloads
+// =============================================================================
+
+message CreateGroupPayload {
+  string canonical_name = 1;
+  string display_name = 2;
+  // Initial stewards (must be >= threshold).
+  repeated PublicKey initial_stewards = 3;
+  uint32 threshold = 4;
+  map<string, bytes> metadata = 5;
+}
+
+message AddStewardPayload {
+  PublicKey new_steward = 1;
+}
+
+message RemoveStewardPayload {
+  PublicKey steward = 1;
+}
+
+message ChangeThresholdPayload {
+  uint32 new_threshold = 1;
+}
+
+message AddMemberPayload {
+  PublicKey user = 1;
+}
+
+message RemoveMemberPayload {
+  PublicKey user = 1;
+}
+
+message CreateEventPayload {
+  string event_id = 1;
+  string title = 2;
+  google.protobuf.Timestamp starts_at = 3;
+  google.protobuf.Timestamp ends_at = 4;
+  // Free-form for now. The protocol does not constrain event location format.
+  // See docs/02-PROTOCOL.md section 3.2.
+  string location = 5;
+  uint32 capacity = 6;
+  // True if the event requires a ticket. Ticketing itself is product-layer.
+  bool paid = 7;
+  map<string, bytes> metadata = 8;
+}
+
+message UpdateEventPayload {
+  string event_id = 1;
+  // Patch fields. Hosts apply on top of the existing event record.
+  map<string, bytes> patch = 2;
+}
+
+message CancelEventPayload {
+  string event_id = 1;
+  string reason = 2;
+}
+
+message RsvpPayload {
+  string event_id = 1;
+  // User signs with their own key — see SignedEnvelope below. The host verifies
+  // the user signature against the user's public key (in the public directory).
+  PublicKey user = 2;
+}
+
+message CancelRsvpPayload {
+  string event_id = 1;
+  PublicKey user = 2;
+}
+
+message AttestPayload {
+  // From → To. The attestation follows the to-identity across hosts.
+  PublicKey from_identity = 1;
+  PublicKey to_identity = 2;
+  // Schema URI. E.g. "review.positive", "review.negative",
+  // "endorsement.organizer", "endorsement.speaker". Open namespace.
+  string schema = 3;
+  bytes payload = 4;
+}
+
+// Fork creates a new sovereign group whose initial state is the snapshot of
+// the parent at the chosen block-height. See docs/02-PROTOCOL.md section 4.
+message ForkPayload {
+  // Snapshot of the parent group the fork starts from.
+  StateSnapshot parent_snapshot = 1;
+  // New group's keypair, generated by the forking steward(s).
+  PublicKey new_group_key = 2;
+  // Initial stewards of the new group.
+  repeated PublicKey new_stewards = 3;
+  uint32 new_threshold = 4;
+}
+
+// Migrate moves a group's canonical hosting from one host to another.
+// See docs/02-PROTOCOL.md section 10.
+message MigratePayload {
+  // Human-readable host identifier. Resolution to a host key + endpoint is a
+  // directory lookup.
+  string new_host = 1;
+  // After this deadline, the new host is canonical. The old host may continue
+  // serving as a mirror.
+  google.protobuf.Timestamp deadline = 2;
+}
+
+// =============================================================================
+// User-signed envelopes (RSVPs, attestations)
+// =============================================================================
+
+// A user-signed envelope wraps a payload with the user's signature. The host
+// verifies the signature against the user's public key.
+message SignedEnvelope {
+  // The canonical bytes that were signed. For RSVP, this is the RSVP payload
+  // serialized with the group ID + event ID prepended (anti-replay).
+  bytes message = 1;
+  Signature user_signature = 2;
+  PublicKey user_key = 3;
+}
