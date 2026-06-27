@@ -123,15 +123,27 @@ func (m *Mesh) Send(msg Message) {
 	})
 }
 
-// Poll delivers any messages whose delivery time has arrived. Called by the
-// world's Advance() or by the host explicitly.
+// Poll delivers any messages whose delivery time has arrived and removes
+// them from the in-flight queue. Called by the world's Advance() or by the
+// host explicitly.
 func (m *Mesh) Poll() []Message {
+	return m.poll(true)
+}
+
+// Peek returns messages whose delivery time has arrived WITHOUT removing
+// them. Use this when multiple consumers share a mesh and you don't want
+// one consumer's Poll to starve another.
+func (m *Mesh) Peek() []Message {
+	return m.poll(false)
+}
+
+func (m *Mesh) poll(remove bool) []Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	now := m.w.Now()
 	var delivered []Message
-	remaining := m.inFlight[:0]
+	var remaining []*inFlightMessage
 	for _, inf := range m.inFlight {
 		if !inf.deliver.After(now) {
 			delivered = append(delivered, inf.msg)
@@ -139,7 +151,9 @@ func (m *Mesh) Poll() []Message {
 			remaining = append(remaining, inf)
 		}
 	}
-	m.inFlight = remaining
+	if remove {
+		m.inFlight = remaining
+	}
 	return delivered
 }
 

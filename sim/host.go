@@ -130,22 +130,23 @@ func (h *Host) Deliver(payload []byte) error {
 	return st.Apply(t, h.world.Now())
 }
 
-// Tick advances the host one virtual timestep: deliver any messages the mesh
-// has for us, apply them to our state.
+// Tick advances the host one virtual timestep. Host simulation does not
+// own the wg mesh; if a sim test wants to drive group-state changes
+// through the same mesh, it should use a separate mechanism.
 func (h *Host) Tick() {
+	// No-op by default. Hosts can override behavior via their own
+	// simulation logic; the simulator's job is just to advance time
+	// and let consumers (test code, wg transport) react.
+}
+
+// PeekMessages returns any messages pending in the mesh without draining
+// them. Useful when multiple consumers (sim hosts + wg wire) share a mesh
+// and you don't want one's polling to starve another.
+func (h *Host) PeekMessages() []Message {
 	if h.mesh == nil {
-		return
+		return nil
 	}
-	msgs := h.mesh.Poll()
-	for _, m := range msgs {
-		if m.To != "*" && m.To != HostID(h.id) {
-			// Not for us — but in the simulator we route to all hosts that
-			// serve the group. Real WireGuard would route only to the
-			// destination.
-			continue
-		}
-		_ = h.Deliver(m.Payload)
-	}
+	return h.mesh.Peek()
 }
 
 // ErrUnknownGroup is returned when a host receives a transition for a group

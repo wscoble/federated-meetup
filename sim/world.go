@@ -118,7 +118,8 @@ func (w *World) Now() time.Time {
 
 // Advance moves the virtual clock forward by d. During the advance, the mesh
 // may partition hosts per its DDIL profile, and each host ticks once
-// (delivering any messages whose delivery time has arrived).
+// (peeks any messages whose delivery time has arrived; the host does not
+// drain them — only the owner of the destination drains).
 func (w *World) Advance(d time.Duration) {
 	w.mu.Lock()
 	w.now = w.now.Add(d)

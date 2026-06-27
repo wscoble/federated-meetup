@@ -57,6 +57,10 @@ type Mesh struct {
 	bridgeRunning bool
 	bridgeStop    chan struct{}
 
+	// outQueue holds packets pushed by sender goroutines. Drain flushes
+	// it into sim.Mesh deterministically (under the test's clock).
+	outQueue []queuedPacket
+
 	closed chan struct{}
 }
 
@@ -89,12 +93,32 @@ type WireGuardDevice struct {
 	meshAddr netip.Addr
 	private  []byte
 
-	device *device.Device
+	Device *device.Device // exported so tests can call IpcGet/Up/Close
 	bind   *simBind
 	closed chan struct{}
 
 	closeOnce sync.Once
 }
+
+// Device returns the underlying wireguard-go device. Callers can use
+// IpcGet to inspect peer state (e.g. last_handshake_time_sec) and
+// IpcSet to update config dynamically.
+func (d *WireGuardDevice) WgDevice() *device.Device { return d.Device }
+
+// Close shuts down the wg device. Safe to call multiple times.
+func (d *WireGuardDevice) Close() error {
+	d.closeOnce.Do(func() {
+		if d.Device != nil {
+			d.Device.Close()
+		}
+		close(d.closed)
+	})
+	return nil
+}
+
+// MeshLock returns the mesh's mutex. Exported for tests that need to
+// safely read peer state. Production code should not need this.
+func (m *Mesh) MeshLock() *sync.Mutex { return &m.mu }
 
 // NewMesh creates a new mesh. Add peers via AddPeer; start them via
 // StartPeer. The Sender callback wires the mesh to the wire.
@@ -214,17 +238,6 @@ func (m *Mesh) Close() error {
 	return nil
 }
 
-// Close shuts down the wg device. Safe to call multiple times.
-func (d *WireGuardDevice) Close() error {
-	d.closeOnce.Do(func() {
-		if d.device != nil {
-			d.device.Close()
-		}
-		close(d.closed)
-	})
-	return nil
-}
-
 // Send pushes a packet to the wire (encrypted). The wire layer is
 // responsible for delivering it to the destination peer's wg device.
 func (m *Mesh) Send(from PeerID, to PeerID, toAddr netip.Addr, payload []byte) error {
@@ -244,17 +257,29 @@ func (m *Mesh) SetSender(s Sender) {
 }
 
 // Deliver injects an inbound packet (encrypted WireGuard transport) into
-// the destination peer's simBind. Called by the bridge when a packet arrives
-// from sim.Mesh for a peer.
+// the destination peer's simBind. The `from` argument is the peer ID of
+// the original sender — wg-go needs this so its response packets are
+// addressed to the correct peer (not back to itself).
 func (m *Mesh) Deliver(to PeerID, payload []byte) error {
+	return m.DeliverFrom(to, "", payload)
+}
+
+// DeliverFrom injects an inbound packet with a specific source peer.
+// `from` is the original sender's peer ID (from sim.Message.From).
+// If `from` is empty, the source is recorded as "unknown" and wg may
+// not be able to send a reply (acceptable for one-way messages).
+func (m *Mesh) DeliverFrom(to PeerID, from PeerID, payload []byte) error {
 	m.mu.Lock()
 	bind, ok := m.peerBinds[to]
 	m.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("wg: no bind for peer %s", to)
 	}
-	// Endpoint identity is implicit (one tunnel per peer pair, single dst).
-	bind.inject(payload, &simEndpoint{peerID: to, meshAddr: bind.meshAddr})
+	var srcPeer PeerID = from
+	if srcPeer == "" {
+		srcPeer = to
+	}
+	bind.inject(payload, &simEndpoint{peerID: srcPeer, meshAddr: netip.IPv4Unspecified()})
 	return nil
 }
 

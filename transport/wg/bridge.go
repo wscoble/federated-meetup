@@ -21,11 +21,17 @@ import (
 	"github.com/sscoble/federated-meetup/sim"
 )
 
-// RunBridge starts the bridge goroutines and returns a function that
-// stops them. The caller is responsible for advancing the sim.World's
-// virtual clock so sim.Mesh deliveries become eligible.
+// RunBridge starts the per-peer sender goroutines. The sender goroutines
+// drain bind.sendCh (filled by wireguard-go) and push outgoing packets
+// onto an internal queue. Drain(world) processes both directions: it
+// drains the outgoing queue into sim.Mesh, and pulls delivered packets
+// out of sim.Mesh into the destination peer's bind.
 //
-// The returned function is idempotent.
+// Rationale: the simulator owns the clock. A background goroutine polling
+// sim.Mesh at wall-clock speed races against the test's Advance loop and
+// produces non-deterministic behavior. Tying both send and receive to
+// Drain (called once per virtual time step, after Advance) makes the
+// scheduler the single source of truth.
 func (m *Mesh) RunBridge(world *sim.World) (stop func(), err error) {
 	m.mu.Lock()
 	if m.bridgeRunning {
@@ -41,15 +47,13 @@ func (m *Mesh) RunBridge(world *sim.World) (stop func(), err error) {
 
 	stopCh := make(chan struct{})
 	m.bridgeStop = stopCh
+	m.outQueue = make([]queuedPacket, 0, 64)
 
-	// Per-peer sender goroutines: each reads from bind.sendCh and pushes
-	// into sim.Mesh.
+	// Per-peer sender goroutines: each drains its bind.sendCh into the
+	// shared outQueue. Drain flushes the queue into sim.Mesh.
 	for id, bind := range binds {
-		go m.bridgeSender(id, bind, world, stopCh)
+		go m.bridgeSender(id, bind, stopCh)
 	}
-
-	// Single receiver goroutine: polls sim.Mesh and delivers.
-	go m.bridgeReceiver(world, stopCh)
 
 	return func() {
 		select {
@@ -61,7 +65,48 @@ func (m *Mesh) RunBridge(world *sim.World) (stop func(), err error) {
 	}, nil
 }
 
-func (m *Mesh) bridgeSender(id PeerID, bind *simBind, world *sim.World, stopCh <-chan struct{}) {
+// queuedPacket is the bridge's view of a packet in the outQueue — it has
+// the source PeerID attached (added by bridgeSender when it picks up a
+// packet from bind.sendCh).
+type queuedPacket struct {
+	from PeerID
+	to   PeerID
+	data []byte
+}
+
+// Drain flushes any pending outgoing packets into sim.Mesh, then pulls
+// delivered packets out of sim.Mesh and injects them into the destination
+// peer's bind. Returns the number of packets delivered.
+//
+// Call this once per virtual time step, after World.Advance.
+func (m *Mesh) Drain(world *sim.World) int {
+	// Drain the outgoing queue (filled by sender goroutines).
+	m.mu.Lock()
+	out := m.outQueue
+	m.outQueue = make([]queuedPacket, 0, 64)
+	m.mu.Unlock()
+	for _, p := range out {
+		world.Mesh().Send(sim.Message{
+			From:    sim.HostID(string(p.from)),
+			To:      sim.HostID(string(p.to)),
+			Payload: p.data,
+			Tag:     "wg",
+		})
+	}
+
+	// Pull delivered packets and inject them into the destination bind.
+	n := 0
+	for _, msg := range world.Mesh().Poll() {
+		to := PeerID(msg.To)
+		if err := m.DeliverFrom(to, PeerID(msg.From), msg.Payload); err != nil {
+			_ = err
+		}
+		n++
+	}
+	return n
+}
+
+func (m *Mesh) bridgeSender(id PeerID, bind *simBind, stopCh <-chan struct{}) {
 	for {
 		select {
 		case <-stopCh:
@@ -69,42 +114,14 @@ func (m *Mesh) bridgeSender(id PeerID, bind *simBind, world *sim.World, stopCh <
 		case <-bind.done:
 			return
 		case pkt := <-bind.sendCh:
-			// Push into sim.Mesh. The mesh schedules delivery with
-			// DDIL profile (drop/latency/jitter/reorder/partition).
-			world.Mesh().Send(sim.Message{
-				From:    sim.HostID(string(id)),
-				To:      sim.HostID(string(pkt.to.peerID)),
-				Payload: pkt.data,
-				Tag:     "wg",
+			// Queue for Drain to flush into sim.Mesh.
+			m.mu.Lock()
+			m.outQueue = append(m.outQueue, queuedPacket{
+				from: id,
+				to:   pkt.to,
+				data: pkt.data,
 			})
-		}
-	}
-}
-
-func (m *Mesh) bridgeReceiver(world *sim.World, stopCh <-chan struct{}) {
-	for {
-		select {
-		case <-stopCh:
-			return
-		default:
-		}
-		// Drain any messages whose delivery time has arrived. Use Poll
-		// (not Peek) since we're the sole consumer of the wg mesh path.
-		for _, msg := range world.Mesh().Poll() {
-			to := PeerID(msg.To)
-			if err := m.Deliver(to, msg.Payload); err != nil {
-				// No bind yet for this peer — packet dropped. This is
-				// normal during bootstrap.
-				_ = err
-			}
-		}
-		// Don't spin: yield. The test harness drives Advance() to make
-		// time pass; we just poll whenever called.
-		// Small sleep keeps CPU sane in tests.
-		select {
-		case <-stopCh:
-			return
-		default:
+			m.mu.Unlock()
 		}
 	}
 }

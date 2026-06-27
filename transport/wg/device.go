@@ -115,7 +115,7 @@ func (m *Mesh) startPeerLocked(p *Peer) (*Net, error) {
 		peerID:   p.ID,
 		meshAddr: p.MeshAddr,
 		private:  p.PrivateKey,
-		device:   dev,
+		Device:   dev,
 		bind:     bind,
 		closed:   make(chan struct{}),
 	}
