@@ -87,6 +87,31 @@ This is the design choice that resolves the "dead owner" / "incapable owner" / "
 
 A host is a service that stores a group's state and serves it to clients. The protocol does not require any specific host architecture. A host may be a single server, a replicated database, a CDN, a peer-to-peer node, or a self-hosted Raspberry Pi.
 
+### 5.0 Two transports, not one
+
+The federation has **two distinct transport surfaces**. This is load-bearing. Conflating them collapses the security model.
+
+**Client → Host: open protobuf over ConnectRPC.** Clients (web apps, mobile apps, scripts) speak ConnectRPC against the host's public HTTP/2 endpoint. The wire format is the open protobuf standard in `proto/federated_meetup/v1/`. Anyone can implement a client; we ship a Go reference client as open source. Hosts expose this surface; the surface is reachable from the public internet (over TLS).
+
+**Host → Host: private WireGuard mesh.** Federation traffic between hosts flows over a userspace WireGuard overlay. The overlay IP space is private to the federation; nothing about the federation service is addressable from the public internet. This is what makes the federation actually federated: the host-to-host surface has no public attack surface.
+
+The two transports speak different protocols over different layers:
+
+| Surface | Wire | Encryption | Reachable from |
+| --- | --- | --- | --- |
+| Client → Host | ConnectRPC over HTTP/2 (TLS) | TLS | Public internet |
+| Host → Host | Custom protocol over WireGuard | WireGuard (Noise IK) | Private mesh only |
+
+Why two and not one? Because if server-to-server traffic rode the same RPC surface as clients, every host would have a public attack surface equal to its federation surface. By keeping server-to-server traffic on a private overlay, the federation traffic is private by construction — no rate-limiting middleware, no authn at the federation boundary, just cryptographic identity verified by the steward set's threshold signature.
+
+**Operational implication for hosts.** A host runs two listeners:
+1. A public ConnectRPC server (HTTPS) for clients.
+2. A WireGuard interface participating in the federation mesh, with a static private IP.
+
+The mesh does not require any specific network topology. Hosts can be behind NAT. The mesh uses userspace WireGuard (golang.zx2c4.com/wireguard) so it runs without root and is portable across Linux/macOS/Windows/embedded targets.
+
+**Operational implication for the simulator.** The federation has to survive Vegas-to-Phoenix flakiness. The simulator models DDIL (Denied/Disrupted/Intermittent/Limited) conditions on the mesh as a first-class concern. See `sim/ddil.go` for the profiles. This is non-negotiable — a federation that only works on a healthy datacenter LAN is not a federation.
+
 ### 5.1 What a host must do
 
 - Accept and verify signed state transitions from a group's stewards
@@ -177,8 +202,8 @@ Migration is the property that prevents host lock-in. A group can always leave. 
 These are not in the spec yet:
 
 - The exact format of the public directory sync protocol
-- The exact threshold signature scheme (FROST, Ed25519 threshold, or other)
-- The exact state-encoding format (Protobuf, CBOR, custom)
+- The exact threshold signature scheme (FROST, Ed25519 threshold, or other). The v1 implementation uses a multisig envelope (each steward signs with their own Ed25519 key; the host verifies that at least `threshold` distinct stewards have signed). FROST is the open question — when adopted, transitions will carry a single threshold signature instead of an envelope.
+- The exact state-encoding format. The reference implementation uses protobuf (deterministic marshalling) for compatibility with ConnectRPC. Other encodings are possible but must preserve canonical-bytes determinism.
 - The exact transition-canonicalization rules
 - The exact reputation-aggregation protocols
 
