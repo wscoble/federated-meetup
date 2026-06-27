@@ -1,7 +1,20 @@
 // SPDX-License-Identifier: MIT
 //
-// Package crypto wraps Ed25519 signing/verification with the protocol's
-// canonical message format and the multisig envelope.
+// Package crypto wraps signing/verification with the protocol's canonical
+// message format and the multisig envelope.
+//
+// Per docs/02-PROTOCOL.md §5.1, the federation has THREE independent key
+// domains with no cross-derivation. The keys cross between layers only as
+// messages. This package makes that boundary compiler-enforced by exposing
+// distinct named types for each layer's key material:
+//
+//   - StewardKey   — Layer 2 (governance). Ed25519. Signs transitions.
+//   - WireGuardKey — Layer 1 (mesh transport). X25519. NOT used for signing.
+//   - TLSKey       — Layer 3 (client-facing HTTPS). Ed25519 for cert sign.
+//
+// Functions that need a StewardKey cannot be called with a WireGuardKey or
+// TLSKey, even though all three wrap 32 bytes of key material. The Go type
+// system enforces what the protocol requires.
 //
 // The transition bytes that get signed are the canonical protobuf encoding of
 // (group_key || transition || message_kind). See CanonicalSignBytes.

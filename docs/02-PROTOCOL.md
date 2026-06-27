@@ -112,7 +112,29 @@ The mesh does not require any specific network topology. Hosts can be behind NAT
 
 **Operational implication for the simulator.** The federation has to survive Vegas-to-Phoenix flakiness. The simulator models DDIL (Denied/Disrupted/Intermittent/Limited) conditions on the mesh as a first-class concern. See `sim/ddil.go` for the profiles. This is non-negotiable — a federation that only works on a healthy datacenter LAN is not a federation.
 
-### 5.1 What a host must do
+### 5.1 Three crypto layers, three independent key domains
+
+The federation has **three cryptographic layers** with **three independent key domains**. Each layer answers a different question and uses keys that are not derivable from one another. Compromise of any single layer does not imply compromise of any other layer.
+
+| # | Layer | Question it answers | Key domain | Wire |
+|---|---|---|---|---|
+| 1 | **WireGuard mesh** | "Is this host one of the peers I trust enough to receive packets from?" | X25519 per host (wireguard) | UDP, host↔host, mesh-private |
+| 2 | **Multisig governance envelope** | "Did M-of-N stewards authorize this state transition, with fresh intent, in a verifiable chain?" | Ed25519 per steward | Inside the wg tunnel |
+| 3 | **Client ConnectRPC + TLS** | "Is this client authorized to perform this action against this host?" | Server TLS cert + (TBD) client auth | HTTPS, public internet |
+
+**Why three and not one?** Because each layer has a different threat model and a different compromise profile:
+
+- **Layer 1 compromise (stolen wg key)** lets an attacker impersonate a host on the mesh for the lifetime of the handshake. It does NOT let them sign transitions, because Layer 2 is a separate Ed25519 key.
+- **Layer 2 compromise (stolen steward key)** lets an attacker sign transitions as that steward. It does NOT let them impersonate a host on the mesh, because Layer 1 is a separate X25519 key. Multisig threshold (M-of-N, M > 1) means a single stolen steward key cannot unilaterally move state.
+- **Layer 3 compromise (stolen TLS key)** lets an attacker impersonate the host to clients. It does NOT affect federation integrity, because the mesh is private and unrelated.
+
+**Keys never derive from one another.** A host's wg private key, a host's steward private key, and a host's TLS private key are three independent random keypairs. They are not derived from each other, not HKDF-derivative, not cross-signed. The only thing that crosses between layers is **messages**: a transition signed with a Layer 2 key travels through a Layer 1 tunnel and reaches a Layer 3 client. The keys themselves stay in their domains.
+
+**Key rotation is independent.** A host rotates its wg key without rotating its steward key. A steward rotates their Ed25519 key by sending an `ADD_STEWARD` + `REMOVE_STEWARD` transition pair (a Layer 2 operation); it has zero effect on Layer 1 or Layer 3.
+
+**Implementation rule.** No code path may accept a key from one layer as input to another. `internal/crypto/` exposes three types (`WireGuardKey`, `StewardKey`, `TLSKey`) that wrap their respective key material and refuse to interconvert at the type level. A function that needs a `StewardKey` cannot be called with a `WireGuardKey` even though both are 32 bytes; the compiler enforces this.
+
+### 5.2 What a host must do
 
 - Accept and verify signed state transitions from a group's stewards
 - Persist the state in a way that other hosts can replicate
@@ -120,7 +142,7 @@ The mesh does not require any specific network topology. Hosts can be behind NAT
 - Reject state transitions that are not properly signed or that conflict with prior state
 - Provide a discovery endpoint so clients can find the group (see section 7)
 
-### 5.2 What a host may do
+### 5.3 What a host may do
 
 - Impose commercial terms (subscription, fees, tariffs)
 - Add value-added services (ticketing, payments, analytics, recommendations)
@@ -128,7 +150,7 @@ The mesh does not require any specific network topology. Hosts can be behind NAT
 - Brand the experience (own logo, own colors, own UX)
 - Add or hide product features
 
-### 5.3 What a host must not do
+### 5.4 What a host must not do
 
 - Modify the group's state without a valid signed transition
 - Hold a group's private key (the key is held by the stewards, not the host)
