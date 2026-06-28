@@ -65,7 +65,19 @@ speck FederatedMeetup {
   event CreateGroup {
     name:        String,
     stewards:    StringList,
-    threshold:   Nat
+    threshold:   Nat,
+    // Bootstrap: initial mesh peers admitted at group creation.
+    // Closes the chicken-and-egg where ADD_HOST_PEER requires an
+    // existing mesh member to co-sign. Optional — a group may be
+    // created with no initial peers (mesh stays empty until
+    // bootstrapped out-of-band), but the recommended path is to
+    // seed 1+ peers here.
+    initial_mesh_peers: List<InitialMeshPeer> = []
+  }
+
+  interface InitialMeshPeer {
+    host_wg_key:  Bytes,  // X25519, 32 bytes
+    mesh_ip:      Bytes   // 4 bytes (IPv4 overlay)
   }
 
   event AddSteward {
@@ -209,6 +221,14 @@ speck FederatedMeetup {
   constraint: forall s in stewards: len(s) > 0
   constraint: forall e in events: not e.cancelled || len(e.rsvps) == 0
   constraint: equivocation_log has unique entries by (signer, branch_id, hlc)
+  // Bootstrap: initial_mesh_peers at CreateGroup must have unique
+  // wg keys AND unique mesh_ips. Duplicates are rejected by the
+  // state machine with duplicate_mesh_peer / duplicate_mesh_ip.
+  constraint: forall p1 in initial_mesh_peers:
+                 forall p2 in initial_mesh_peers:
+                   implies(p1 != p2, p1.host_wg_key != p2.host_wg_key and p1.mesh_ip != p2.mesh_ip)
+  constraint: forall p in initial_mesh_peers: len(p.host_wg_key) == 32
+  constraint: forall p in initial_mesh_peers: len(p.mesh_ip) == 4
 
   // ─── Verification (security gates) ───────────────────────
 
