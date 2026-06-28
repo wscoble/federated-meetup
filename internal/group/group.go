@@ -460,6 +460,19 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "display_name", []byte(p.GetDisplayName()), s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
+		// Initial stewards are written into the Merkle KV so that the
+		// snapshot root commits to the steward set. Without this,
+		// REMOVE_STEWARD on an initial steward would be a no-op against
+		// the snapshot (the entry doesn't exist) and the state root
+		// would not advance — leaving the root out of sync with the
+		// stewardHistory, which violates the Merkle commitment invariant
+		// that two hosts with the same root must agree on the steward
+		// set. Now both ADD_STEWARD and REMOVE_STEWARD operate on
+		// entries that are always present.
+		for _, k := range p.GetInitialStewards() {
+			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", k.GetRaw()), []byte{1}, s.MaxKVSize)
+			if !kvAllowed { return ErrKVSizeExceeded }
+		}
 		// Steward history at the NEW root records the initial set.
 	case pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD:
 		p := t.Proto.GetAddSteward()
