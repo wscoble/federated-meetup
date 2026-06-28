@@ -702,7 +702,15 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if err := s.removeMeshPeerLocked(removed); err != nil {
 			return err
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), nil, s.MaxKVSize)
+		// Tombstone: write a sentinel []byte{} (length 0, non-nil)
+		// instead of deleting the entry. See REMOVE_MEMBER (cycle 25)
+		// and CANCEL_RSVP (cycle 26) for the same pattern. Deleting
+		// collapses the Merkle KV such that post-REMOVE root equals
+		// the post-CREATE root when the removed peer was the only
+		// ADD'd peer — a subsequent re-ADD then collides with the
+		// CREATE_GROUP signatures in the equivocation log and is
+		// spuriously rejected as equivocation.
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), []byte{}, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	// =====================================================================

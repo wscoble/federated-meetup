@@ -234,6 +234,210 @@ func TestBootstrap_InitialMeshPeers(t *testing.T) {
 	t.Logf("bootstrap round-trip complete: 0 -> 1 (CREATE) -> 2 (ADD) -> 1 (REMOVE)")
 }
 
+// TestBootstrap_RemoveThenReAddPeer verifies the post-REMOVE
+// state root is distinct from the post-CREATE root when the
+// only ADD'd peer is removed. If REMOVE_HOST_PEER collapses
+// the Merkle KV such that the post-REMOVE root equals the
+// post-CREATE root, a subsequent ADD_HOST_PEER for the same
+// peer would collide with the CREATE_GROUP signatures recorded
+// in the equivocation log and trigger a spurious rejection.
+//
+// This is the same root-collapse class of bug fixed in cycle 25
+// (REMOVE_MEMBER) and cycle 26 (CANCEL_RSVP). See
+// internal/group/group.go REMOVE_HOST_PEER case.
+//
+// What this exercises:
+//   - State root advances through ADD → REMOVE → ADD for the
+//     same host peer.
+//   - All 4 hosts converge at each step.
+//   - Final mesh size = 2 (1 bootstrap + 1 re-added).
+func TestBootstrap_RemoveThenReAddPeer(t *testing.T) {
+	w, err := sim.NewWorld(sim.Config{
+		Seed:        71,
+		HostCount:   4,
+		InitialTime: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	mesh := sim.NewMesh(w, sim.DDILBenign)
+	w.AttachMesh(mesh)
+
+	// Steward signing keys.
+	stewardSeeds := []uint64{w.DeriveSeed("alice"), w.DeriveSeed("bob")}
+	stewards := make([]crypto.KeyPair, 2)
+	for i, s := range stewardSeeds {
+		var seed [32]byte
+		for j := 0; j < 8; j++ {
+			seed[j] = byte(s >> (8 * j))
+		}
+		stewards[i] = crypto.KeyPairFromSeed(seed)
+	}
+
+	// Group keypair.
+	var groupSeed [32]byte
+	gid := w.DeriveSeed("bootstrap-readd-group")
+	for j := 0; j < 8; j++ {
+		groupSeed[j] = byte(gid >> (8 * j))
+	}
+	groupKP := crypto.KeyPairFromSeed(groupSeed)
+
+	// Seed peer (cosigner for first ADD).
+	var seedPeerSeed [32]byte
+	sp := w.DeriveSeed("seed-peer-readd")
+	for j := 0; j < 8; j++ {
+		seedPeerSeed[j] = byte(sp >> (8 * j))
+	}
+	seedPeerKP := crypto.KeyPairFromSeed(seedPeerSeed)
+	seedPeerMeshIP := []byte{10, 0, 0, 1}
+
+	// Peer that will be ADD'd, REMOVE'd, and ADD'd again.
+	var targetPeerSeed [32]byte
+	tp := w.DeriveSeed("target-peer")
+	for j := 0; j < 8; j++ {
+		targetPeerSeed[j] = byte(tp >> (8 * j))
+	}
+	targetPeerKP := crypto.KeyPairFromSeed(targetPeerSeed)
+	targetPeerMeshIP := []byte{10, 0, 0, 2}
+
+	// CREATE_GROUP with initial_mesh_peers=[seedPeer].
+	createPayload := &pb.CreateGroupPayload{
+		CanonicalName:   "bootstrap-readd",
+		DisplayName:     "Bootstrap Read-add Group",
+		InitialStewards: stewardPBs(stewards),
+		Threshold:       2,
+		InitialMeshPeers: []*pb.InitialMeshPeer{
+			{HostWgKey: seedPeerKP.Public[:], MeshIp: seedPeerMeshIP},
+		},
+	}
+	canonical, err := group.MarshalCanonicalForSigningHelper(&pb.Transition{
+		Type:     pb.TransitionType_TRANSITION_TYPE_CREATE_GROUP,
+		Payload:  &pb.Transition_CreateGroup{CreateGroup: createPayload},
+		SignedAt: timestamppb.New(w.Now()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createTr := &pb.Transition{
+		Type:       pb.TransitionType_TRANSITION_TYPE_CREATE_GROUP,
+		Payload:    &pb.Transition_CreateGroup{CreateGroup: createPayload},
+		SignedAt:   timestamppb.New(w.Now()),
+		StewardSignatures: &pb.Multisig{
+			Threshold:  2,
+			Signatures: sigsFor(stewards, groupKP.Public, canonical),
+		},
+	}
+	tx, err := group.NewTransition(createTr, groupKP.Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range w.Hosts() {
+		h.AddGroup(groupKP.Public, tx)
+		if _, err := h.SubmitTransition(groupKP.Public, tx); err != nil {
+			t.Fatalf("CREATE_GROUP on host %s: %v", h.ID(), err)
+		}
+	}
+	w.Advance(50 * time.Millisecond)
+	parentRoot := w.Hosts()[0].State(groupKP.Public).Root()
+	t.Logf("CREATE applied; parentRoot = %x", parentRoot[:4])
+
+	// ADD_HOST_PEER target with seedPeer as cosigner.
+	addPayload := &pb.AddHostPeerPayload{
+		HostWgKey:        &pb.PublicKey{Raw: targetPeerKP.Public[:]},
+		MeshIp:           targetPeerMeshIP,
+		CosignerPeerKey:  &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+	}
+	cosigCanonical, err := proto.MarshalOptions{Deterministic: true}.Marshal(addPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addPayload.CosignerPeerSignature = &pb.Signature{
+		Raw: signCosigner(seedPeerSeed, cosigCanonical),
+	}
+	addTr, err := buildSignedTransitionForAddPeer(
+		t, groupKP.Public, parentRoot, addPayload, stewards, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range w.Hosts() {
+		if _, err := h.SubmitTransition(groupKP.Public, addTr); err != nil {
+			t.Fatalf("ADD on host %s: %v", h.ID(), err)
+		}
+	}
+	w.Advance(50 * time.Millisecond)
+	rootAfterAdd := w.Hosts()[0].State(groupKP.Public).Root()
+	if rootAfterAdd == parentRoot {
+		t.Fatal("ADD did not advance root")
+	}
+	t.Logf("ADD applied; rootAfterAdd = %x", rootAfterAdd[:4])
+
+	// REMOVE_HOST_PEER target.
+	removePayload := &pb.RemoveHostPeerPayload{
+		HostWgKey: &pb.PublicKey{Raw: targetPeerKP.Public[:]},
+		MeshIp:    targetPeerMeshIP,
+	}
+	removeTr, err := buildSignedTransitionForRemovePeer(
+		t, groupKP.Public, rootAfterAdd, removePayload, stewards, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range w.Hosts() {
+		if _, err := h.SubmitTransition(groupKP.Public, removeTr); err != nil {
+			t.Fatalf("REMOVE on host %s: %v", h.ID(), err)
+		}
+	}
+	w.Advance(50 * time.Millisecond)
+	rootAfterRemove := w.Hosts()[0].State(groupKP.Public).Root()
+	if rootAfterRemove == rootAfterAdd {
+		t.Fatal("REMOVE did not advance root")
+	}
+	if rootAfterRemove == parentRoot {
+		t.Fatalf("REMOVE collapsed root to post-CREATE root (%x); tombstone required to avoid spurious equivocation on re-ADD", parentRoot[:4])
+	}
+	t.Logf("REMOVE applied; rootAfterRemove = %x (distinct from parent %x)", rootAfterRemove[:4], parentRoot[:4])
+
+	// ADD_HOST_PEER target AGAIN. Must NOT spuriously trigger
+	// equivocation. This is the regression check.
+	add2Payload := &pb.AddHostPeerPayload{
+		HostWgKey:       &pb.PublicKey{Raw: targetPeerKP.Public[:]},
+		MeshIp:          targetPeerMeshIP,
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+	}
+	cosigCanonical2, err := proto.MarshalOptions{Deterministic: true}.Marshal(add2Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add2Payload.CosignerPeerSignature = &pb.Signature{
+		Raw: signCosigner(seedPeerSeed, cosigCanonical2),
+	}
+	add2Tr, err := buildSignedTransitionForAddPeer(
+		t, groupKP.Public, rootAfterRemove, add2Payload, stewards, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range w.Hosts() {
+		if _, err := h.SubmitTransition(groupKP.Public, add2Tr); err != nil {
+			t.Fatalf("re-ADD on host %s: %v (regression: REMOVE_HOST_PEER likely collapsed root)", h.ID(), err)
+		}
+	}
+	w.Advance(50 * time.Millisecond)
+	rootAfterReAdd := w.Hosts()[0].State(groupKP.Public).Root()
+	if rootAfterReAdd == rootAfterRemove {
+		t.Fatal("re-ADD did not advance root")
+	}
+	for _, h := range w.Hosts()[1:] {
+		if got := h.State(groupKP.Public).Root(); got != rootAfterReAdd {
+			t.Fatalf("post-reADD divergence: host %s=%x want %x", h.ID(), got, rootAfterReAdd)
+		}
+		if got := h.State(groupKP.Public).MeshPeers(); len(got) != 2 {
+			t.Errorf("host %s has %d mesh peers post-reADD, want 2", h.ID(), len(got))
+		}
+	}
+	t.Logf("re-ADD applied; rootAfterReAdd = %x; mesh has 2 peers", rootAfterReAdd[:4])
+}
+
 // buildSignedTransitionForAddPeer constructs a fully-signed
 // ADD_HOST_PEER transition for the bootstrap test.
 func buildSignedTransitionForAddPeer(
