@@ -137,13 +137,13 @@ func TestCancelRsvp_RemovesEntry(t *testing.T) {
 }
 
 // verifyRsvpEntryPresent asserts the rsvp/<event>/<user-hex> entry
-// exists with non-nil value (the 1-byte marker).
+// exists with active-marker value []byte{1}.
 func verifyRsvpEntryPresent(t *testing.T, st *group.State, key string) {
 	t.Helper()
 	for _, e := range st.Snapshot().Entries {
 		if e.Key == key {
-			if e.Value == nil {
-				t.Errorf("entry %q present but value is nil", key)
+			if len(e.Value) != 1 || e.Value[0] != 1 {
+				t.Errorf("entry %q present but value = %x (want []byte{1} = active)", key, e.Value)
 			}
 			return
 		}
@@ -152,17 +152,21 @@ func verifyRsvpEntryPresent(t *testing.T, st *group.State, key string) {
 }
 
 // verifyRsvpEntryAbsent asserts the rsvp/<event>/<user-hex> entry
-// is NOT in the snapshot. appendOrUpdate with value=nil removes
-// the entry entirely.
+// is tombstoned ([]byte{0}) or removed entirely. CANCEL_RSVP writes
+// a tombstone so the post-cancel root is distinct from the pre-RSVP
+// root, avoiding spurious equivocation on a subsequent re-RSVP.
 func verifyRsvpEntryAbsent(t *testing.T, st *group.State, key string) {
 	t.Helper()
 	for _, e := range st.Snapshot().Entries {
 		if e.Key == key {
-			t.Errorf("entry %q should have been removed; still present with value %x", key, e.Value)
+			if len(e.Value) == 1 && e.Value[0] == 0 {
+				return // tombstone — correctly cancelled
+			}
+			t.Errorf("entry %q should be tombstoned ([]byte{0}) or absent, found value %x", key, e.Value)
+			return
 		}
 	}
 }
-
 // verifyEventEntryPresent asserts the event/<event_id> entry exists.
 func verifyEventEntryPresent(t *testing.T, st *group.State, eventID string) {
 	t.Helper()

@@ -585,7 +585,13 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		p := t.Proto.GetCancelRsvp()
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), nil, s.MaxKVSize)
+		// Tombstone: []byte{0} instead of deleting the entry. See
+		// REMOVE_MEMBER (cycle 25) for the same pattern and rationale —
+		// deleting collapses the Merkle KV such that the post-cancel
+		// root equals a prior where stewards are already recorded in
+		// the equivocation log, producing spurious equivocation on a
+		// legitimate re-RSVP.
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{0}, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ATTEST:
 		p := t.Proto.GetAttest()
