@@ -257,7 +257,8 @@ func (s *State) stewardsAtLocked(root *pb.StateRoot) []Steward {
 	if root == nil || len(root.GetHash()) == 0 {
 		// Use the current (head) steward set. The most recent history
 		// entry is keyed by the current state root.
-		if st, ok := s.stewardHistory[s.snapshot.Root()]; ok {
+		curRoot := s.snapshot.Root()
+		if st, ok := s.stewardHistory[curRoot]; ok {
 			return append([]Steward(nil), st...)
 		}
 		return append([]Steward(nil), s.initialStewards...)
@@ -778,8 +779,10 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	}
 
 	s.snapshot = types.StateSnapshot{Entries: newEntries}
-	s.stewardHistory[s.snapshot.Root()] = s.computeCurrentStewards(t.Proto)
-	s.thresholdHistory[s.snapshot.Root()] = s.computeCurrentThreshold(t.Proto)
+	stewardsAfterApply := s.computeCurrentStewards(t.Proto)
+	r := s.snapshot.Root()
+	s.stewardHistory[r] = stewardsAfterApply
+	s.thresholdHistory[r] = s.computeCurrentThreshold(t.Proto)
 	s.log = append(s.log, t)
 	// G7 memory bound on transition log. When the log exceeds
 	// MaxLogSize, evict the oldest entry. Eviction is purely local;
@@ -800,6 +803,13 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 func (s *State) computeCurrentStewards(t *pb.Transition) []Steward {
 	current := s.stewardsAtLocked(t.GetPriorState())
 	switch t.GetType() {
+	case pb.TransitionType_TRANSITION_TYPE_CREATE_GROUP:
+		// After CREATE_GROUP, the steward set IS the initial stewards
+		// declared in the payload (set by Apply at the verification
+		// step). The "current" lookup above walks via prior_state,
+		// which for a fresh group is the zero hash — that path doesn't
+		// find anything. Use the field directly.
+		return append([]Steward(nil), s.initialStewards...)
 	case pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD:
 		var key types.PublicKey
 		copy(key[:], t.GetAddSteward().GetNewSteward().GetRaw())
