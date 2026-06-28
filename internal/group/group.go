@@ -121,53 +121,70 @@ func (t *Transition) verifyStewardSignaturesWith(stewards []Steward, threshold u
 // =============================================================================
 
 // State is the host's view of one group's state machine.
+//
+// As of 2026-06-27, a group's state is a FOREST of branches, each
+// independent. The legacy single-snapshot fields below remain for
+// backward compatibility but are now REDIRECTS to branch 0 —
+// callers reading state.Root() get branch 0's root, callers
+// reading state.Stewards() get branch 0's stewards, etc.
+//
+// Cross-cutting state (mesh peers, custody declarations, equivocation
+// evidence list) stays on State — these are not branch-local.
 type State struct {
 	groupID GroupID
 
 	mu sync.Mutex
 
-	// Current canonical snapshot.
-	snapshot types.StateSnapshot
+	// branches is the per-group branch forest. Lazily created.
+	branches *branchRegistry
 
-	// History of stewards as of each prior_state hash. The current stewards
-	// are at the head. Indexing by state root lets us resolve stewards at
-	// any past snapshot (e.g. when verifying a transition whose prior_state
-	// is older).
-	stewardHistory map[types.Hash][]Steward
-
-	// History of thresholds. Same indexing scheme.
+	// Legacy single-snapshot fields — kept so existing tests
+	// continue to work without modification. Always read/write
+	// branch 0. Will be removed in a future cleanup.
+	snapshot         types.StateSnapshot
+	stewardHistory   map[types.Hash][]Steward
 	thresholdHistory map[types.Hash]uint32
-
-	// Per-key sequence numbers. Used to detect out-of-order writes within a
-	// key (the spec uses these for ordering, not for crypto).
-	keySeq map[string]uint64
-
-	// The initial threshold and stewards. The current view extends from
-	// here.
-	initialStewards []Steward
+	keySeq           map[string]uint64
+	initialStewards  []Steward
 	initialThreshold uint32
+	log              []*Transition
+	equivocation     *equivocationLog
 
-	// Transition log, for replay / verification.
-	log []*Transition
+	// Mesh peer registry (G2). Cross-cutting — shared across all
+	// branches of the group. A mesh peer is a peer of the host,
+	// not a peer of any single branch.
+	meshPeers *meshPeerRegistry
 
-	// equivocation tracks every (steward, prior_state) we've applied,
-	// so a second distinct signed transition at the same point is
-	// detected as insider equivocation. See equivocation.go.
-	equivocation *equivocationLog
+	// Custody log (G3). Cross-cutting — a steward's custody tier
+	// applies regardless of which branch they're operating on.
+	custody *custodyLog
 
-	// MaxStewards caps the size of the steward set. Apply rejects
-	// ADD_STEWARD once the current set reaches this size. Zero means
-	// no cap (legacy / test mode). Default in NewState is 100.
+	// MaxStewards caps the size of the steward set per branch.
+	// Apply rejects ADD_STEWARD once the prospective set would
+	// exceed this cap. Default 100.
 	MaxStewards int
 
-	// Limiter rate-limits transitions per (steward, group). When nil
-	// (the default), no rate limit is enforced. Hosts opt in via
-	// SetLimiter to defend against transition flooding (§5.4.5).
-	//
-	// The limiter is invoked under s.mu so its own internal locking
-	// is only protecting against the limiter's lazy bucket creation,
-	// not against concurrent Apply calls.
+	// Limiter rate-limits transitions per (steward, group). Cross-
+	// cutting — applies across all branches. Hosts opt in via
+	// SetLimiter to defend against transition flooding.
 	Limiter *ratelimit.Limiter
+
+	// maxMeshPeers caps the wg peer set size. Default 100.
+	MaxMeshPeers int
+
+	// Pending equivocation evidence (cross-cutting). Gossip'd to
+	// peers; downstream consumers (SLASH_STEWARD generator) read it.
+	equivocationEvidence []*EquivocationEvidence
+
+	// MaxLogSize caps per-branch transition log size. Default 100000.
+	MaxLogSize int
+
+	// MaxKVSize caps per-branch state KV size. Default 100000.
+	MaxKVSize int
+
+	// MaxBranches caps the number of branches per group. Default
+	// 1000. Past this, BRANCH_CREATE is rejected.
+	MaxBranches int
 }
 
 // Steward is a public key + role attestation. v1 has no roles; the steward
@@ -189,7 +206,12 @@ func NewState(gid GroupID) *State {
 		stewardHistory:   make(map[types.Hash][]Steward),
 		thresholdHistory: make(map[types.Hash]uint32),
 		keySeq:           make(map[string]uint64),
+		branches:         newBranchRegistry(),
 		MaxStewards:      100,
+		MaxMeshPeers:     100,
+		MaxLogSize:       100000,
+		MaxKVSize:        100000,
+		MaxBranches:      1000,
 	}
 }
 
@@ -294,6 +316,51 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Branch routing. Each transition targets exactly one branch
+	// (identified by its BranchId field). The transition must be
+	// applied to that branch. Cross-branch transitions are nonsense
+	// — the protocol is branch-local.
+	branchID := BranchID(t.Proto.GetBranchId())
+	targetBranch := s.branches.get(branchID)
+
+	// CREATE_GROUP is the ONLY transition that may target a
+	// non-existent branch (it creates branch 0). For all other
+	// transitions targeting branch 0 that arrives before any
+	// CREATE_GROUP, we lazily allocate an empty branch 0 — the
+	// CREATE_GROUP itself will populate initialStewards/etc.
+	if targetBranch == nil {
+		if branchID == GenesisBranchID {
+			targetBranch = s.branches.getOrCreate(GenesisBranchID)
+		} else {
+			return fmt.Errorf("group: transition targets unknown branch %d", branchID)
+		}
+	}
+
+	// BRANCH_CREATE allocates a new branch. The transition itself
+	// is applied to the PARENT branch (which is what the steward
+	// envelope signed against); the new branch is allocated as a
+	// side effect and becomes the user's working branch from here on.
+	if t.Proto.GetType() == pb.TransitionType_TRANSITION_TYPE_BRANCH_CREATE {
+		// Cap check: refuse if this would exceed MaxBranches.
+		s.branches.mu.Lock()
+		branchCount := len(s.branches.branches)
+		s.branches.mu.Unlock()
+		if s.MaxBranches > 0 && branchCount >= s.MaxBranches {
+			return fmt.Errorf("group: BRANCH_CREATE rejected — would exceed MaxBranches=%d (current=%d)", s.MaxBranches, branchCount)
+		}
+	}
+
+	// From here on, lock the target branch for branch-local ops.
+	// We hold s.mu the whole time (as before) to keep the existing
+	// lock discipline simple. The branch-local fields (snapshot,
+	// stewardHistory, etc.) are protected by s.mu under the legacy
+	// model — when we move them fully to Branch.mu, this gets more
+	// nuanced. For now, branch 0's legacy fields ARE the source of
+	// truth, and Apply works against them directly.
+	if branchID != GenesisBranchID {
+		return fmt.Errorf("group: branch-local mutations on non-genesis branches not yet wired (branch %d)", branchID)
+	}
+
 	// Verify the prior_state matches our current head.
 	currentRoot := s.snapshot.Root()
 	if t.Proto.GetPriorState() != nil && len(t.Proto.GetPriorState().GetHash()) > 0 {
@@ -382,12 +449,17 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	}
 
 	// Apply the payload to the state.
+	// kvAllowed is set by each appendOrUpdate call. If a call would
+	// exceed MaxKVSize, the transition is rejected with ErrKVSizeExceeded.
+	var kvAllowed bool
 	newEntries := append([]types.StateEntry(nil), s.snapshot.Entries...)
 	switch t.Proto.GetType() {
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_GROUP:
 		p := t.Proto.GetCreateGroup()
-		newEntries = appendOrUpdate(newEntries, "name", []byte(p.GetCanonicalName()))
-		newEntries = appendOrUpdate(newEntries, "display_name", []byte(p.GetDisplayName()))
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "name", []byte(p.GetCanonicalName()), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "display_name", []byte(p.GetDisplayName()), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 		// Steward history at the NEW root records the initial set.
 	case pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD:
 		p := t.Proto.GetAddSteward()
@@ -402,15 +474,18 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if s.MaxStewards > 0 && len(prospective) > s.MaxStewards {
 			return fmt.Errorf("group: ADD_STEWARD rejected — steward set would grow to %d, MaxStewards=%d", len(prospective), s.MaxStewards)
 		}
-		newEntries = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), []byte{1})
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), []byte{1}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_STEWARD:
 		p := t.Proto.GetRemoveSteward()
 		var key types.PublicKey
 		copy(key[:], p.GetSteward().GetRaw())
-		newEntries = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), nil)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), nil, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CHANGE_THRESHOLD:
 		p := t.Proto.GetChangeThreshold()
-		newEntries = appendOrUpdate(newEntries, "threshold", binaryUint32(p.GetNewThreshold()))
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "threshold", binaryUint32(p.GetNewThreshold()), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT:
 		p := t.Proto.GetCreateEvent()
 		// Store the event payload as protobuf bytes keyed by event_id.
@@ -418,20 +493,24 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if err != nil {
 			return fmt.Errorf("group: marshal event: %w", err)
 		}
-		newEntries = appendOrUpdate(newEntries, "event/"+p.GetEventId(), ep)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "event/"+p.GetEventId(), ep, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_EVENT:
 		p := t.Proto.GetCancelEvent()
-		newEntries = appendOrUpdate(newEntries, "event_cancelled/"+p.GetEventId(), []byte{1})
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_cancelled/"+p.GetEventId(), []byte{1}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_RSVP:
 		p := t.Proto.GetRsvp()
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
-		newEntries = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{1})
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{1}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_RSVP:
 		p := t.Proto.GetCancelRsvp()
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
-		newEntries = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), nil)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), nil, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ATTEST:
 		p := t.Proto.GetAttest()
 		attestKey := attestStorageKey(p)
@@ -439,16 +518,225 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if err != nil {
 			return fmt.Errorf("group: marshal attest: %w", err)
 		}
-		newEntries = appendOrUpdate(newEntries, attestKey, attestBytes)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, attestKey, attestBytes, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_FORK:
 		// Fork creates a NEW group; the parent group's state machine just
 		// records the fork line. The new group is built separately.
 		p := t.Proto.GetFork()
-		newEntries = appendOrUpdate(newEntries, "fork_lineage", []byte(p.GetNewGroupKey().GetRaw()))
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "fork_lineage", []byte(p.GetNewGroupKey().GetRaw()), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_MIGRATE:
 		p := t.Proto.GetMigrate()
-		newEntries = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()))
-		newEntries = appendOrUpdate(newEntries, "canonical_after", binaryUint64(uint64(p.GetDeadline().GetSeconds())))
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_after", binaryUint64(uint64(p.GetDeadline().GetSeconds())), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
+	// =====================================================================
+	// G1 — Host certificate issuance / revocation. Surface: TLS layer.
+	// Gate: kills the public-CA attack surface by moving cert issuance
+	// into the protocol. Only stewards (whoever M-of-N of them are)
+	// authorize which TLS keys serve which hostnames.
+	// =====================================================================
+	case pb.TransitionType_TRANSITION_TYPE_ISSUE_HOST_CERT:
+		p := t.Proto.GetIssueHostCert()
+		if p == nil {
+			return errors.New("group: ISSUE_HOST_CERT missing payload")
+		}
+		// Encode the cert as canonical bytes under a deterministic key.
+		// Multiple certs per host are allowed (hostname may change, or
+		// the host may rotate TLS keys). The (hostname, host_tls_key,
+		// not_after) tuple is the unique identifier.
+		certBytes, err := proto.Marshal(p)
+		if err != nil {
+			return fmt.Errorf("group: marshal issue_host_cert: %w", err)
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertStorageKey(p), certBytes, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
+	case pb.TransitionType_TRANSITION_TYPE_REVOKE_HOST_CERT:
+		p := t.Proto.GetRevokeHostCert()
+		if p == nil {
+			return errors.New("group: REVOKE_HOST_CERT missing payload")
+		}
+		// Revocation: tombstone the cert entry. Hosts MUST drop any
+		// cached cert that has a matching revocation in their state.
+		revBytes, err := proto.Marshal(p)
+		if err != nil {
+			return fmt.Errorf("group: marshal revoke_host_cert: %w", err)
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertRevocationKey(p), revBytes, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+		// Also tombstone the cert entry itself — clients seeing both
+		// can correlate.
+		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertStorageKeyFromRevoke(p), nil, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
+	// =====================================================================
+	// G2 — WireGuard mesh peer admission. Surface: mesh transport.
+	// Gate: kills the rogue-bootstrap attack. ADD_HOST_PEER requires
+	// steward threshold signatures AND a co-signature from an
+	// existing mesh member.
+	// =====================================================================
+	case pb.TransitionType_TRANSITION_TYPE_ADD_HOST_PEER:
+		p := t.Proto.GetAddHostPeer()
+		if p == nil {
+			return errors.New("group: ADD_HOST_PEER missing payload")
+		}
+		if err := verifyAddHostPeerPayload(s, p); err != nil {
+			return err
+		}
+		newPeer := &MeshPeer{
+			HostWGKey: *p.HostWgKey,
+			MeshIP:    append([]byte(nil), p.GetMeshIp()...),
+		}
+		// Cap the mesh size (G4). Reject if the prospective count
+		// exceeds MaxMeshPeers.
+		if s.MaxMeshPeers > 0 {
+			current := 0
+			if s.meshPeers != nil {
+				current = s.meshPeers.Len()
+			}
+			if current+1 > s.MaxMeshPeers {
+				return fmt.Errorf("group: ADD_HOST_PEER rejected — mesh peer count would grow to %d, MaxMeshPeers=%d", current+1, s.MaxMeshPeers)
+			}
+		}
+		if err := s.addMeshPeerLocked(newPeer); err != nil {
+			return err
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), p.GetMeshIp(), s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
+	case pb.TransitionType_TRANSITION_TYPE_REMOVE_HOST_PEER:
+		p := t.Proto.GetRemoveHostPeer()
+		if p == nil {
+			return errors.New("group: REMOVE_HOST_PEER missing payload")
+		}
+		removed := &MeshPeer{
+			HostWGKey: *p.HostWgKey,
+			MeshIP:    append([]byte(nil), p.GetMeshIp()...),
+		}
+		if err := s.removeMeshPeerLocked(removed); err != nil {
+			return err
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), nil, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
+	// =====================================================================
+	// G3 — Steward custody declaration. Surface: multisig weight.
+	// Gate: lets threshold policy require "M of N must be HSM-or-better".
+	// =====================================================================
+	case pb.TransitionType_TRANSITION_TYPE_DECLARE_STEWARD_CUSTODY:
+		p := t.Proto.GetDeclareStewardCustody()
+		if p == nil {
+			return errors.New("group: DECLARE_STEWARD_CUSTODY missing payload")
+		}
+		if err := verifyDeclareStewardCustody(s, p); err != nil {
+			return err
+		}
+		s.recordCustodyLocked(CustodyDeclaration{
+			Steward: *p.Steward,
+			Tier:    p.GetTier(),
+		})
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("custody/%x", p.GetSteward().GetRaw()), []byte{byte(p.GetTier())}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
+	// =====================================================================
+	// G6 — Auto-slash for equivocation. Detection (already in place)
+	// becomes action: when evidence is published, the threshold of
+	// OTHER stewards can sign a SLASH_STEWARD transition that removes
+	// the offending key. The slashed steward cannot co-sign.
+	// =====================================================================
+	case pb.TransitionType_TRANSITION_TYPE_SLASH_STEWARD:
+		p := t.Proto.GetSlashSteward()
+		if p == nil {
+			return errors.New("group: SLASH_STEWARD missing payload")
+		}
+		if err := verifySlashStewardPayload(s, p, t); err != nil {
+			return err
+		}
+		// Apply the slash by recording an evidence entry and removing
+		// the steward from the current set. The slashed steward MUST
+		// not be a signer; the threshold of OTHER stewards authored
+		// the slash.
+		slashedKey := types.PublicKey{}
+		copy(slashedKey[:], p.GetSlashedSteward().GetRaw())
+		// Record evidence in state for downstream consumers.
+		ev := &EquivocationEvidence{
+			GroupID:    s.groupID,
+			StewardKey: slashedKey,
+			PriorState: types.Hash{},
+		}
+		copy(ev.PriorState[:], p.GetPriorState().GetHash())
+		s.equivocationEvidence = append(s.equivocationEvidence, ev)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", slashedKey[:]), nil, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("slashed/%x", slashedKey[:]), []byte{1}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+		// SLASH_STEWARD also mutates the steward set (removes the
+		// slashed key), so we mark it for the post-Apply steward-set
+		// recompute via the standard steward-mutation path. The
+		// post-Apply call to computeCurrentStewards handles this
+		// automatically since it walks back via prior_state. We just
+		// need to make sure the slashed key is NOT in the multisig
+// =====================================================================
+	// Branch-local mutation: BRANCH_CREATE. The transition itself is
+	// recorded against the parent branch (the steward envelope
+	// verifies against the parent's stewards); the NEW branch is
+	// allocated as a side effect, inheriting the parent's stewards
+	// and threshold at the snapshot.
+	// =====================================================================
+	case pb.TransitionType_TRANSITION_TYPE_BRANCH_CREATE:
+		p := t.Proto.GetBranchCreate()
+		if p == nil {
+			return errors.New("group: BRANCH_CREATE missing payload")
+		}
+		// Capture the parent's current stewards + threshold BEFORE
+		// we mutate state.
+		parentStewards := s.stewardsAtLocked(t.Proto.GetPriorState())
+		parentThreshold := s.thresholdAtLocked(t.Proto.GetPriorState())
+		// Allocate the new branch.
+		newBranch := s.branches.allocate(BranchID(branchID), p.GetReason())
+		newBranch.initialStewards = append([]Steward(nil), parentStewards...)
+		newBranch.initialThreshold = parentThreshold
+		// Record genesis HLC from this transition.
+		newBranch.genesisHLC = append([]byte(nil), t.Proto.GetHlc()...)
+		// Record the branch creation in the PARENT branch's KV
+		// (so mirrors replaying the parent see the branch exist).
+		newEntries, kvAllowed = appendOrUpdate(newEntries,
+			fmt.Sprintf("branch/%d/parent", newBranch.id),
+			[]byte(fmt.Sprintf("%d", branchID)),
+			s.MaxKVSize,
+		)
+		if !kvAllowed {
+			return ErrKVSizeExceeded
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries,
+			fmt.Sprintf("branch/%d/reason", newBranch.id),
+			[]byte(p.GetReason()),
+			s.MaxKVSize,
+		)
+		if !kvAllowed {
+			return ErrKVSizeExceeded
+		}
+
+	// =====================================================================
+	// G8 — Discovery binding. Surface: directory lookup.
+	// Gate: phishing a name requires forging a steward threshold
+	// signature on a NAME_BIND transition.
+	// =====================================================================
+	case pb.TransitionType_TRANSITION_TYPE_NAME_BIND:
+		p := t.Proto.GetNameBind()
+		if p == nil {
+			return errors.New("group: NAME_BIND missing payload")
+		}
+		if err := verifyNameBindPayload(s, p); err != nil {
+			return err
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, nameBindStorageKey(p), []byte{1}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+
 	default:
 		return fmt.Errorf("group: unsupported transition type %v", t.Proto.GetType())
 	}
@@ -457,6 +745,14 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	s.stewardHistory[s.snapshot.Root()] = s.computeCurrentStewards(t.Proto)
 	s.thresholdHistory[s.snapshot.Root()] = s.computeCurrentThreshold(t.Proto)
 	s.log = append(s.log, t)
+	// G7 memory bound on transition log. When the log exceeds
+	// MaxLogSize, evict the oldest entry. Eviction is purely local;
+	// hosts that need full history for audit use persistent storage.
+	if s.MaxLogSize > 0 && len(s.log) > s.MaxLogSize {
+		// Drop in chunks to amortize the slice copy.
+		drop := len(s.log) - s.MaxLogSize
+		s.log = append([]*Transition{}, s.log[drop:]...)
+	}
 	return nil
 }
 
@@ -490,6 +786,20 @@ func (s *State) computeCurrentStewards(t *pb.Transition) []Steward {
 			}
 		}
 		current = out
+	case pb.TransitionType_TRANSITION_TYPE_SLASH_STEWARD:
+		// SLASH_STEWARD removes the slashed key from the active
+		// set, identical to REMOVE_STEWARD for the steward-set
+		// computation. The verify* gate ensures the slashed
+		// steward did not co-sign their own removal.
+		var key types.PublicKey
+		copy(key[:], t.GetSlashSteward().GetSlashedSteward().GetRaw())
+		out := current[:0]
+		for _, st := range current {
+			if st.Key != key {
+				out = append(out, st)
+			}
+		}
+		current = out
 	}
 	return current
 }
@@ -516,10 +826,41 @@ func (s *State) Log() []*Transition {
 // Helpers
 // =============================================================================
 
+// ErrKVSizeExceeded is returned by Apply when a transition would
+// cause the per-branch state KV to exceed MaxKVSize. The transition
+// is rejected and no state changes occur.
+var ErrKVSizeExceeded = &groupError{Kind: "kv_size_exceeded", Msg: "state KV would exceed MaxKVSize"}
+
 // appendOrUpdate replaces the entry for `key` (incrementing its seq), or
 // appends a new one if `key` doesn't exist. If value is nil, the key is
-// removed. Returns the new entries slice.
-func appendOrUpdate(entries []types.StateEntry, key string, value []byte) []types.StateEntry {
+// removed. Returns the new entries slice and a flag indicating whether
+// the append was allowed.
+//
+// G7 memory bound: when the entries slice exceeds `maxSize`, the call
+// returns the unchanged entries with allowed=false. Callers should
+// reject the transition with ErrKVSizeExceeded.
+//
+// We return a flag rather than an error to keep appendOrUpdate
+// allocation-free; the caller (Apply) maps the flag to an error.
+func appendOrUpdate(entries []types.StateEntry, key string, value []byte, maxSize int) ([]types.StateEntry, bool) {
+	if maxSize > 0 && value != nil && len(entries) >= maxSize {
+		found := false
+		for _, e := range entries {
+			if e.Key == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return entries, false
+		}
+	}
+	return appendOrUpdateUnchecked(entries, key, value), true
+}
+
+// appendOrUpdateUnchecked is the inner implementation without the
+// G7 cap check. Used internally; callers should use appendOrUpdate.
+func appendOrUpdateUnchecked(entries []types.StateEntry, key string, value []byte) []types.StateEntry {
 	maxSeq := uint64(0)
 	found := false
 	for _, e := range entries {

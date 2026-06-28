@@ -34,17 +34,37 @@ The protocol does not distinguish "steward" from "user" at the cryptographic lev
 
 ## 3. State machine
 
-The group's state is a Merkle-tree-addressable key-value store. State transitions are signed messages. Every transition has:
+The group's state is a **forest of branches**, each branch an independent state machine. A branch carries its own Merkle KV state, transition log, equivocation log, steward history, and threshold history. Branches share the group's keypair (so cross-branch messages verify) and the cross-cutting registry (mesh peers, custody declarations, equivocation evidence list). They do NOT share state mutations.
 
-- A reference to the prior state root (snapshot)
-- The new state (a set of key-value changes)
-- A signature from the group's threshold of stewards
-- A timestamp (signed, host-agnostic)
-- The type of transition (a string from a small enum, defined below)
+This is the load-bearing 2026-06-27 architectural shift. It exists because:
 
-The state machine is a CRDT-ish structure: transitions are total-ordered by the state root they reference. Conflicts (two transitions at the same snapshot) are resolved by the group's policy, which is itself a state transition.
+- **Mutation must be local to a branch.** Two stewards who disagree on the group's direction should not have to fight over the same log; they each create a branch and the community arbitrates by showing up.
+- **Fork-cost must be cheap.** Branching is the cheap fork — it inherits the group's keypair, steward set, and threshold. The expensive sovereign split (a new group with its own keypair and stewards) is FORK, distinct from BRANCH_CREATE.
+- **No fork-rate gate.** Branching is supposed to be easy. Capping the rate of branching recreates the lock-in problem the branching primitive exists to solve. The cap is on per-group BRANCH count (MaxBranches), not on creation rate.
 
-### 3.1 Transition types
+### 3.0 Branches
+
+- Every transition targets exactly one branch, identified by `Transition.branch_id` (uint32, default 0).
+- Branch 0 is the **genesis branch**, created by CREATE_GROUP. It holds the initial steward set and threshold.
+- BRANCH_CREATE allocates the next monotonic branch ID (1, 2, 3, ...) and copies the parent's stewards + threshold at the snapshot. The new branch inherits the group's keypair.
+- Branch IDs are never reused within a group's lifetime.
+- A branch's KV state, transition log, and equivocation log are independent of every other branch.
+- Cross-branch comparisons are meaningless — branches are different state machines that share only the group's keypair.
+- Cross-branch "equivocation" is not detected (different state machines, different semantics).
+- A host serves one or more branches; clients pick which branch to follow via BRANCH_ADOPT (a local, host-side operation, not a transition).
+
+### 3.0.1 The two kinds of split
+
+| Operation | Use case | What's shared | What's new |
+|---|---|---|---|
+| **BRANCH_CREATE** | "I disagree with the direction but I still want to be part of this group" | Group keypair, steward set, threshold, group identity | A new branch ID + an isolated state machine |
+| **FORK** | "This group is captured / hostile / dead — I'm taking the history and leaving" | Nothing — full sovereign split | New keypair, new stewards, new threshold, new group identity |
+
+FORK is a special case of BRANCH_CREATE that copies the parent's state into a new group (not just a new branch). Use BRANCH_CREATE alone for cheap disagreement; use FORK for a full sovereign split.
+
+### 3.1 Per-transition canonical-form
+
+Every transition has:
 
 The protocol defines a small set of canonical transition types. Hosts and clients may add custom types as opaque payloads, but the canonical types are what make two hosts interoperable.
 
@@ -60,7 +80,8 @@ The protocol defines a small set of canonical transition types. Hosts and client
 - `RSVP` — a user signing that they will attend an event
 - `CANCEL_RSVP` — a user retracting an RSVP
 - `ATTEST` — a signed attestation from one identity to another (used for reviews, endorsements, and the reputation layer)
-- `FORK` — creates a new group whose state diverges from this group at a given snapshot
+- `BRANCH_CREATE` — creates a new branch within the same group (cheap disagreement; see §3.0.1)
+- `FORK` — creates a new sovereign group whose state diverges from this group at a given snapshot (full split; see §3.0.1)
 - `MIGRATE` — moves a group's hosting from one host to another (signed by the steward threshold)
 
 Hosts and clients may add custom transition types for product features, but those types do not need to be implemented by every host to maintain interop — they will be ignored or shown as opaque data by hosts that do not implement them.
@@ -251,6 +272,16 @@ The hardening above covers the four highest-likelihood attacks under the threat 
 - **Fork/migrate races** — split-brain via two concurrent MIGRATE transitions from different hosts not yet handled.
 - **Compromised wg host** — passive observation defense is via §5.1 key separation; active defense (slash-via-attest) is in the open questions list.
 - **Gossip-level equivocation pipeline** — the equivocation log detects the data structure but the end-to-end "gossip evidence + slash via REMOVE_STEWARD" is not yet wired.
+
+#### 5.4.7 Branch-local mutation
+
+**Attack.** A malicious steward or compromised host floods the federation with high-volume state mutations on a single group, hoping to overwhelm signature verification, KV storage, or operator attention. Earlier design (pre-2026-06-27) considered a fork-rate gate; that approach was rejected because cap-on-rate punishes legitimate disagreement and recreates lock-in.
+
+**Defense.** Mutations are local to a branch. Each branch is an independent state machine with its own Merkle KV, transition log, equivocation log, steward history, and threshold. A flood on branch N has zero effect on branch M — not even equivocation detection crosses branches, because branches are different state machines. The cap on per-group branches (`MaxBranches`, default 1000) bounds total branches, not creation rate.
+
+**Test.** `internal/group/branch_test.go::TestBranch_BranchCapEnforced` — sets `MaxBranches=2`, creates branches 0 and 1, rejects the third creation. `TestBranch_TransitionMustReferenceExistingBranch` — verifies that transitions targeting non-existent branches are rejected (a host can't pretend to mutate a branch it hasn't seen).
+
+**Trade-off.** Branch-locality means a fork-as-sovereign-split (FORK) and a fork-as-disagreement (BRANCH_CREATE) live at different protocol layers. Hosts serving many branches pay storage cost per branch; production hosts SHOULD prune branches with no recent activity (out of scope for v1 — tracked in §11).
 
 ### 5.5 What a host must not do
 

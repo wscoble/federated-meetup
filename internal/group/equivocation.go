@@ -48,15 +48,49 @@ type EquivocationEvidence struct {
 // surface an EquivocationEvidence and refuse to apply the conflicting
 // transition.
 //
-// Memory bound: one entry per (steward, prior_state) ever seen. For a
-// group with N stewards and a history of H state roots, that's N*H
-// entries. With N=20 and H=10000 that's 200k entries — fine in memory,
-// could be compacted to a rolling window in a future iteration if needed.
+// Memory bound (G7): entries are tracked in an LRU of `maxEntries`.
+// When the log exceeds the cap, the oldest entry is evicted. Eviction
+// does NOT weaken equivocation detection for the recent past — an
+// adversary would need to bypass the most recent N entries to land
+// an equivocation. For active-adversy detection over a rolling
+// window, maxEntries=10000 is more than enough.
+//
+// Default: 10000 entries. Configurable via SetMaxEntries.
 type equivocationLog struct {
 	mu sync.Mutex
 
-	// seen[key] = first HLC observed for that key.
+	maxEntries int
+
+	// seen[key] = first HLC observed for that key. Eviction removes
+	// the oldest insertion (we don't track access time — the threat
+	// model is flooding, not stale-lookups).
 	seen map[equivocationKey]hlcSeen
+
+	// insertionOrder tracks keys in insertion order for FIFO eviction.
+	// The head is the oldest entry; eviction pops from the head and
+	// removes from `seen`.
+	insertionOrder []equivocationKey
+}
+
+// EquivocationLogMaxEntries is the default cap on equivocation log size.
+// 10000 entries × ~120 bytes/key ≈ 1.2 MB worst case. Production hosts
+// SHOULD override if they expect more stewards or longer histories.
+var EquivocationLogMaxEntries = 10000
+
+// newEquivocationLog creates an empty log with the default cap.
+func newEquivocationLog() *equivocationLog {
+	return &equivocationLog{
+		maxEntries: EquivocationLogMaxEntries,
+		seen:       make(map[equivocationKey]hlcSeen),
+	}
+}
+
+// SetMaxEntries overrides the eviction cap. Setting to 0 disables
+// eviction (legacy / test mode).
+func (e *equivocationLog) SetMaxEntries(n int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.maxEntries = n
 }
 
 type equivocationKey struct {
@@ -69,10 +103,20 @@ type hlcSeen struct {
 	TxHash types.Hash
 }
 
-// newEquivocationLog creates an empty log.
-func newEquivocationLog() *equivocationLog {
-	return &equivocationLog{
-		seen: make(map[equivocationKey]hlcSeen),
+// evictOldest removes the oldest insertion. Called when the log
+// grows past maxEntries. No-op if the log is empty or if maxEntries
+// is 0 (unbounded).
+func (e *equivocationLog) evictOldestLocked() {
+	if e.maxEntries <= 0 || len(e.insertionOrder) == 0 {
+		return
+	}
+	if len(e.insertionOrder) <= e.maxEntries {
+		return
+	}
+	for len(e.insertionOrder) > e.maxEntries {
+		oldest := e.insertionOrder[0]
+		e.insertionOrder = e.insertionOrder[1:]
+		delete(e.seen, oldest)
 	}
 }
 
@@ -99,6 +143,8 @@ func (e *equivocationLog) check(
 	prev, ok := e.seen[key]
 	if !ok {
 		e.seen[key] = hlcSeen{HLC: append([]byte(nil), hlcBytes...), TxHash: txHash}
+		e.insertionOrder = append(e.insertionOrder, key)
+		e.evictOldestLocked()
 		return nil, nil
 	}
 
