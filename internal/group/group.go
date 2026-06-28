@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
+	"github.com/sscoble/federated-meetup/internal/ratelimit"
 	"github.com/sscoble/federated-meetup/internal/types"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 )
@@ -158,6 +159,15 @@ type State struct {
 	// ADD_STEWARD once the current set reaches this size. Zero means
 	// no cap (legacy / test mode). Default in NewState is 100.
 	MaxStewards int
+
+	// Limiter rate-limits transitions per (steward, group). When nil
+	// (the default), no rate limit is enforced. Hosts opt in via
+	// SetLimiter to defend against transition flooding (§5.4.5).
+	//
+	// The limiter is invoked under s.mu so its own internal locking
+	// is only protecting against the limiter's lazy bucket creation,
+	// not against concurrent Apply calls.
+	Limiter *ratelimit.Limiter
 }
 
 // Steward is a public key + role attestation. v1 has no roles; the steward
@@ -308,6 +318,15 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		stewardsForCheck := s.stewardsAtLocked(t.Proto.GetPriorState())
 		signing := t.findSigningSteward(stewardsForCheck)
 		if signing != (types.PublicKey{}) {
+			// Rate-limit check (§5.4.5). Charge the signing steward's
+			// bucket for this group BEFORE the equivocation check, so
+			// that rate-limited attempts don't pollute the equivocation
+			// log with phantom entries.
+			if s.Limiter != nil {
+				if err := s.Limiter.Allow(s.groupID, signing); err != nil {
+					return err
+				}
+			}
 			txHash := transitionTxHash(t)
 			isEquiv := s.checkEquivocationLocked(signing, prior, t.Proto.GetHlc(), txHash)
 			if isEquiv {

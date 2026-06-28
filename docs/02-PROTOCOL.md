@@ -223,15 +223,34 @@ Federation hosts run in adversarial environments — untrusted VPSes, contested 
 
 **Test.** `TestThreat_StewardSetBound` — caps at 5 stewards, attempts 3 adds; first 2 succeed (3 → 4 → 5), 3rd is rejected with an explicit error message.
 
-#### 5.4.4 What these defenses DON'T cover (yet)
+#### 5.4.5 Per-steward transition rate limit
 
-The hardening above covers the three highest-likelihood attacks under the threat model Scott enumerated. The following are **not yet implemented** and are tracked in §11:
+**Attack.** An adversary who controls one steward key floods `SubmitTransition` calls. Each transition is signed (cost: CPU on authoring host) and broadcast (cost: mesh bandwidth on every peer). Even though signature verification is the expensive part on receiving hosts, the FLOOD of inbound messages overwhelms CPU and bandwidth before individual messages can be rejected for content.
+
+**Defense.** Token-bucket rate limiter per `(steward_pubkey, group_id)`. Each transition consumes one token from the signing steward's bucket for the target group. The bucket refills at a configurable rate up to a configurable burst. Buckets are lazily created on first use.
+
+The check fires in `group.State.Apply` BEFORE the equivocation check (so rate-limited attempts don't pollute the equivocation log) and BEFORE signature verification (so the cheap rejection happens first). The first verifying signer in the multisig envelope is the bucket owner — the assumption is that the author of the message is responsible, even if co-signers are honest.
+
+**Where.** `internal/ratelimit/` (`Bucket`, `Limiter`). Wired into `group.State.Limiter` field; nil by default (opt-in). `(*group.State).Limiter = ratelimit.NewLimiter(rate, burst, clock)`.
+
+**Defaults.** 10 transitions per second per steward per group, burst 10. Tune per deployment — higher for active event-creation hosts, lower for read-mostly mirrors.
+
+**Tests.** `internal/ratelimit/ratelimit_test.go` (unit): burst, refill, partial refill, per-key quota, lazy bucket creation, nil-clock fallback. `sim/threat_test.go::TestThreat_TransitionFloodingRejected` (integration): burst 3, fourth call rejected, refill over virtual clock allows next call.
+
+**Trade-offs.**
+- **Clock source.** Production uses `time.Now`. The simulator passes a virtual clock so the test is deterministic. Production hosts SHOULD log rate-limit rejections and tune the bucket size based on observed rejection rates.
+- **Bucket size.** Too low = legitimate stewards (e.g. a host pushing a 1000-RSVP event-creation batch) get throttled. Too high = the defense is ineffective. The right value is workload-dependent.
+- **Per-group vs global.** v1 is per-group, so a steward authoring for many groups gets N× the throughput. v2 may want a global cap per steward key.
+
+#### 5.4.6 What these defenses DON'T cover (yet)
+
+The hardening above covers the four highest-likelihood attacks under the threat model Scott enumerated. The following are **not yet implemented** and are tracked in §11:
 
 - **Steward set growth via REMOVE_STEWARD bypass** — a steward could rotate keys to grow effective N. Not yet modeled.
-- **Transition flooding (app-layer DoS)** — no rate limiting per steward. CPU impact under sustained high-RPS authoring not measured.
 - **Merkle state root collision** — SHA-256 is currently secure. Quantum-computing forward-compat via SHA-3-256 swap-in is documented in §11 but not yet specced.
 - **Fork/migrate races** — split-brain via two concurrent MIGRATE transitions from different hosts not yet handled.
 - **Compromised wg host** — passive observation defense is via §5.1 key separation; active defense (slash-via-attest) is in the open questions list.
+- **Gossip-level equivocation pipeline** — the equivocation log detects the data structure but the end-to-end "gossip evidence + slash via REMOVE_STEWARD" is not yet wired.
 
 ### 5.5 What a host must not do
 

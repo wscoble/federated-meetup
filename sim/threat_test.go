@@ -25,6 +25,7 @@ import (
 	"github.com/sscoble/federated-meetup/internal/crypto"
 	"github.com/sscoble/federated-meetup/internal/group"
 	"github.com/sscoble/federated-meetup/internal/hlc"
+	"github.com/sscoble/federated-meetup/internal/ratelimit"
 	"github.com/sscoble/federated-meetup/internal/types"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 	"github.com/sscoble/federated-meetup/sim"
@@ -390,6 +391,95 @@ func TestThreat_StewardSetBound(t *testing.T) {
 // used by tests.
 func currentStewards(s *group.State) []group.Steward {
 	return s.Stewards()
+}
+
+// TestThreat_TransitionFloodingRejected verifies the per-steward
+// rate-limit defense from §5.4.5. A malicious steward with a valid
+// signing key floods ADD_STEWARD transitions; after exhausting their
+// burst quota, subsequent transitions are rejected with
+// ErrRateLimited.
+//
+// Why this matters: an adversary who controls ONE steward key can
+// still consume honest-hosts' CPU (signature verification is the
+// hot path). Rate limiting by first-signer attributes the cost to
+// the actor that authored the message — not the threshold-many
+// co-signers who are presumably honest.
+//
+// The test uses sim.World's virtual clock so the rate-limit
+// recovery is deterministic.
+func TestThreat_TransitionFloodingRejected(t *testing.T) {
+	w, err := sim.NewWorld(sim.Config{
+		Seed:        55,
+		HostCount:   1,
+		InitialTime: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	w.AttachMesh(sim.NewMesh(w, sim.DDILBenign))
+	gkp := setupVegasProgrammers(w)
+
+	host := w.Hosts()[0]
+	st := host.State(gkp.Public)
+	stewards := stewardKPsForTest(w) // [alice, bob, carol]
+
+	// Wire a rate limiter into the state. Tight burst for fast test:
+	// 1/s refill, burst 3.
+	var now time.Time = w.Now()
+	st.Limiter = ratelimit.NewLimiter(1, 3, func() time.Time { return now })
+
+	// Helper: build & apply an ADD_STEWARD transition that adds a
+	// fresh dummy key, signed by alice + bob.
+	applyAdd := func(idx int) error {
+		root := st.Root()
+		prior := &pb.StateRoot{Hash: root[:]}
+		newKP := crypto.KeyPairFromSeed([32]byte{byte(idx), 0, 0, 0, 0, 0, 0, 0})
+		p := &pb.AddStewardPayload{
+			NewSteward: &pb.PublicKey{Raw: newKP.Public[:]},
+		}
+		trProto := &pb.Transition{
+			Type:       pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD,
+			PriorState: prior,
+			Payload:    &pb.Transition_AddSteward{AddSteward: p},
+			SignedAt:   timestamppb.New(w.Now()),
+		}
+		canonical, _ := group.MarshalCanonicalForSigningHelper(trProto)
+		sigA := crypto.Sign(stewards[0], gkp.Public, crypto.MsgKindTransition, canonical)
+		sigB := crypto.Sign(stewards[1], gkp.Public, crypto.MsgKindTransition, canonical)
+		trProto.StewardSignatures = &pb.Multisig{
+			Threshold:  2,
+			Signatures: []*pb.Signature{{Raw: sigA[:]}, {Raw: sigB[:]}},
+		}
+		tr, _ := group.NewTransition(trProto, gkp.Public)
+		return st.Apply(tr, w.Now())
+	}
+
+	// First 3 calls: burst quota, all succeed.
+	for i := 1; i <= 3; i++ {
+		if err := applyAdd(i); err != nil {
+			t.Fatalf("burst call #%d should succeed, got: %v", i, err)
+		}
+	}
+
+	// 4th call: bucket exhausted, rate limit fires.
+	err = applyAdd(4)
+	if err == nil {
+		t.Fatal("4th call should be rate-limited")
+	}
+	var rl *ratelimit.ErrRateLimited
+	if !errors.As(err, &rl) {
+		t.Fatalf("expected ErrRateLimited, got %T: %v", err, err)
+	}
+	t.Logf("4th call rate-limited: %v", err)
+
+	// Advance virtual clock by 5 seconds — bucket refills 5 tokens,
+	// capped at burst (3). Next call should succeed.
+	now = now.Add(5 * time.Second)
+	if err := applyAdd(5); err != nil {
+		t.Fatalf("after refill, call should succeed, got: %v", err)
+	}
+	t.Log("post-refill call succeeded")
 }
 
 // contains is a tiny helper to avoid importing strings just for
