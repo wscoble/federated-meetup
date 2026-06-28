@@ -538,7 +538,10 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT:
 		p := t.Proto.GetCreateEvent()
 		// Store the event payload as protobuf bytes keyed by event_id.
-		ep, err := proto.Marshal(p)
+		// Use deterministic marshaling so all hosts produce the same
+		// bytes for the same logical event — the Metadata field is a
+		// map and would otherwise marshal in non-deterministic order.
+		ep, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal event: %w", err)
 		}
@@ -548,8 +551,14 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		// PATCH semantics: store the patch keyed by event_id under
 		// event_patch/{id}. Hosts apply patches on read; the state
 		// machine records the patch's existence and ordering via HLC.
+		//
+		// Use deterministic marshaling so all hosts produce the same
+		// patch bytes for the same logical patch — the Patch field is
+		// a map and would otherwise marshal in non-deterministic
+		// order across hosts (Go map iteration), causing state root
+		// divergence on the same logical transition.
 		p := t.Proto.GetUpdateEvent()
-		pp, err := proto.Marshal(p)
+		pp, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal event patch: %w", err)
 		}
@@ -574,7 +583,7 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	case pb.TransitionType_TRANSITION_TYPE_ATTEST:
 		p := t.Proto.GetAttest()
 		attestKey := attestStorageKey(p)
-		attestBytes, err := proto.Marshal(p)
+		attestBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal attest: %w", err)
 		}
@@ -608,7 +617,7 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		// Multiple certs per host are allowed (hostname may change, or
 		// the host may rotate TLS keys). The (hostname, host_tls_key,
 		// not_after) tuple is the unique identifier.
-		certBytes, err := proto.Marshal(p)
+		certBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal issue_host_cert: %w", err)
 		}
@@ -622,7 +631,7 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		}
 		// Revocation: tombstone the cert entry. Hosts MUST drop any
 		// cached cert that has a matching revocation in their state.
-		revBytes, err := proto.Marshal(p)
+		revBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal revoke_host_cert: %w", err)
 		}
