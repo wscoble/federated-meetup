@@ -1,0 +1,153 @@
+// FederatedMeetup.speckdl — Dogfood attempt #1
+// 02-PROTOCOL.md §3: state machine, 14 canonical transitions, branch-local mutation
+// Compile target: discover what Speckl is missing.
+
+speck FederatedMeetup {
+  version: "0.1.0"
+  author:  "sscoble"
+  license: "MIT"
+
+  // ─── State (per-branch) ──────────────────────────────────
+  state: {
+    branch_id:         Nat,
+    group_name:        String,
+    stewards:          StringList,
+    threshold:         Nat,
+    members:           StringList,
+    events:            Map<String, EventRecord>,
+    branches:          Map<Nat, BranchInfo>,
+    equivocation_log:  List<EquivocationEvidence>,
+    custody:           Map<String, CustodyDeclaration>
+  }
+
+  // ─── Branch + Custody models ─────────────────────────────
+  interface BranchInfo {
+    branch_id:     Nat,
+    parent:        Nat,
+    created_at:    String,
+    head_state:    String
+  }
+
+  interface CustodyDeclaration {
+    steward:        String,
+    tier:           CustodyTier,
+    declared_at:    String
+  }
+
+  interface CustodyTier {
+    ColdHardware
+    HotSigning
+    ThresholdSplit
+    BackupOnly
+    Compromised
+  }
+
+  interface EquivocationEvidence {
+    signer:         String,
+    branch_id:      Nat,
+    hlc:            String,
+    payload_hash:   String,
+    recorded_at:    String
+  }
+
+  interface EventRecord {
+    event_id:       String,
+    title:          String,
+    starts_at:      String,
+    location:       String,
+    capacity:       Nat,
+    cancelled:      Bool,
+    rsvps:          StringList
+  }
+
+  // ─── 14 canonical transition events ──────────────────────
+
+  event CreateGroup {
+    name:        String,
+    stewards:    StringList,
+    threshold:   Nat
+  }
+
+  event AddSteward {
+    new_steward:  String,
+    added_by:     String
+  }
+
+  event RemoveSteward {
+    removed:      String,
+    removed_by:   String
+  }
+
+  event ChangeThreshold {
+    new_threshold: Nat,
+    changed_by:    String
+  }
+
+  event AddMember {
+    user:         String
+  }
+
+  event RemoveMember {
+    user:         String,
+    removed_by:   String
+  }
+
+  event CreateEvent {
+    event_id:     String,
+    title:        String,
+    starts_at:    String,
+    location:     String,
+    capacity:     Nat
+  }
+
+  event UpdateEvent {
+    event_id:     String,
+    title:        String,
+    starts_at:    String,
+    location:     String,
+    capacity:     Nat
+  }
+
+  event CancelEvent {
+    event_id:     String,
+    cancelled_by: String
+  }
+
+  event Rsvp {
+    event_id:     String,
+    user:         String
+  }
+
+  event IssueHostCert {
+    host:         String,
+    cert:         String,
+    issued_by:    String
+  }
+
+  event AddHostPeer {
+    peer:         String,
+    added_by:     String
+  }
+
+  event BranchCreate {
+    new_branch_id: Nat,
+    parent_branch: Nat
+  }
+
+  // ─── Constraints (load-bearing security properties) ──────
+
+  constraint: len(stewards) >= threshold
+  constraint: threshold >= 1
+  constraint: implies(branch_id > 0, exists b in branches: b.branch_id == branch_id)
+  constraint: forall s in stewards: len(s) > 0
+  constraint: forall e in events: not e.cancelled || len(e.rsvps) == 0
+  constraint: equivocation_log has unique entries by (signer, branch_id, hlc)
+
+  // ─── Verification (security gates) ───────────────────────
+
+  verify: always(implies(event == Rsvp, threshold <= len(stewards)))
+  verify: always(implies(event == BranchCreate, parent_branch in branches))
+  verify: always(implies(event == AddSteward, added_by in stewards))
+  verify: always(implies(event == IssueHostCert, len(cert) == 64))
+  verify: eventually(implies(event == CancelEvent, event_id in events))
+}
