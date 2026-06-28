@@ -134,6 +134,73 @@ speck FederatedMeetup {
     parent_branch: Nat
   }
 
+  // ─── RPC service (ConnectRPC over HTTPS) ──────────────────────
+  // These map directly to gRPC service definitions when compiled to .proto.
+  // The .proto → buf generate → protoc-gen-go + protoc-gen-connect-go
+  // pipeline produces both client stubs and Connect handlers with no glue.
+
+  service HostService {
+    rpc get_group(GetGroupRequest) returns (GetGroupResponse);
+    rpc list_events(ListEventsRequest) returns (ListEventsResponse);
+    rpc submit_transition(SubmitTransitionRequest) returns (SubmitTransitionResponse);
+    rpc submit_user_action(SubmitUserActionRequest) returns (SubmitUserActionResponse);
+    rpc resolve_name(ResolveNameRequest) returns (ResolveNameResponse);
+  }
+
+  // ─── Request / response messages ──────────────────────────────
+
+  interface GetGroupRequest {
+    group_key: Bytes,
+    canonical_name: String
+  }
+
+  interface GetGroupResponse {
+    snapshot: EventRecord,
+    stewards: StringList,
+    threshold: Nat
+  }
+
+  interface ListEventsRequest {
+    group_key: Bytes,
+    cursor: String,
+    page_size: Nat
+  }
+
+  interface ListEventsResponse {
+    events: StringList,
+    next_cursor: String
+  }
+
+  interface SubmitTransitionRequest {
+    group_key: Bytes,
+    transition: AddMember
+  }
+
+  interface SubmitTransitionResponse {
+    new_snapshot: EventRecord,
+    transition_index: Nat
+  }
+
+  interface SubmitUserActionRequest {
+    group_key: Bytes,
+    action_type: Nat,
+    user_envelope: Bytes,
+    transition_payload: Bytes
+  }
+
+  interface SubmitUserActionResponse {
+    new_snapshot: EventRecord
+  }
+
+  interface ResolveNameRequest {
+    canonical_name: String
+  }
+
+  interface ResolveNameResponse {
+    group_key: Bytes,
+    hosts: StringList
+  }
+
   // ─── Constraints (load-bearing security properties) ──────
 
   constraint: len(stewards) >= threshold

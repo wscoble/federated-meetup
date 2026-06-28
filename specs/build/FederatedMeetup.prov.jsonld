@@ -1,0 +1,29 @@
+{
+  "@context": {
+    "prov": "http://www.w3.org/ns/prov#",
+    "speckl": "https://speckl.scoble.me/ns/v0.2#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
+  },
+  "@graph": [
+    {
+      "@type": "prov:Entity",
+      "@id": "speck:FederatedMeetup",
+      "prov:qualifiedGeneration": {
+        "@type": "prov:Generation",
+        "prov:activity": {
+          "@type": "prov:Activity",
+          "prov:startTime": "2026-06-28T04:31:54.443Z"
+        }
+      },
+      "rdfs:label": "FederatedMeetup",
+      "prov:wasAttributedTo": {
+        "@id": "agent:sscoble"
+      }
+    },
+    {
+      "@type": "prov:Agent",
+      "@id": "agent:sscoble",
+      "rdfs:label": "sscoble"
+    }
+  ]
+}

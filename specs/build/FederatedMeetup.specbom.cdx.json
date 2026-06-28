@@ -1,0 +1,30 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [],
+  "metadata": {
+    "tools": [],
+    "component": {
+      "type": "application",
+      "name": "FederatedMeetup",
+      "version": "0.2.0",
+      "properties": []
+    }
+  },
+  "annotations": [
+    {
+      "subject": "speck:FederatedMeetup",
+      "annotations": [
+        {
+          "type": "tag",
+          "value": "provenanceType",
+          "text": "author"
+        }
+      ],
+      "author": {
+        "name": "sscoble"
+      },
+      "timestamp": "2026-06-28T04:31:54.470Z"
+    }
+  ]
+}

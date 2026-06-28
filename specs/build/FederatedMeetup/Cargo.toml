@@ -1,0 +1,7 @@
+[package]
+name = "federated_meetup"
+version = "0.1.0"
+edition = "2021"
+description = "Auto-generated Speck state machine: FederatedMeetup"
+
+[dependencies]

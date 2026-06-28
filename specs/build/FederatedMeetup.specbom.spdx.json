@@ -1,0 +1,42 @@
+{
+  "@context": [
+    "https://spdx.github.io/spdx-v3/spdx-context.jsonld",
+    {
+      "speckl": "https://speckl.scoble.me/ns/v0.2#"
+    }
+  ],
+  "@type": "spdx:Document",
+  "spdx": {
+    "@id": "spdx:FederatedMeetup",
+    "@type": "spdx:Snippet",
+    "name": "FederatedMeetup",
+    "spdxVersion": "3.0.1",
+    "dataLicense": "CC0-1.0",
+    "creationInfo": {
+      "created": "2026-06-28T04:31:54.471Z",
+      "createdBy": [
+        "Organization: Speckl",
+        "tool: speckl-compile-0.2.0"
+      ]
+    }
+  },
+  "builtBy": [],
+  "relationships": [
+    {
+      "from": {
+        "@id": "spdx:FederatedMeetup"
+      },
+      "to": {
+        "@id": "spdx:agent:sscoble"
+      },
+      "relationshipType": "spdx:wasAttributedTo"
+    }
+  ],
+  "elements": [
+    {
+      "@type": "spdx:Person",
+      "@id": "spdx:agent:sscoble",
+      "name": "sscoble"
+    }
+  ]
+}
