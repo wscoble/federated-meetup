@@ -318,6 +318,8 @@ func setTransitionPayload(tr *pb.Transition, inner interface{}) error {
 		tr.Payload = &pb.Transition_DeclareStewardCustody{DeclareStewardCustody: p}
 	case *pb.NameBindPayload:
 		tr.Payload = &pb.Transition_NameBind{NameBind: p}
+	case *pb.RemoveHostPeerPayload:
+		tr.Payload = &pb.Transition_RemoveHostPeer{RemoveHostPeer: p}
 	default:
 		return &UnsupportedPayloadError{Type: inner}
 	}
