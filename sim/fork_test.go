@@ -320,6 +320,8 @@ func setTransitionPayload(tr *pb.Transition, inner interface{}) error {
 		tr.Payload = &pb.Transition_NameBind{NameBind: p}
 	case *pb.RemoveHostPeerPayload:
 		tr.Payload = &pb.Transition_RemoveHostPeer{RemoveHostPeer: p}
+	case *pb.CancelRsvpPayload:
+		tr.Payload = &pb.Transition_CancelRsvp{CancelRsvp: p}
 	default:
 		return &UnsupportedPayloadError{Type: inner}
 	}
