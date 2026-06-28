@@ -310,6 +310,8 @@ func setTransitionPayload(tr *pb.Transition, inner interface{}) error {
 		tr.Payload = &pb.Transition_IssueHostCert{IssueHostCert: p}
 	case *pb.RevokeHostCertPayload:
 		tr.Payload = &pb.Transition_RevokeHostCert{RevokeHostCert: p}
+	case *pb.AttestPayload:
+		tr.Payload = &pb.Transition_Attest{Attest: p}
 	default:
 		return &UnsupportedPayloadError{Type: inner}
 	}
