@@ -486,6 +486,18 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		p := t.Proto.GetChangeThreshold()
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "threshold", binaryUint32(p.GetNewThreshold()), s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
+	case pb.TransitionType_TRANSITION_TYPE_ADD_MEMBER:
+		p := t.Proto.GetAddMember()
+		var user types.PublicKey
+		copy(user[:], p.GetUser().GetRaw())
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{1}, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+	case pb.TransitionType_TRANSITION_TYPE_REMOVE_MEMBER:
+		p := t.Proto.GetRemoveMember()
+		var user types.PublicKey
+		copy(user[:], p.GetUser().GetRaw())
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), nil, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT:
 		p := t.Proto.GetCreateEvent()
 		// Store the event payload as protobuf bytes keyed by event_id.
@@ -494,6 +506,17 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 			return fmt.Errorf("group: marshal event: %w", err)
 		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "event/"+p.GetEventId(), ep, s.MaxKVSize)
+		if !kvAllowed { return ErrKVSizeExceeded }
+	case pb.TransitionType_TRANSITION_TYPE_UPDATE_EVENT:
+		// PATCH semantics: store the patch keyed by event_id under
+		// event_patch/{id}. Hosts apply patches on read; the state
+		// machine records the patch's existence and ordering via HLC.
+		p := t.Proto.GetUpdateEvent()
+		pp, err := proto.Marshal(p)
+		if err != nil {
+			return fmt.Errorf("group: marshal event patch: %w", err)
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_patch/"+p.GetEventId(), pp, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_EVENT:
 		p := t.Proto.GetCancelEvent()
