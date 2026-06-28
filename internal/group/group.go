@@ -533,7 +533,14 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		p := t.Proto.GetRemoveMember()
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), nil, s.MaxKVSize)
+		// Tombstone: write []byte{0} instead of deleting the entry.
+		// If we delete, the Merkle KV collapses for groups whose only
+		// state entry was the removed member, causing the post-REMOVE
+		// root to equal the pre-CREATE root — which then collides with
+		// the equivocation log entry for the initial stewards' CREATE
+		// signatures and makes a legitimate re-add indistinguishable
+		// from equivocation.
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{0}, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT:
 		p := t.Proto.GetCreateEvent()
