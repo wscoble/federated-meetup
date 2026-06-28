@@ -11,8 +11,10 @@ package sim
 
 import (
 	"sync"
+	"time"
 
 	"github.com/sscoble/federated-meetup/internal/group"
+	"github.com/sscoble/federated-meetup/internal/hlc"
 	"github.com/sscoble/federated-meetup/internal/types"
 )
 
@@ -23,6 +25,18 @@ type Host struct {
 	mesh  *Mesh
 
 	mu sync.Mutex
+
+	// hlcCursor is this host's last-issued HLC. Updated on every
+	// SubmitTransition (Tick) and every Deliver (Observe). The cursor
+	// preserves strict monotonicity across the host's lifetime — even
+	// when wall-clock goes backwards (DDILClockSkew), the cursor never
+	// regresses.
+	hlcCursor hlc.HLC
+
+	// clockSkew is this host's wall-clock offset from world.Now().
+	// Positive = host clock is ahead; negative = behind. Defaults to 0
+	// (in sync). Set via SetClockSkew for fault injection.
+	clockSkew time.Duration
 
 	// Groups this host serves, keyed by group ID. A host may serve any
 	// number of groups; in the simulator we give each host every group
@@ -81,6 +95,10 @@ func (h *Host) AddGroup(gid types.GroupID, t *group.Transition) {
 
 // SubmitTransition applies a transition locally and (if meshed) broadcasts
 // it to the other hosts. Returns the new state after applying.
+//
+// The transition is stamped with this host's current HLC before broadcast.
+// The HLC is computed from the host's wall clock (which may be skewed from
+// world.Now() per clockSkew) and advanced to maintain monotonicity.
 func (h *Host) SubmitTransition(g types.GroupID, t *group.Transition) (*group.State, error) {
 	h.mu.Lock()
 	gid := t.GroupID()
@@ -89,10 +107,26 @@ func (h *Host) SubmitTransition(g types.GroupID, t *group.Transition) (*group.St
 		h.mu.Unlock()
 		return nil, ErrUnknownGroup
 	}
+
+	// Tick the host's HLC with this host's wall clock (world.Now() +
+	// clockSkew). The HLC has its own monotonicity guarantees — even if
+	// clockSkew takes us backwards, the cursor advances forward.
+	hostNow := h.world.Now().Add(h.clockSkew)
+	next, err := hlc.Tick(h.hlcCursor, hostNow)
+	if err != nil {
+		h.mu.Unlock()
+		return nil, err
+	}
+	h.hlcCursor = next
+	hlcBytes := next.Clone()
+
 	if err := st.Apply(t, h.world.Now()); err != nil {
 		h.mu.Unlock()
 		return nil, err
 	}
+	// Stamp the HLC onto the proto before broadcast so receivers can
+	// Observe() against it.
+	t.Proto.Hlc = hlcBytes
 	h.outbound = append(h.outbound, t)
 	msg := group.EncodeTransition(t)
 	h.mu.Unlock()
@@ -110,6 +144,10 @@ func (h *Host) SubmitTransition(g types.GroupID, t *group.Transition) (*group.St
 }
 
 // Deliver handles inbound messages. Called by the world's Tick.
+//
+// Before applying, this host Observes the remote HLC — its local HLC
+// cursor advances to ensure it never issues a value <= the remote's.
+// This is what makes the federation's HLC values totally ordered.
 func (h *Host) Deliver(payload []byte) error {
 	// The mesh doesn't carry the group ID; for now we route by the host's
 	// known groups. DecodeTransition needs the group ID, so we try each.
@@ -118,6 +156,28 @@ func (h *Host) Deliver(payload []byte) error {
 	if err != nil {
 		return err
 	}
+
+	// Observe the remote HLC. The host's wall clock may be skewed; HLC
+	// Observe is robust to that — it merges the prior cursor, the
+	// remote HLC, and the host's wall clock to produce a value greater
+	// than all three.
+	var remoteHLC hlc.HLC
+	if len(t.Proto.GetHlc()) > 0 {
+		remoteHLC, err = hlc.FromProto(t.Proto.GetHlc())
+		if err != nil {
+			return err
+		}
+	}
+	hostNow := h.world.Now().Add(h.clockSkew)
+	h.mu.Lock()
+	next, err := hlc.Observe(h.hlcCursor, remoteHLC, hostNow)
+	if err != nil {
+		h.mu.Unlock()
+		return err
+	}
+	h.hlcCursor = next
+	h.mu.Unlock()
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	gid := t.GroupID()
@@ -128,6 +188,30 @@ func (h *Host) Deliver(payload []byte) error {
 		h.groups[gid] = st
 	}
 	return st.Apply(t, h.world.Now())
+}
+
+// SetClockSkew sets this host's wall-clock offset from the simulator's
+// virtual time. Used for fault injection — DDILClockSkew profiles snap
+// hosts forward or backward to verify HLC ordering survives.
+func (h *Host) SetClockSkew(skew time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clockSkew = skew
+}
+
+// ClockSkew returns this host's wall-clock offset.
+func (h *Host) ClockSkew() time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.clockSkew
+}
+
+// HLCCursor returns this host's current HLC cursor. Used by tests to
+// verify ordering invariants.
+func (h *Host) HLCCursor() hlc.HLC {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.hlcCursor.Clone()
 }
 
 // Tick advances the host one virtual timestep. Host simulation does not

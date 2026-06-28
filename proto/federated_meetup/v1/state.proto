@@ -123,8 +123,16 @@ message Transition {
     bytes custom = 99;
   }
 
-  // Wall-clock timestamp from the signer (host-agnostic).
+  // Wall-clock timestamp from the signer (host-agnostic). ADVISORY ONLY —
+  // not authoritative for ordering. Hosts in the federation may have
+  // wildly different clocks; use `hlc` below for consensus ordering.
   google.protobuf.Timestamp signed_at = 30;
+
+  // Hybrid Logical Clock — the authoritative ordering primitive for this
+  // transition across the federation. Total order across all hosts
+  // regardless of wall-clock drift. 18 bytes (8 wall nanos BE, 2 counter
+  // BE, 8 reserved for future extension). See internal/hlc.
+  bytes hlc = 32;
 
   // Group signature. Verifies against the steward set at prior_state.
   Multisig steward_signatures = 31;

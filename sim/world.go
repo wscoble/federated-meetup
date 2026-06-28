@@ -41,6 +41,11 @@ import (
 type World struct {
 	mu sync.Mutex
 
+	// masterSeed is the seed value from Config.Seed. Stored separately
+	// from the RNG so DeriveSeed can produce deterministic, repeatable
+	// outputs without consuming RNG state.
+	masterSeed uint64
+
 	// Deterministic RNG (Go's math/rand/v2 source for forkability).
 	rng *mrand.Rand
 
@@ -82,8 +87,9 @@ func NewWorld(cfg Config) (*World, error) {
 		cfg.InitialTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 	w := &World{
-		rng: mrand.New(mrand.NewPCG(cfg.Seed, cfg.Seed^0x9E3779B97F4A7C15)),
-		now: cfg.InitialTime,
+		masterSeed: cfg.Seed,
+		rng:        mrand.New(mrand.NewPCG(cfg.Seed, cfg.Seed^0x9E3779B97F4A7C15)),
+		now:        cfg.InitialTime,
 	}
 	w.hosts = make([]*Host, cfg.HostCount)
 	for i := 0; i < cfg.HostCount; i++ {
@@ -163,17 +169,28 @@ func (w *World) RandBytes(n int) []byte {
 }
 
 // DeriveSeed derives a child seed from the world's seed + a label. Used by
-// hosts/users to get deterministic keys.
+// hosts/users to get deterministic keys. Determinism guarantee: calling
+// DeriveSeed with the same (world.seed, label) ALWAYS returns the same
+// derived seed, regardless of prior RNG state. This means callers can
+// re-derive keys safely without burning RNG.
 func (w *World) DeriveSeed(label string) uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	h := sha256.New()
-	var seedBuf [8]byte
-	binary.LittleEndian.PutUint64(seedBuf[:], w.rng.Uint64())
-	h.Write(seedBuf[:])
+	var worldSeed [8]byte
+	binary.LittleEndian.PutUint64(worldSeed[:], w.seed())
+	h.Write(worldSeed[:])
 	h.Write([]byte(label))
 	sum := h.Sum(nil)
 	return binary.LittleEndian.Uint64(sum[:8])
+}
+
+// seed returns the world's master seed (read-only). Used by DeriveSeed
+// so the derivation is deterministic regardless of RNG state.
+func (w *World) seed() uint64 {
+	// The world stores its seed implicitly via the PCG constructor.
+	// For now, expose it via a field — see Config.Seed.
+	return w.masterSeed
 }
 
 // Hosts returns the hosts in the world. The returned slice is the world's

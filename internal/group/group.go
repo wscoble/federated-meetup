@@ -84,8 +84,19 @@ func MarshalCanonicalForSigningHelper(t *pb.Transition) ([]byte, error) {
 // VerifyStewardSignatures checks the multisig envelope against the steward
 // set of the group at the prior_state the transition references.
 func (t *Transition) VerifyStewardSignatures(st *State) error {
-	stewards := st.StewardsAt(t.Proto.GetPriorState())
-	threshold := st.ThresholdAt(t.Proto.GetPriorState())
+	stewards, threshold := st.StewardsAndThresholdAt(t.Proto.GetPriorState())
+	return t.verifyStewardSignaturesWith(stewards, threshold)
+}
+
+// VerifyStewardSignaturesLocked is the same as VerifyStewardSignatures
+// but assumes the caller already holds st.mu. Use this from inside State
+// methods that already hold the lock to avoid recursive-locking deadlocks.
+func (t *Transition) VerifyStewardSignaturesLocked(st *State) error {
+	stewards, threshold := st.stewardsAndThresholdAtLocked(t.Proto.GetPriorState())
+	return t.verifyStewardSignaturesWith(stewards, threshold)
+}
+
+func (t *Transition) verifyStewardSignaturesWith(stewards []Steward, threshold uint32) error {
 	multisig := t.Proto.GetStewardSignatures()
 	if multisig == nil {
 		return errors.New("group: transition has no steward signatures")
@@ -206,6 +217,23 @@ func (s *State) ThresholdAt(root *pb.StateRoot) uint32 {
 	return s.thresholdAtLocked(root)
 }
 
+// StewardsAndThresholdAt returns both the steward set and threshold at
+// the given state root, atomically (under a single lock acquisition).
+// Prefer this over calling StewardsAt and ThresholdAt separately when
+// both are needed — it avoids a race where the steward set changes
+// between the two reads.
+func (s *State) StewardsAndThresholdAt(root *pb.StateRoot) ([]Steward, uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stewardsAtLocked(root), s.thresholdAtLocked(root)
+}
+
+// stewardsAndThresholdAtLocked is the same as StewardsAndThresholdAt
+// but assumes the caller holds s.mu.
+func (s *State) stewardsAndThresholdAtLocked(root *pb.StateRoot) ([]Steward, uint32) {
+	return s.stewardsAtLocked(root), s.thresholdAtLocked(root)
+}
+
 func (s *State) thresholdAtLocked(root *pb.StateRoot) uint32 {
 	if root == nil || len(root.GetHash()) == 0 {
 		if t, ok := s.thresholdHistory[s.snapshot.Root()]; ok {
@@ -275,8 +303,10 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		}
 		s.initialThreshold = p.GetThreshold()
 	} else {
-		// Non-initial transitions.
-		if err := t.VerifyStewardSignatures(s); err != nil {
+		// Non-initial transitions. Use the locked variant — Apply
+		// already holds s.mu; calling the public VerifyStewardSignatures
+		// would deadlock on the recursive mutex.
+		if err := t.VerifyStewardSignaturesLocked(s); err != nil {
 			return fmt.Errorf("group: signature verification: %w", err)
 		}
 	}
