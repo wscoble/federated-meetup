@@ -304,6 +304,8 @@ func setTransitionPayload(tr *pb.Transition, inner interface{}) error {
 		tr.Payload = &pb.Transition_Fork{Fork: p}
 	case *pb.MigratePayload:
 		tr.Payload = &pb.Transition_Migrate{Migrate: p}
+	case *pb.BranchCreatePayload:
+		tr.Payload = &pb.Transition_BranchCreate{BranchCreate: p}
 	default:
 		return &UnsupportedPayloadError{Type: inner}
 	}
