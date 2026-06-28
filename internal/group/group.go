@@ -474,6 +474,29 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", k.GetRaw()), []byte{1}, s.MaxKVSize)
 			if !kvAllowed { return ErrKVSizeExceeded }
 		}
+		// Bootstrap seed: initial mesh peers declared at group
+		// creation. This closes the chicken-and-egg gap where
+		// ADD_HOST_PEER requires an existing mesh member to co-sign
+		// but the mesh starts empty. Founding stewards declare the
+		// first mesh members; subsequent ADD_HOST_PEER uses those
+		// peers as cosigners.
+		//
+		// The peer is added to the in-memory meshPeers registry AND
+		// recorded in the Merkle KV (mesh_peer/<hex> = mesh_ip) so
+		// mirrors replaying CREATE_GROUP see the same membership.
+		for _, mp := range p.GetInitialMeshPeers() {
+			// InitialMeshPeer.host_wg_key is bytes (X25519, 32 bytes).
+			// MeshPeer.HostWGKey is the proto PublicKey wrapper.
+			peer := &MeshPeer{
+				HostWGKey: pb.PublicKey{Raw: append([]byte(nil), mp.GetHostWgKey()...)},
+				MeshIP:    append([]byte(nil), mp.GetMeshIp()...),
+			}
+			if err := s.addMeshPeerLocked(peer); err != nil {
+				return fmt.Errorf("group: CREATE_GROUP initial_mesh_peers: %w", err)
+			}
+			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", mp.GetHostWgKey()), mp.GetMeshIp(), s.MaxKVSize)
+			if !kvAllowed { return ErrKVSizeExceeded }
+		}
 		// Steward history at the NEW root records the initial set.
 	case pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD:
 		p := t.Proto.GetAddSteward()

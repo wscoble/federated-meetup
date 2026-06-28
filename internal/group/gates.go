@@ -42,7 +42,16 @@ func verifyAddHostPeerPayload(s *State, p *pb.AddHostPeerPayload) error {
 	if !s.IsMeshMemberLocked(cosignerKey) {
 		return fmt.Errorf("group: ADD_HOST_PEER rejected — co-signer %x is not a current mesh member", cosignerKey[:8])
 	}
-	canonical, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
+	// The cosigner signature is over the canonical AddHostPeerPayload
+	// bytes EXCLUDING the CosignerPeerSignature field. This breaks
+	// the chicken-and-egg: the test (or producer) signs the canonical
+	// payload with placeholder bytes for the signature, then fills in
+	// the real signature. Both sides agree because the placeholder
+	// bytes are deterministic (zero-bytes) and the verifier strips the
+	// field before marshaling.
+	cp := proto.Clone(p).(*pb.AddHostPeerPayload)
+	cp.CosignerPeerSignature = nil
+	canonical, err := proto.MarshalOptions{Deterministic: true}.Marshal(cp)
 	if err != nil {
 		return fmt.Errorf("group: marshal ADD_HOST_PEER for co-sig verify: %w", err)
 	}
