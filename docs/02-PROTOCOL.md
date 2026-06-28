@@ -134,6 +134,41 @@ The federation has **three cryptographic layers** with **three independent key d
 
 **Implementation rule.** No code path may accept a key from one layer as input to another. `internal/crypto/` exposes three types (`WireGuardKey`, `StewardKey`, `TLSKey`) that wrap their respective key material and refuse to interconvert at the type level. A function that needs a `StewardKey` cannot be called with a `WireGuardKey` even though both are 32 bytes; the compiler enforces this.
 
+### 5.1.1 Clock-independent ordering — Hybrid Logical Clocks (HLC)
+
+Federation hosts will have wall-clocks that drift, jump (NTP step), and suspend/resume. A Las Vegas host's clock and a Phoenix host's clock may differ by seconds, minutes, or hours depending on how long each has been up and what NTP has done. We **cannot rely on wall-clock** for total ordering of transitions across the federation.
+
+Layer 2 (multisig envelope) therefore carries an **HLC** — Hybrid Logical Clock — alongside the existing sequence number. The HLC is the authoritative ordering primitive. The wall-clock `signed_at` field on the transition remains for audit/UX but is **advisory only** and not used for ordering.
+
+**HLC format.** 18 bytes on the wire (matches `Transition.hlc` field):
+
+```
+| 8 bytes wall nanos BE | 2 bytes counter BE | 8 bytes reserved |
+```
+
+The wall component is the host's best estimate of "when" the transition was authored, in nanoseconds since the Unix epoch. The counter is a per-host logical clock that breaks ties when two transitions share a wall component.
+
+**Total order across hosts.** HLCs compare by their byte representation (big-endian). The wall component dominates, then the counter. Two transitions from different hosts can have **equal** HLCs — that is permitted and does not violate the protocol. What HLC guarantees is:
+
+1. **Per-host monotonicity.** A host's HLC strictly increases across transitions it authors, even when its wall-clock goes backwards (NTP step, suspend/resume). The counter component advances to preserve order.
+2. **Causality.** If host A observes a message from host B (i.e., A applies B's transition), then A's next locally-generated HLC is strictly greater than B's.
+3. **Bounded wall drift.** The wall component of any host's HLC is bounded by `max(local_clock, remote_HLC_wall, observed_remote_wall) + drift`. In practice, "approximately when" is accurate to within a few seconds of real wall-clock.
+
+**Why not Lamport clocks?** Pure Lamport (counter only) loses the wall-clock-shaped component, which humans want in audit logs. We pay the 8-byte cost to keep "approximately when" alive while still being totally ordered.
+
+**Why not vector clocks?** Vector clocks track per-host causality. Our multisig envelope already gives fine-grained causality via the hash chain and the prior_state reference. Adding a vector clock would add O(N) bytes per transition for information we already have. HLC is cheaper and sufficient.
+
+**Why not wall-clock only?** Because federation hosts have unsynchronized clocks. Two hosts that each think they signed a transition at 12:00:00.000 have no shared ground truth. HLC gives them a total order without requiring sync.
+
+**Failure modes.** HLC degrades gracefully:
+
+- *Clock skew* (constant offset, e.g. one host's clock is an hour behind): cursors still merge; each host's authored HLC reflects its own skewed wall but ordering is total.
+- *Clock step backwards* (NTP step, suspend/resume): counter advances; wall sticks with the last-seen value.
+- *Clock step forwards* (large jump): counter resets; wall moves forward cleanly.
+- *Partition* (host isolated for an hour): on rejoin, host Observe()s everything in the partition log; its cursor jumps past all of them.
+
+**Reference.** Kulkarni et al. (2014), "Logical Physical Clocks and their Applications in Distributed Systems." Implementation in `internal/hlc/`. Drift bound is the host's concern; this package makes no assumption about it.
+
 ### 5.2 What a host must do
 
 - Accept and verify signed state transitions from a group's stewards
