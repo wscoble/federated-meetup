@@ -185,7 +185,55 @@ The wall component is the host's best estimate of "when" the transition was auth
 - Brand the experience (own logo, own colors, own UX)
 - Add or hide product features
 
-### 5.4 What a host must not do
+### 5.4 Threat model and hardening
+
+Federation hosts run in adversarial environments — untrusted VPSes, contested networks, hostile peers. The protocol defends against specific attack classes with concrete primitives. Each primitive has a regression test in the simulator; the test ID and assertion are listed below.
+
+#### 5.4.1 Equivocation detection
+
+**Attack.** A malicious steward (or one whose key has been compromised) signs two different transitions at the same `prior_state`. The first applies; the second would fail prior-state check, but by then the malicious host may have gossiped both to different parts of the federation, splitting honest hosts' views of the state. This is a fork-by-insider attack.
+
+**Defense.** Every transition's signing steward is recorded in an **equivocation log** keyed by `(steward_pubkey, prior_state)`. A second distinct signed transition at the same key triggers `EquivocationEvidence`. Honest hosts that observe the evidence gossip it to peers and sign a `REMOVE_STEWARD` transition against the offending key. The multisig threshold means a single equivocating key cannot unilaterally move state — but it CAN split views across the network if not detected quickly.
+
+**Where.** `internal/group/equivocation.go`. Public test surface: `(*group.State).CheckEquivocation(steward, prior, hlc, txhash)`.
+
+**Test.** `sim/threat_test.go::TestThreat_EquivocationRejected` — pre-seeds the log with one signed transition, asserts that a second distinct `(steward, prior, hlc, txhash)` tuple is flagged, and that a replay (same tuple) is not flagged.
+
+**Status.** v1: data-structure detection only. End-to-end gossip and slash-on-evidence is an open question (see §11).
+
+#### 5.4.2 HLC drift validation
+
+**Attack.** A malicious peer injects messages with HLC wall components far in the future (e.g. `wall = now + 1000 years`). If a host blindly `Observe`s these, its cursor jumps forward. Subsequent legitimate messages appear "old" by comparison, and the legitimate messages' `(wall, counter)` ordering gets compromised — an attacker can effectively "use up" future ordering space.
+
+**Defense.** `sim.Host.Deliver` rejects any inbound message whose HLC wall is more than `MaxHLCDrift` (default 60s) ahead of the host's local clock. The rejection increments the host's `DroppedMessages` counter and returns `ErrHLCDriftExceeded`. The legitimate cursor is never advanced by the malicious message.
+
+**Configuration.** `sim.MaxHLCDrift` package-level default; `(*Host).SetMaxHLCDrift(d)` per-host override. Production hosts should set drift to the maximum expected NTP-skew in the federation (default 60s is generous).
+
+**Tests.** `TestThreat_HLCDriftRejected` (1-year-future HLC → rejected), `TestThreat_HLCDriftAtBoundary` (5s drift limit → +4s accepted, +6s rejected). Both verify the dropped counter increments.
+
+**Trade-off.** Tighter drift bound = less tolerance for legitimate skew. Looser bound = more attack surface. The right value depends on the federation's actual clock quality. Hosts SHOULD log drift rejections so operators can tune.
+
+#### 5.4.3 Steward set bound
+
+**Attack.** A malicious steward repeatedly calls `ADD_STEWARD` to inflate the steward set. Two damage paths: (1) state bloat → OOM; (2) multisig verification is O(N) per transition → CPU exhaustion as N grows.
+
+**Defense.** `group.State.MaxStewards` defaults to 100. `ADD_STEWARD` is rejected once the prospective steward set would exceed this cap. The check uses the **prospective** count (current + new key, deduped), not the stale pre-transition count.
+
+**Configuration.** `(*group.State).MaxStewards = N`. Production deployments SHOULD keep this low (the protocol's threshold sig migration to FROST eliminates the O(N) verify, but the bound remains as defense in depth).
+
+**Test.** `TestThreat_StewardSetBound` — caps at 5 stewards, attempts 3 adds; first 2 succeed (3 → 4 → 5), 3rd is rejected with an explicit error message.
+
+#### 5.4.4 What these defenses DON'T cover (yet)
+
+The hardening above covers the three highest-likelihood attacks under the threat model Scott enumerated. The following are **not yet implemented** and are tracked in §11:
+
+- **Steward set growth via REMOVE_STEWARD bypass** — a steward could rotate keys to grow effective N. Not yet modeled.
+- **Transition flooding (app-layer DoS)** — no rate limiting per steward. CPU impact under sustained high-RPS authoring not measured.
+- **Merkle state root collision** — SHA-256 is currently secure. Quantum-computing forward-compat via SHA-3-256 swap-in is documented in §11 but not yet specced.
+- **Fork/migrate races** — split-brain via two concurrent MIGRATE transitions from different hosts not yet handled.
+- **Compromised wg host** — passive observation defense is via §5.1 key separation; active defense (slash-via-attest) is in the open questions list.
+
+### 5.5 What a host must not do
 
 - Modify the group's state without a valid signed transition
 - Hold a group's private key (the key is held by the stewards, not the host)

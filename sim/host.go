@@ -45,6 +45,18 @@ type Host struct {
 
 	// Outbound transitions this host has authored, for assertion/debug.
 	outbound []*group.Transition
+
+	// droppedMessages counts messages rejected by Deliver — used by
+	// tests to assert that adversarial input is being filtered. The
+	// counter is per-host and lifetime.
+	droppedMessages int
+
+	// appliedMessages counts successful Deliver calls.
+	appliedMessages int
+
+	// maxHLCDrift overrides the package-level MaxHLCDrift for this
+	// host. Zero means use the package default.
+	maxHLCDrift time.Duration
 }
 
 // NewHost creates a virtual host. Called by World.
@@ -143,11 +155,32 @@ func (h *Host) SubmitTransition(g types.GroupID, t *group.Transition) (*group.St
 	return st, nil
 }
 
+// MaxHLCDrift is the maximum allowed wall-clock drift between this
+// host and an inbound HLC before the message is rejected. Defaults to
+// 60 seconds; override via SetMaxHLCDrift.
+//
+// Rationale (see docs/02-PROTOCOL.md §5.4 threat model — "HLC drift
+// attack"): a malicious peer can craft messages with HLC wall components
+// far in the future. If we Observe them, our cursor jumps forward and
+// subsequent legitimate messages appear "old" by comparison. Bound the
+// damage by rejecting outliers at the door.
+var MaxHLCDrift = 60 * time.Second
+
+// ErrHLCDriftExceeded is returned by Deliver when an inbound HLC's wall
+// component is more than MaxHLCDrift ahead of the host's local clock.
+var ErrHLCDriftExceeded = &SimError{Kind: "hlc_drift_exceeded", Msg: "inbound HLC wall component exceeds MaxHLCDrift"}
+
 // Deliver handles inbound messages. Called by the world's Tick.
 //
 // Before applying, this host Observes the remote HLC — its local HLC
 // cursor advances to ensure it never issues a value <= the remote's.
 // This is what makes the federation's HLC values totally ordered.
+//
+// Drift validation: if the remote HLC's wall component is more than
+// MaxHLCDrift ahead of this host's wall clock, the message is rejected.
+// This prevents a malicious peer from forcing the cursor forward by
+// injecting forged far-future HLCs. We log the rejection in the host's
+// dropped counter for the audit log.
 func (h *Host) Deliver(payload []byte) error {
 	// The mesh doesn't carry the group ID; for now we route by the host's
 	// known groups. DecodeTransition needs the group ID, so we try each.
@@ -168,6 +201,28 @@ func (h *Host) Deliver(payload []byte) error {
 			return err
 		}
 	}
+
+	// Drift validation: reject messages whose HLC wall component is
+	// too far in the future relative to this host's clock. Adversary
+	// scenario: peer floods with HLC wall = now + 1000 years to
+	// exhaust legitimate ordering space.
+	if len(remoteHLC) == hlc.Size {
+		hostNow := h.world.Now().Add(h.clockSkew)
+		remoteWall := remoteHLC.Time()
+		driftLimit := MaxHLCDrift
+		h.mu.Lock()
+		if h.maxHLCDrift > 0 {
+			driftLimit = h.maxHLCDrift
+		}
+		h.mu.Unlock()
+		if remoteWall.After(hostNow.Add(driftLimit)) {
+			h.mu.Lock()
+			h.droppedMessages++
+			h.mu.Unlock()
+			return ErrHLCDriftExceeded
+		}
+	}
+
 	hostNow := h.world.Now().Add(h.clockSkew)
 	h.mu.Lock()
 	next, err := hlc.Observe(h.hlcCursor, remoteHLC, hostNow)
@@ -187,7 +242,11 @@ func (h *Host) Deliver(payload []byte) error {
 		st = group.NewState(gid)
 		h.groups[gid] = st
 	}
-	return st.Apply(t, h.world.Now())
+	if err := st.Apply(t, h.world.Now()); err != nil {
+		return err
+	}
+	h.appliedMessages++
+	return nil
 }
 
 // SetClockSkew sets this host's wall-clock offset from the simulator's
@@ -212,6 +271,32 @@ func (h *Host) HLCCursor() hlc.HLC {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.hlcCursor.Clone()
+}
+
+// DroppedMessages returns the count of messages this host has rejected
+// (currently only via HLC drift validation). Used by tests to assert
+// that adversarial input is being filtered.
+func (h *Host) DroppedMessages() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.droppedMessages
+}
+
+// AppliedMessages returns the count of messages successfully applied
+// (i.e. transitions this host accepted and added to its log).
+func (h *Host) AppliedMessages() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.appliedMessages
+}
+
+// SetMaxHLCDrift overrides the package-level MaxHLCDrift for this host.
+// Zero means use the package default. Use this in tests to verify
+// the drift check fires at the expected threshold.
+func (h *Host) SetMaxHLCDrift(d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.maxHLCDrift = d
 }
 
 // Tick advances the host one virtual timestep. Host simulation does not

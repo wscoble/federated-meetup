@@ -14,6 +14,7 @@
 package group
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -147,6 +148,16 @@ type State struct {
 
 	// Transition log, for replay / verification.
 	log []*Transition
+
+	// equivocation tracks every (steward, prior_state) we've applied,
+	// so a second distinct signed transition at the same point is
+	// detected as insider equivocation. See equivocation.go.
+	equivocation *equivocationLog
+
+	// MaxStewards caps the size of the steward set. Apply rejects
+	// ADD_STEWARD once the current set reaches this size. Zero means
+	// no cap (legacy / test mode). Default in NewState is 100.
+	MaxStewards int
 }
 
 // Steward is a public key + role attestation. v1 has no roles; the steward
@@ -159,12 +170,16 @@ type Steward struct {
 // NewState creates an empty state for a group with the given ID. The group
 // has no transitions yet — Apply() with a CREATE_GROUP transition to
 // initialize.
+//
+// MaxStewards defaults to 100 (per protocol hardening). Callers can
+// override by setting the field directly after construction.
 func NewState(gid GroupID) *State {
 	return &State{
 		groupID:          gid,
 		stewardHistory:   make(map[types.Hash][]Steward),
 		thresholdHistory: make(map[types.Hash]uint32),
 		keySeq:           make(map[string]uint64),
+		MaxStewards:      100,
 	}
 }
 
@@ -180,6 +195,20 @@ func (s *State) Root() types.Hash {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.snapshot.Root()
+}
+
+// Stewards returns the steward set at the current state head.
+func (s *State) Stewards() []Steward {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stewardsAtLocked(nil)
+}
+
+// Threshold returns the threshold at the current state head.
+func (s *State) Threshold() uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.thresholdAtLocked(nil)
 }
 
 // StewardsAt returns the steward set as of the given state root. If the root
@@ -265,6 +294,28 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		}
 	}
 
+	// Equivocation check: if any verifying steward has already signed
+	// a different transition at the same prior_state, refuse to apply
+	// this one. The first transition to arrive is canonical; the
+	// second is the equivocation evidence. Honest hosts that observe
+	// both can publish the evidence and slash the offending key.
+	if t.Proto.GetPriorState() != nil && len(t.Proto.GetPriorState().GetHash()) > 0 {
+		var prior types.Hash
+		copy(prior[:], t.Proto.GetPriorState().GetHash())
+		// The signing steward is whichever pubkey in the multisig
+		// verifies. We pick the first match; equivocation by ANY
+		// steward is enough to reject.
+		stewardsForCheck := s.stewardsAtLocked(t.Proto.GetPriorState())
+		signing := t.findSigningSteward(stewardsForCheck)
+		if signing != (types.PublicKey{}) {
+			txHash := transitionTxHash(t)
+			isEquiv := s.checkEquivocationLocked(signing, prior, t.Proto.GetHlc(), txHash)
+			if isEquiv {
+				return fmt.Errorf("group: equivocation detected — steward %x signed a conflicting transition at prior_state %x", signing[:8], prior[:8])
+			}
+		}
+	}
+
 	// Verify signatures.
 	stewards := s.stewardsAtLocked(t.Proto.GetPriorState())
 	if len(stewards) == 0 {
@@ -323,6 +374,15 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		p := t.Proto.GetAddSteward()
 		var key types.PublicKey
 		copy(key[:], p.GetNewSteward().GetRaw())
+		// Cap the steward set: refuse to grow past MaxStewards.
+		// Compute the PROSPECTIVE steward set (current stewards + new
+		// key, deduped) and check against the cap. This ensures the
+		// check uses the post-transition count, not the stale
+		// pre-transition count from the prior root's history.
+		prospective := prospectiveStewardsAfterAddLocked(s, key)
+		if s.MaxStewards > 0 && len(prospective) > s.MaxStewards {
+			return fmt.Errorf("group: ADD_STEWARD rejected — steward set would grow to %d, MaxStewards=%d", len(prospective), s.MaxStewards)
+		}
 		newEntries = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), []byte{1})
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_STEWARD:
 		p := t.Proto.GetRemoveSteward()
@@ -382,17 +442,24 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 }
 
 // computeCurrentStewards returns the steward set after applying t.
+// Always walks back via prior_state — this is the only way to get the
+// pre-transition steward set right when the new root has no history
+// entry yet (which is the common case during Apply, since the entry
+// is written AFTER this function returns).
 func (s *State) computeCurrentStewards(t *pb.Transition) []Steward {
-	current := s.initialStewards
-	if _, ok := s.stewardHistory[s.snapshot.Root()]; ok {
-		// The current root has already been updated. Walk back one step.
-		// For correctness we recompute from prior_state.
-		current = s.stewardsAtLocked(t.GetPriorState())
-	}
+	current := s.stewardsAtLocked(t.GetPriorState())
 	switch t.GetType() {
 	case pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD:
 		var key types.PublicKey
 		copy(key[:], t.GetAddSteward().GetNewSteward().GetRaw())
+		// Dedupe: if the key is already in the set, the transition
+		// is a no-op for steward set growth but the multisig still
+		// needs to verify.
+		for _, st := range current {
+			if st.Key == key {
+				return current
+			}
+		}
 		current = append(current, Steward{Key: key})
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_STEWARD:
 		var key types.PublicKey
@@ -461,10 +528,53 @@ func appendOrUpdate(entries []types.StateEntry, key string, value []byte) []type
 	return out
 }
 
-// groupIDFromPayload is kept as a placeholder for future proto-embedded
-// group ID extraction; not used today.
-func groupIDFromPayload(t *pb.Transition) (GroupID, error) {
-	return GroupID{}, nil
+// currentStewardsLocked returns the steward set at the current head.
+// Used to compute the prospective steward set before applying
+// ADD_STEWARD / REMOVE_STEWARD.
+func currentStewardsLocked(s *State) []Steward {
+	if st, ok := s.stewardHistory[s.snapshot.Root()]; ok {
+		return st
+	}
+	return s.initialStewards
+}
+
+// prospectiveStewardsAfterAddLocked returns the steward set that WOULD
+// result from adding `key` to the current steward set, with duplicates
+// removed. Used to enforce the MaxStewards cap BEFORE mutating state.
+func prospectiveStewardsAfterAddLocked(s *State, key types.PublicKey) []Steward {
+	cur := currentStewardsLocked(s)
+	out := make([]Steward, 0, len(cur)+1)
+	seen := make(map[types.PublicKey]bool, len(cur)+1)
+	for _, st := range cur {
+		if seen[st.Key] {
+			continue
+		}
+		seen[st.Key] = true
+		out = append(out, st)
+	}
+	if !seen[key] {
+		out = append(out, Steward{Key: key})
+	}
+	return out
+}
+
+// transitionTxHash returns a stable hash of the transition's canonical
+// sign-bytes, used as a tiebreaker in the equivocation log. Two
+// transitions with the same HLC and same canonical payload MUST have the
+// same txHash; that's how we distinguish a replay (same bytes, different
+// instance) from an equivocation (different bytes, same prior_state).
+func transitionTxHash(t *Transition) types.Hash {
+	h := sha256.Sum256(t.canonical)
+	var out types.Hash
+	copy(out[:], h[:])
+	return out
+}
+
+// verifyOne is a tiny shim that runs the canonical signature check for
+// a single (pubkey, sig) pair. Used by the equivocation log to identify
+// the signing steward.
+func verifyOne(pub types.PublicKey, sig types.Signature, groupKey types.GroupID, payload []byte) error {
+	return crypto.Verify(pub, sig, groupKey, crypto.MsgKindTransition, payload)
 }
 
 // EncodeTransition serializes a transition for the mesh.
