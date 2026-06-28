@@ -316,6 +316,8 @@ func setTransitionPayload(tr *pb.Transition, inner interface{}) error {
 		tr.Payload = &pb.Transition_SlashSteward{SlashSteward: p}
 	case *pb.DeclareStewardCustodyPayload:
 		tr.Payload = &pb.Transition_DeclareStewardCustody{DeclareStewardCustody: p}
+	case *pb.NameBindPayload:
+		tr.Payload = &pb.Transition_NameBind{NameBind: p}
 	default:
 		return &UnsupportedPayloadError{Type: inner}
 	}
