@@ -521,7 +521,20 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CHANGE_THRESHOLD:
 		p := t.Proto.GetChangeThreshold()
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "threshold", binaryUint32(p.GetNewThreshold()), s.MaxKVSize)
+		newThr := p.GetNewThreshold()
+		// G8 — Threshold validation gate. A threshold of 0 disables
+		// steward authentication entirely (no signatures ever required);
+		// a threshold greater than the current steward count immediately
+		// dead-locks the group (no possible quorum). Both are
+		// unrecoverable from inside the protocol — refuse them.
+		currentStewards := s.stewardsAtLocked(t.Proto.GetPriorState())
+		if newThr == 0 {
+			return fmt.Errorf("group: CHANGE_THRESHOLD rejected — newThreshold=0 disables authentication")
+		}
+		if newThr > uint32(len(currentStewards)) {
+			return fmt.Errorf("group: CHANGE_THRESHOLD rejected — newThreshold=%d exceeds current steward count %d (would dead-lock the group)", newThr, len(currentStewards))
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "threshold", binaryUint32(newThr), s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ADD_MEMBER:
 		p := t.Proto.GetAddMember()
@@ -904,10 +917,21 @@ func (s *State) computeCurrentStewards(t *pb.Transition) []Steward {
 }
 
 func (s *State) computeCurrentThreshold(t *pb.Transition) uint32 {
+	// Look up the threshold at the PRIOR root (the state we're
+	// transitioning FROM). For CREATE_GROUP this is initialThreshold;
+	// for all subsequent transitions the prior's threshold is in
+	// thresholdHistory (it was recorded there when the transition
+	// that produced that root was applied).
 	current := s.initialThreshold
-	if _, ok := s.thresholdHistory[s.snapshot.Root()]; ok {
-		current = s.thresholdAtLocked(t.GetPriorState())
+	if t.GetPriorState() != nil && len(t.GetPriorState().GetHash()) > 0 {
+		var prior types.Hash
+		copy(prior[:], t.GetPriorState().GetHash())
+		if thr, ok := s.thresholdHistory[prior]; ok {
+			current = thr
+		}
 	}
+	// CHANGE_THRESHOLD transitions override the threshold to the
+	// new value declared in the payload.
 	if t.GetType() == pb.TransitionType_TRANSITION_TYPE_CHANGE_THRESHOLD {
 		current = t.GetChangeThreshold().GetNewThreshold()
 	}

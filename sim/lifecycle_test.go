@@ -91,7 +91,7 @@ func TestLifecycle_FullStateMachine(t *testing.T) {
 			Location: "Goldwell Open Air Museum",
 			Capacity: 50,
 		},
-		[]crypto.KeyPair{stewards[0], daveKP}, // alice + dave (now threshold 3)
+		[]crypto.KeyPair{stewards[0], stewards[1], daveKP}, // alice + bob + dave (threshold 3)
 	) {
 		return
 	}
@@ -103,7 +103,7 @@ func TestLifecycle_FullStateMachine(t *testing.T) {
 			EventId: "evt-001",
 			Patch:   map[string][]byte{"capacity": []byte("75")},
 		},
-		[]crypto.KeyPair{stewards[1], stewards[2]}, // bob + carol
+		[]crypto.KeyPair{stewards[0], stewards[1], daveKP}, // alice + bob + dave (threshold 3)
 	) {
 		return
 	}
@@ -112,14 +112,15 @@ func TestLifecycle_FullStateMachine(t *testing.T) {
 	// NOTE: in the current state machine, RSVP is steward-gated (every
 	// non-CREATE_GROUP transition goes through VerifyStewardSignaturesLocked).
 	// The proto comment says RSVP should be user-signed; that needs a
-	// separate code path. Until that's wired, we sign with 2 stewards.
+	// separate code path. Until that's wired, we sign with 3 stewards
+	// (threshold after the CHANGE_THRESHOLD step).
 	if !applyBroadcast(t, w, gkp, "RSVP eve (steward-signed; see note)",
 		pb.TransitionType_TRANSITION_TYPE_RSVP,
 		&pb.RsvpPayload{
 			EventId: "evt-001",
 			User:    evePB,
 		},
-		[]crypto.KeyPair{stewards[0], stewards[1]}, // 2 of 3 stewards (threshold 3)
+		[]crypto.KeyPair{stewards[0], stewards[1], daveKP}, // 3 of 4 stewards (threshold 3)
 	) {
 		return
 	}
@@ -131,7 +132,7 @@ func TestLifecycle_FullStateMachine(t *testing.T) {
 			EventId: "evt-001",
 			Reason:  "venue double-booked",
 		},
-		[]crypto.KeyPair{stewards[0], daveKP},
+		[]crypto.KeyPair{stewards[0], stewards[1], daveKP}, // alice + bob + dave (threshold 3)
 	) {
 		return
 	}
@@ -140,7 +141,7 @@ func TestLifecycle_FullStateMachine(t *testing.T) {
 	if !applyBroadcast(t, w, gkp, "REMOVE_STEWARD carol",
 		pb.TransitionType_TRANSITION_TYPE_REMOVE_STEWARD,
 		&pb.RemoveStewardPayload{Steward: &pb.PublicKey{Raw: stewards[2].Public[:]}},
-		[]crypto.KeyPair{stewards[0], daveKP},
+		[]crypto.KeyPair{stewards[0], stewards[1], daveKP}, // alice + bob + dave (threshold 3)
 	) {
 		return
 	}
@@ -149,7 +150,7 @@ func TestLifecycle_FullStateMachine(t *testing.T) {
 	if !applyBroadcast(t, w, gkp, "REMOVE_MEMBER eve",
 		pb.TransitionType_TRANSITION_TYPE_REMOVE_MEMBER,
 		&pb.RemoveMemberPayload{User: evePB},
-		[]crypto.KeyPair{stewards[0], daveKP},
+		[]crypto.KeyPair{stewards[0], stewards[1], daveKP}, // alice + bob + dave (threshold 3)
 	) {
 		return
 	}
