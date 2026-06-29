@@ -153,6 +153,21 @@ func (b *Branch) Head() *pb.StateRoot {
 	return &pb.StateRoot{Hash: root[:]}
 }
 
+// InitialStewards returns the steward set captured at branch
+// creation time. This is the snapshot the branch starts with; it
+// does NOT track subsequent changes to the parent branch. For the
+// live steward set at the branch's current head, use Branch.StewardsAt(nil).
+func (b *Branch) InitialStewards() []Steward {
+	return append([]Steward(nil), b.initialStewards...)
+}
+
+// InitialThreshold returns the threshold captured at branch creation
+// time. Snapshot semantics — does not track parent changes. For the
+// live threshold, use Branch.ThresholdAt(nil).
+func (b *Branch) InitialThreshold() uint32 {
+	return b.initialThreshold
+}
+
 // stewardsAtLocked returns the steward set at the given state root.
 // nil root = current head.
 func (b *Branch) stewardsAtLocked(root *pb.StateRoot) []Steward {
