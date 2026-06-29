@@ -323,7 +323,7 @@ speck FederatedMeetupProduct {
     rpc list_attendees(ListAttendeesRequest) returns (ListAttendeesResponse);
     rpc create_ticket(CreateTicketRequest) returns (CreateTicketResponse);
     rpc list_tickets(ListTicketsRequest) returns (ListTicketsResponse);
-    rc_purchase_ticket(PurchaseTicketRequest) returns (PurchaseTicketResponse);
+    rpc purchase_ticket(PurchaseTicketRequest) returns (PurchaseTicketResponse);
     rpc refund_order(RefundOrderRequest) returns (RefundOrderResponse);
     rpc list_orders(ListOrdersRequest) returns (ListOrdersResponse);
     rpc check_in_attendee(CheckInAttendeeRequest) returns (CheckInAttendeeResponse);
