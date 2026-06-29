@@ -85,6 +85,53 @@ func newEquivocationLog() *equivocationLog {
 	}
 }
 
+// NewEquivocationLogForTest creates an equivocation log with an
+// explicit cap. Test-only — production code uses newEquivocationLog
+// with the default 10000-entry cap.
+func NewEquivocationLogForTest(maxEntries int) *equivocationLog {
+	return &equivocationLog{
+		maxEntries: maxEntries,
+		seen:       make(map[equivocationKey]hlcSeen),
+	}
+}
+
+// InsertForTest records a (steward, prior, hlc, txhash) entry. Test-only.
+func (e *equivocationLog) InsertForTest(steward, prior [32]byte, hlc []byte, txhash [32]byte) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := equivocationKey{StewardKey: steward, PriorState: prior}
+	e.seen[key] = hlcSeen{HLC: append([]byte(nil), hlc...), TxHash: txhash}
+	e.insertionOrder = append(e.insertionOrder, key)
+	e.evictOldestLocked()
+}
+
+// HasForTest reports whether the (steward, prior) pair is currently in
+// the log. Test-only.
+func (e *equivocationLog) HasForTest(steward, prior [32]byte) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.seen[equivocationKey{StewardKey: steward, PriorState: prior}]
+	return ok
+}
+
+// CheckForTest runs the equivocation check for the given (steward,
+// prior, hlc, txhash). Returns true if a conflict is detected (the
+// existing entry has a different HLC or txHash). Test-only.
+func (e *equivocationLog) CheckForTest(steward, prior [32]byte, hlc []byte, txhash [32]byte) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := equivocationKey{StewardKey: steward, PriorState: prior}
+	prev, ok := e.seen[key]
+	if !ok {
+		return false
+	}
+	// Same HLC and same txHash → exact duplicate (replay).
+	if bytesEqual(prev.HLC, hlc) && prev.TxHash == txhash {
+		return false
+	}
+	return true
+}
+
 // SetMaxEntries overrides the eviction cap. Setting to 0 disables
 // eviction (legacy / test mode).
 func (e *equivocationLog) SetMaxEntries(n int) {
