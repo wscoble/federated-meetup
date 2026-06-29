@@ -36,13 +36,24 @@ import (
 // the mesh. With it, an existing peer must also vouch — so adding a
 // peer requires steward consent AND a mesh member actively running
 // the operation.
+//
+// Cycle 56 (audit fix C-1): the cosigner identity is the peer's
+// dedicated Ed25519 CoSigner key (NOT the wg X25519 key, which is
+// structurally incompatible with Ed25519 verification).
 func verifyAddHostPeerPayload(s *State, p *pb.AddHostPeerPayload) error {
+	// The cosigner's CoSigner (Ed25519) pubkey. This is the
+	// identity under which the cosignature below is verified.
 	cosignerKey := [32]byte{}
 	copy(cosignerKey[:], p.GetCosignerPeerKey().GetRaw())
-	if !s.IsMeshMemberLocked(cosignerKey) {
+	if len(p.GetCosignerPeerKey().GetRaw()) != 32 {
+		return errors.New("group: ADD_HOST_PEER rejected — cosigner_peer_key must be 32 bytes")
+	}
+	// The cosigner must be a current mesh member (verified via
+	// CoSigner index, not wg key, cycle 56).
+	if s.MeshPeerByCoSigner(cosignerKey) == nil {
 		return fmt.Errorf("group: ADD_HOST_PEER rejected — co-signer %x is not a current mesh member", cosignerKey[:8])
 	}
-	// The cosigner signature is over the canonical AddHostPeerPayload
+	// The cosignature is over the canonical AddHostPeerPayload
 	// bytes EXCLUDING the CosignerPeerSignature field. This breaks
 	// the chicken-and-egg: the test (or producer) signs the canonical
 	// payload with placeholder bytes for the signature, then fills in
@@ -55,19 +66,7 @@ func verifyAddHostPeerPayload(s *State, p *pb.AddHostPeerPayload) error {
 	if err != nil {
 		return fmt.Errorf("group: marshal ADD_HOST_PEER for co-sig verify: %w", err)
 	}
-	// The co-signer's wg key is an X25519 key (used for wg handshakes),
-	// not an Ed25519 key. We can't use it directly as an Ed25519
-	// verifier. The wire format treats this co-signature as the wg
-	// peer's signature using its identity key (the wg key IS the
-	// identity key for the co-signing peer, signed via Ed25519 over
-	// the same key bytes — the protocol requires hosts to also hold
-	// an Ed25519 view of their wg key for this purpose).
-	//
-	// This is enforced at the host-operator level: when a host joins
-	// the mesh, it presents BOTH its wg X25519 key AND an Ed25519
-	// signature using the same 32 bytes interpreted as an Ed25519
-	// pubkey. The Ed25519 view is the co-signer identity.
-	if !verifyCoSignerSignature(p.GetCosignerPeerKey().GetRaw(), canonical, p.GetCosignerPeerSignature().GetRaw()) {
+	if !verifyCoSignerSignature(cosignerKey[:], canonical, p.GetCosignerPeerSignature().GetRaw()) {
 		return errors.New("group: ADD_HOST_PEER co-signature does not verify")
 	}
 	return nil

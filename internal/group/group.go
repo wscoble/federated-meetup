@@ -487,9 +487,11 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		for _, mp := range p.GetInitialMeshPeers() {
 			// InitialMeshPeer.host_wg_key is bytes (X25519, 32 bytes).
 			// MeshPeer.HostWGKey is the proto PublicKey wrapper.
+			// cosigner_key is the peer's Ed25519 CoSigner pubkey (cycle 56).
 			peer := &MeshPeer{
-				HostWGKey: pb.PublicKey{Raw: append([]byte(nil), mp.GetHostWgKey()...)},
-				MeshIP:    append([]byte(nil), mp.GetMeshIp()...),
+				HostWGKey:   pb.PublicKey{Raw: append([]byte(nil), mp.GetHostWgKey()...)},
+				MeshIP:      append([]byte(nil), mp.GetMeshIp()...),
+				CoSignerKey: pb.PublicKey{Raw: append([]byte(nil), mp.GetCosignerKey()...)},
 			}
 			if err := s.addMeshPeerLocked(peer); err != nil {
 				return fmt.Errorf("group: CREATE_GROUP initial_mesh_peers: %w", err)
@@ -722,8 +724,9 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 			return err
 		}
 		newPeer := &MeshPeer{
-			HostWGKey: *p.HostWgKey,
-			MeshIP:    append([]byte(nil), p.GetMeshIp()...),
+			HostWGKey:   *p.HostWgKey,
+			MeshIP:      append([]byte(nil), p.GetMeshIp()...),
+			CoSignerKey: *p.CosignerPeerKey,
 		}
 		// Cap the mesh size (G4). Reject if the prospective count
 		// exceeds MaxMeshPeers.
