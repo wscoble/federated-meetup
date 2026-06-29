@@ -1,0 +1,300 @@
+// SPDX-License-Identifier: AGPL-3.0
+//
+// federated-meetup product state schema — the closed-source product layer.
+// This is NOT part of the open protocol standard. The protocol (state.proto)
+// handles federation, steward signatures, and transitions. This file handles
+// the product: tickets, orders, packages, hosting tiers, RSVPs, recurrence.
+//
+// The Speckl spec (specs/FederatedMeetupProduct.speckdl) is a drift-check
+// against this file. If the .speckdl drifts from this .proto, the drift-check
+// script catches it before buf generate silently regenerates from the wrong
+// schema.
+
+syntax = "proto3";
+
+package federated_meetup.product.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1";
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum Package {
+  PACKAGE_UNSPECIFIED = 0;
+  PACKAGE_FREE_COMMUNITY = 1;
+  PACKAGE_RECURRING_CLUB = 2;
+  PACKAGE_TICKETED_WORKSHOP = 3;
+  PACKAGE_CONFERENCE = 4;
+}
+
+enum HostingMode {
+  HOSTING_MODE_UNSPECIFIED = 0;
+  HOSTING_MODE_SELF_HOST = 1;
+  HOSTING_MODE_PAID_HOST = 2;
+}
+
+enum HostingTier {
+  HOSTING_TIER_UNSPECIFIED = 0;
+  HOSTING_TIER_FREE = 1;
+  HOSTING_TIER_COMMUNITY = 2;
+  HOSTING_TIER_PRO = 3;
+  HOSTING_TIER_STUDIO = 4;
+}
+
+enum EventVisibility {
+  EVENT_VISIBILITY_UNSPECIFIED = 0;
+  EVENT_VISIBILITY_PUBLIC = 1;
+  EVENT_VISIBILITY_UNLISTED = 2;
+  EVENT_VISIBILITY_PRIVATE = 3;
+  EVENT_VISIBILITY_INVITE_ONLY = 4;
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_OWNER = 1;
+  ROLE_ORGANIZER = 2;
+  ROLE_MODERATOR = 3;
+  ROLE_TREASURER = 4;
+  ROLE_MEMBER = 5;
+  ROLE_PENDING = 6;
+}
+
+enum TicketTierType {
+  TICKET_TIER_TYPE_UNSPECIFIED = 0;
+  TICKET_TIER_TYPE_EARLY_BIRD = 1;
+  TICKET_TIER_TYPE_REGULAR = 2;
+  TICKET_TIER_TYPE_SUPPORTER = 3;
+  TICKET_TIER_TYPE_CUSTOM = 4;
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_COMPLETED = 2;
+  ORDER_STATUS_REFUNDED = 3;
+  ORDER_STATUS_PARTIALLY_REFUNDED = 4;
+  ORDER_STATUS_DISPUTED = 5;
+  ORDER_STATUS_FAILED = 6;
+}
+
+enum RsvpStatus {
+  RSVP_STATUS_UNSPECIFIED = 0;
+  RSVP_STATUS_GOING = 1;
+  RSVP_STATUS_WAITLIST = 2;
+  RSVP_STATUS_MAYBE = 3;
+  RSVP_STATUS_NOT_GOING = 4;
+}
+
+enum ProductTransitionType {
+  PRODUCT_TRANSITION_TYPE_UNSPECIFIED = 0;
+  PRODUCT_TRANSITION_TYPE_CREATE_TICKET = 1;
+  PRODUCT_TRANSITION_TYPE_UPDATE_TICKET = 2;
+  PRODUCT_TRANSITION_TYPE_PURCHASE_TICKET = 3;
+  PRODUCT_TRANSITION_TYPE_REFUND_ORDER = 4;
+  PRODUCT_TRANSITION_TYPE_CREATE_RECURRENCE = 5;
+  PRODUCT_TRANSITION_TYPE_ADD_EXCEPTION = 6;
+  PRODUCT_TRANSITION_TYPE_SET_GROUP_PACKAGE = 7;
+  PRODUCT_TRANSITION_TYPE_SET_HOSTING_TIER = 8;
+  PRODUCT_TRANSITION_TYPE_UPDATE_VISIBILITY = 9;
+  PRODUCT_TRANSITION_TYPE_SET_MEMBER_ROLE = 10;
+  PRODUCT_TRANSITION_TYPE_MARK_ATTENDED = 11;
+}
+
+// =============================================================================
+// Data types
+// =============================================================================
+
+// Money: integer cents + ISO 4217 currency code. Avoids floating point.
+message Money {
+  uint64 amount = 1;
+  string currency = 2;
+}
+
+message Ticket {
+  string ticket_id = 7;
+  string name = 2;
+  TicketTierType tier_type = 8;
+  Money price = 3;
+  uint64 capacity = 1;
+  uint64 sold = 6;
+  google.protobuf.Timestamp sale_starts_at = 5;
+  google.protobuf.Timestamp sale_ends_at = 4;
+}
+
+message Order {
+  string order_id = 4;
+  string ticket_id = 8;
+  string attendee_email = 2;
+  OrderStatus status = 6;
+  string stripe_session_id = 7;
+  Money amount_paid = 1;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp refunded_at = 5;
+}
+
+message RecurrenceRule {
+  string rrule = 2;
+  repeated string exceptions = 1;
+  string timezone = 3;
+}
+
+message Vendor {
+  string vendor_id = 5;
+  string name = 2;
+  string category = 1;
+  string website = 7;
+  uint64 rating = 3;
+  bool verified = 6;
+  uint64 referral_fee_percent = 4;
+}
+
+message Sponsorship {
+  string sponsor_id = 4;
+  string name = 3;
+  string tier = 5;
+  string logo_url = 2;
+  string website = 6;
+  bool attendee_access = 1;
+}
+
+message Event {
+  string event_id = 5;
+  string group_id = 6;
+  string title = 13;
+  string description = 3;
+  google.protobuf.Timestamp starts_at = 12;
+  google.protobuf.Timestamp ends_at = 4;
+  string location = 7;
+  string venue_id = 14;
+  EventVisibility visibility = 15;
+  uint64 capacity = 2;
+  Package package = 8;
+  bool paid = 9;
+  string slug = 11;
+  bool cancelled = 1;
+  RecurrenceRule recurrence = 10;
+}
+
+message Group {
+  string group_id = 6;
+  string canonical_name = 1;
+  string display_name = 5;
+  string description = 4;
+  HostingMode hosting_mode = 7;
+  HostingTier hosting_tier = 8;
+  Package package = 10;
+  string custom_domain = 3;
+  uint64 member_count = 9;
+  google.protobuf.Timestamp created_at = 2;
+}
+
+message GroupMember {
+  string group_id = 1;
+  string user_email = 4;
+  Role role = 3;
+  google.protobuf.Timestamp joined_at = 2;
+}
+
+message Rsvp {
+  string event_id = 3;
+  string user_email = 5;
+  RsvpStatus status = 4;
+  google.protobuf.Timestamp created_at = 2;
+  bool attended = 1;
+}
+
+// =============================================================================
+// Product transitions
+// =============================================================================
+
+message CreateTicketPayload {
+  string event_id = 2;
+  string ticket_id = 8;
+  string name = 3;
+  TicketTierType tier_type = 9;
+  uint64 price_amount = 4;
+  string price_currency = 5;
+  uint64 capacity = 1;
+  google.protobuf.Timestamp sale_starts_at = 7;
+  google.protobuf.Timestamp sale_ends_at = 6;
+}
+
+message UpdateTicketPayload {
+  string ticket_id = 5;
+  string name = 2;
+  uint64 price_amount = 3;
+  string price_currency = 4;
+  uint64 capacity = 1;
+}
+
+message PurchaseTicketPayload {
+  string ticket_id = 3;
+  string attendee_email = 1;
+  string stripe_session_id = 2;
+}
+
+message RefundOrderPayload {
+  string order_id = 2;
+  uint64 amount = 1;
+  string reason = 3;
+}
+
+message CreateRecurrencePayload {
+  string event_id = 1;
+  string rrule = 2;
+  string timezone = 3;
+}
+
+message AddExceptionPayload {
+  string event_id = 1;
+  string exception_date = 2;
+}
+
+message SetGroupPackagePayload {
+  string group_id = 1;
+  Package package = 2;
+}
+
+message SetHostingTierPayload {
+  string group_id = 1;
+  HostingTier tier = 2;
+}
+
+message UpdateVisibilityPayload {
+  string event_id = 1;
+  EventVisibility visibility = 2;
+}
+
+message SetMemberRolePayload {
+  string group_id = 1;
+  string user_email = 3;
+  Role role = 2;
+}
+
+message MarkAttendedPayload {
+  string event_id = 2;
+  string user_email = 3;
+  bool attended = 1;
+}
+
+message ProductTransition {
+  ProductTransitionType type = 1;
+  string group_id = 2;
+  bytes hlc = 3;
+  oneof payload {
+    CreateTicketPayload create_ticket = 10;
+    UpdateTicketPayload update_ticket = 11;
+    PurchaseTicketPayload purchase_ticket = 12;
+    RefundOrderPayload refund_order = 13;
+    CreateRecurrencePayload create_recurrence = 14;
+    AddExceptionPayload add_exception = 15;
+    SetGroupPackagePayload set_group_package = 16;
+    SetHostingTierPayload set_hosting_tier = 17;
+    UpdateVisibilityPayload update_visibility = 18;
+    SetMemberRolePayload set_member_role = 19;
+    MarkAttendedPayload mark_attended = 20;
+  }
+}

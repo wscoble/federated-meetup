@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: AGPL-3.0
+//
+// federated-meetup product RPC surface — organizer + attendee facing.
+// ConnectRPC over HTTP/2. Auth via magic-link tokens (attendee) or
+// organizer tokens (organizer). Public event pages need no auth.
+
+syntax = "proto3";
+
+package federated_meetup.product.v1;
+
+import "federated_meetup/product/v1/state.proto";
+
+option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1";
+
+// =============================================================================
+// Read RPCs (public, no auth for public events)
+// =============================================================================
+
+message GetPublicEventRequest {
+  string slug = 2;
+  string event_id = 1;
+}
+
+message GetPublicEventResponse {
+  Event event = 2;
+  repeated Ticket tickets = 4;
+  uint64 rsvp_count = 3;
+  uint64 capacity = 1;
+}
+
+message ListUpcomingEventsRequest {
+  string group_id = 2;
+  string cursor = 1;
+  uint32 page_size = 3;
+}
+
+message ListUpcomingEventsResponse {
+  repeated Event events = 1;
+  string next_cursor = 2;
+}
+
+// =============================================================================
+// Attendee RPCs (magic-link auth)
+// =============================================================================
+
+message SubmitRsvpRequest {
+  string event_id = 2;
+  string email = 1;
+  string name = 3;
+}
+
+message SubmitRsvpResponse {
+  Rsvp rsvp = 2;
+  string magic_link = 1;
+}
+
+message CancelRsvpRequest {
+  string event_id = 2;
+  string email = 1;
+  string token = 3;
+}
+
+message CancelRsvpResponse {
+  bool cancelled = 1;
+}
+
+message ListMyRsvpsRequest {
+  string email = 1;
+  string token = 2;
+}
+
+message ListMyRsvpsResponse {
+  repeated Rsvp rsvps = 1;
+}
+
+// =============================================================================
+// Organizer RPCs (organizer-token auth)
+// =============================================================================
+
+message GetOrganizerDashboardRequest {
+  string group_id = 1;
+  string organizer_token = 2;
+}
+
+message GetOrganizerDashboardResponse {
+  repeated Event upcoming_events = 4;
+  uint64 total_rsvps = 3;
+  Money total_revenue = 2;
+  repeated string pending_actions = 1;
+}
+
+message ListAttendeesRequest {
+  string event_id = 1;
+  string organizer_token = 2;
+}
+
+message ListAttendeesResponse {
+  repeated Rsvp attendees = 1;
+}
+
+message CreateTicketRequest {
+  string event_id = 1;
+  string organizer_token = 2;
+  Ticket ticket = 3;
+}
+
+message CreateTicketResponse {
+  string ticket_id = 1;
+}
+
+message ListTicketsRequest {
+  string event_id = 1;
+}
+
+message ListTicketsResponse {
+  repeated Ticket tickets = 1;
+}
+
+message PurchaseTicketRequest {
+  string ticket_id = 4;
+  string attendee_email = 1;
+  string attendee_name = 2;
+  uint32 quantity = 3;
+}
+
+message PurchaseTicketResponse {
+  string order_id = 1;
+  string stripe_checkout_url = 2;
+}
+
+message RefundOrderRequest {
+  string order_id = 2;
+  string organizer_token = 3;
+  uint64 amount = 1;
+  string reason = 4;
+}
+
+message RefundOrderResponse {
+  Order order = 1;
+}
+
+message ListOrdersRequest {
+  string event_id = 2;
+  string organizer_token = 3;
+  string cursor = 1;
+  uint32 page_size = 4;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 2;
+  string next_cursor = 1;
+}
+
+message CheckInAttendeeRequest {
+  string event_id = 2;
+  string attendee_email = 1;
+  string organizer_token = 3;
+}
+
+message CheckInAttendeeResponse {
+  bool checked_in = 1;
+}
+
+// =============================================================================
+// Service
+// =============================================================================
+
+service ProductService {
+  // Public reads.
+  rpc GetPublicEvent(GetPublicEventRequest) returns (GetPublicEventResponse);
+  rpc ListUpcomingEvents(ListUpcomingEventsRequest) returns (ListUpcomingEventsResponse);
+  rpc ListTickets(ListTicketsRequest) returns (ListTicketsResponse);
+
+  // Attendee writes (magic-link auth).
+  rpc SubmitRsvp(SubmitRsvpRequest) returns (SubmitRsvpResponse);
+  rpc CancelRsvp(CancelRsvpRequest) returns (CancelRsvpResponse);
+  rpc ListMyRsvps(ListMyRsvpsRequest) returns (ListMyRsvpsResponse);
+
+  // Attendee purchases.
+  rpc PurchaseTicket(PurchaseTicketRequest) returns (PurchaseTicketResponse);
+
+  // Organizer (organizer-token auth).
+  rpc GetOrganizerDashboard(GetOrganizerDashboardRequest) returns (GetOrganizerDashboardResponse);
+  rpc ListAttendees(ListAttendeesRequest) returns (ListAttendeesResponse);
+  rpc CreateTicket(CreateTicketRequest) returns (CreateTicketResponse);
+  rpc RefundOrder(RefundOrderRequest) returns (RefundOrderResponse);
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+  rpc CheckInAttendee(CheckInAttendeeRequest) returns (CheckInAttendeeResponse);
+}
