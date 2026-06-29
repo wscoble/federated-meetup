@@ -36,6 +36,43 @@ speck FederatedMeetup {
     custody:           Map<String, CustodyDeclaration>
   }
 
+  // ─── Cycle 66: crypto + state primitives ──────────────────────
+  // The handwritten proto/federated_meetup/v1/state.proto defines
+  // these as separate messages. The Speckl generator emits them as
+  // record-typed interfaces (message X { type field = N; }).
+  interface PublicKey {
+    raw: Bytes
+  }
+
+  interface Signature {
+    raw: Bytes
+  }
+
+  // Cycle 66: Multisig — the consumer's Transition carries a
+  // steward_signatures Multisig with threshold + repeated signatures.
+  // The Speckl generator currently can't express repeated fields in
+  // interface types (only in event fields). This declares it as a
+  // record with a signatures: List<Signature> field; the generator
+  // emits it as `repeated Signature signatures = N;` — correct.
+  interface Multisig {
+    threshold: Nat
+  }
+
+  // StateRoot: a 32-byte hash referencing a prior state. The consumer
+  // uses it on Transition.prior_state. The Speckl generator emits it
+  // as `message StateRoot { bytes hash = 1; }` — correct.
+  interface StateRoot {
+    hash: Bytes
+  }
+
+  // StateEntry: a key+value pair in the Merkle KV state. The consumer
+  // uses it on StateSnapshot.entries. The Speckl generator emits it
+  // as `message StateEntry { ... }` — correct.
+  interface StateEntry {
+    key: Bytes
+    value: Bytes
+  }
+
   // ─── Branch + Custody models ─────────────────────────────
   interface BranchInfo {
     branch_id:     Nat,
@@ -146,6 +183,28 @@ speck FederatedMeetup {
     user:         String
   }
 
+  // Cycle 66: cancel-rsvp, attest, fork, migrate — four events
+  // missing from the v0.1 spec but present in the handwritten
+  // proto/federated_meetup/v1/state.proto (audit finding C-2 / gap #4).
+  event CancelRsvp {
+    event_id:     String,
+    user:         String
+  }
+
+  event Attest {
+    target:       String,
+    claim:        String
+  }
+
+  event Fork {
+    new_branch_id: Nat,
+    parent_branch: Nat
+  }
+
+  event Migrate {
+    target_branch_id: Nat
+  }
+
   event IssueHostCert {
     host:         String,
     cert:         String,
@@ -179,6 +238,10 @@ speck FederatedMeetup {
     update_event:        UpdateEvent
     cancel_event:        CancelEvent
     rsvp:                Rsvp
+    cancel_rsvp:         CancelRsvp
+    attest:              Attest
+    fork:                Fork
+    migrate:             Migrate
     issue_host_cert:     IssueHostCert
     add_host_peer:       AddHostPeer
     branch_create:       BranchCreate
@@ -199,6 +262,10 @@ speck FederatedMeetup {
     UpdateEvent
     CancelEvent
     Rsvp
+    CancelRsvp
+    Attest
+    Fork
+    Migrate
     IssueHostCert
     AddHostPeer
     BranchCreate
