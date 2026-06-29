@@ -500,6 +500,9 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		// Steward history at the NEW root records the initial set.
 	case pb.TransitionType_TRANSITION_TYPE_ADD_STEWARD:
 		p := t.Proto.GetAddSteward()
+		if p == nil {
+			return errors.New("group: ADD_STEWARD missing payload")
+		}
 		var key types.PublicKey
 		copy(key[:], p.GetNewSteward().GetRaw())
 		// Cap the steward set: refuse to grow past MaxStewards.
@@ -515,12 +518,18 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_STEWARD:
 		p := t.Proto.GetRemoveSteward()
+		if p == nil {
+			return errors.New("group: REMOVE_STEWARD missing payload")
+		}
 		var key types.PublicKey
 		copy(key[:], p.GetSteward().GetRaw())
 		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), nil, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CHANGE_THRESHOLD:
 		p := t.Proto.GetChangeThreshold()
+		if p == nil {
+			return errors.New("group: CHANGE_THRESHOLD missing payload")
+		}
 		newThr := p.GetNewThreshold()
 		// G8 — Threshold validation gate. A threshold of 0 disables
 		// steward authentication entirely (no signatures ever required);
@@ -538,12 +547,18 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ADD_MEMBER:
 		p := t.Proto.GetAddMember()
+		if p == nil {
+			return errors.New("group: ADD_MEMBER missing payload")
+		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
 		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{1}, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_MEMBER:
 		p := t.Proto.GetRemoveMember()
+		if p == nil {
+			return errors.New("group: REMOVE_MEMBER missing payload")
+		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
 		// Tombstone: write []byte{0} instead of deleting the entry.
@@ -557,6 +572,9 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT:
 		p := t.Proto.GetCreateEvent()
+		if p == nil {
+			return errors.New("group: CREATE_EVENT missing payload")
+		}
 		// Store the event payload as protobuf bytes keyed by event_id.
 		// Use deterministic marshaling so all hosts produce the same
 		// bytes for the same logical event — the Metadata field is a
@@ -576,8 +594,11 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		// patch bytes for the same logical patch — the Patch field is
 		// a map and would otherwise marshal in non-deterministic
 		// order across hosts (Go map iteration), causing state root
-		// divergence on the same logical transition.
+// deterministic order).
 		p := t.Proto.GetUpdateEvent()
+		if p == nil {
+			return errors.New("group: UPDATE_EVENT missing payload")
+		}
 		pp, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal event patch: %w", err)
@@ -586,16 +607,25 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_EVENT:
 		p := t.Proto.GetCancelEvent()
+		if p == nil {
+			return errors.New("group: CANCEL_EVENT missing payload")
+		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_cancelled/"+p.GetEventId(), []byte{1}, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_RSVP:
 		p := t.Proto.GetRsvp()
+		if p == nil {
+			return errors.New("group: RSVP missing payload")
+		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
 		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{1}, s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_RSVP:
 		p := t.Proto.GetCancelRsvp()
+		if p == nil {
+			return errors.New("group: CANCEL_RSVP missing payload")
+		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
 		// Tombstone: []byte{0} instead of deleting the entry. See
@@ -608,6 +638,9 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ATTEST:
 		p := t.Proto.GetAttest()
+		if p == nil {
+			return errors.New("group: ATTEST missing payload")
+		}
 		attestKey := attestStorageKey(p)
 		attestBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
@@ -619,10 +652,16 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		// Fork creates a NEW group; the parent group's state machine just
 		// records the fork line. The new group is built separately.
 		p := t.Proto.GetFork()
+		if p == nil {
+			return errors.New("group: FORK missing payload")
+		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "fork_lineage", []byte(p.GetNewGroupKey().GetRaw()), s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_MIGRATE:
 		p := t.Proto.GetMigrate()
+		if p == nil {
+			return errors.New("group: MIGRATE missing payload")
+		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()), s.MaxKVSize)
 		if !kvAllowed { return ErrKVSizeExceeded }
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_after", binaryUint64(uint64(p.GetDeadline().GetSeconds())), s.MaxKVSize)
