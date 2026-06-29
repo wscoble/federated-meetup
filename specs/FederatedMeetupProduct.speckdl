@@ -1,0 +1,497 @@
+// FederatedMeetupProduct.speckdl — v0.3 product layer
+// Dogfood attempt: spec the vertical-integration product (not the protocol).
+// v0 MVP scope: Package C (Ticketed Workshop), single design-partner customer.
+//
+// This spec is SEPARATE from FederatedMeetup.speckdl (the protocol layer).
+// The product is closed-source; the protocol is open. Product references
+// protocol types (Transition, StateSnapshot) but owns its own data model
+// (Ticket, Order, Package, etc.).
+//
+// Compile target: discover what Speckl is missing for product-layer specs.
+
+speck FederatedMeetupProduct {
+  version: "0.3.0"
+  author:  "sscoble"
+  license: "AGPL-3.0"
+  proto_package: "federated_meetup.product.v1"
+  go_package: "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1"
+  event_suffix: "Payload"
+
+  // ─── Enums (product-layer discriminators) ───────────────────
+
+  // Which event package the group is subscribed to.
+  // Determines available features (see design v0.3 §4).
+  interface Package {
+    FreeCommunity,
+    RecurringClub,
+    TicketedWorkshop,
+    Conference
+  }
+
+  // Hosting mode (design v0.3 §3).
+  interface HostingMode {
+    SelfHost,
+    PaidHost
+  }
+
+  // Hosting tier for paid-host mode (design v0.3 §3 Mode 2).
+  interface HostingTier {
+    Free,
+    Community,
+    Pro,
+    Studio
+  }
+
+  // Event visibility (carried from v0.2 data model).
+  interface EventVisibility {
+    Public,
+    Unlisted,
+    Private,
+    InviteOnly
+  }
+
+  // Organizer roles within a group.
+  interface Role {
+    Owner,
+    Organizer,
+    Moderator,
+    Treasurer,
+    Member,
+    Pending
+  }
+
+  // Ticket tier type for workshops.
+  interface TicketTierType {
+    EarlyBird,
+    Regular,
+    Supporter,
+    Custom
+  }
+
+  // Order status (Stripe Connect lifecycle).
+  interface OrderStatus {
+    Pending,
+    Completed,
+    Refunded,
+    PartiallyRefunded,
+    Disputed,
+    Failed
+  }
+
+  // RSVP status (beyond binary yes/no).
+  interface RsvpStatus {
+    Going,
+    Waitlist,
+    Maybe,
+    NotGoing
+  }
+
+  // ─── Product data types ─────────────────────────────────────
+
+  // Money: integer cents + ISO currency code.
+  // Avoids floating point. Stripe works in cents.
+  interface Money {
+    amount: Nat,
+    currency: String
+  }
+
+  // Ticket: a purchasable ticket type for a ticketed event.
+  interface Ticket {
+    ticket_id: String,
+    name: String,
+    tier_type: TicketTierType,
+    price: Money,
+    capacity: Nat,
+    sold: Nat,
+    sale_starts_at: Date,
+    sale_ends_at: Date
+  }
+
+  // Order: a Stripe Connect order linking a ticket to an attendee.
+  interface Order {
+    order_id: String,
+    ticket_id: String,
+    attendee_email: String,
+    status: OrderStatus,
+    stripe_session_id: String,
+    amount_paid: Money,
+    created_at: Date,
+    refunded_at: Date
+  }
+
+  // RecurrenceRule: RRULE wrapped, with exception list.
+  interface RecurrenceRule {
+    rrule: String,
+    exceptions: StringList,
+    timezone: String
+  }
+
+  // Vendor: brokerage directory entry (insurance, catering, A/V, etc.).
+  interface Vendor {
+    vendor_id: String,
+    name: String,
+    category: String,
+    website: String,
+    rating: Nat,
+    verified: Bool,
+    referral_fee_percent: Nat
+  }
+
+  // Sponsorship: conference sponsor entry.
+  interface Sponsorship {
+    sponsor_id: String,
+    name: String,
+    tier: String,
+    logo_url: String,
+    website: String,
+    attendee_access: Bool
+  }
+
+  // Event: the product-layer event record (richer than protocol's EventRecord).
+  interface Event {
+    event_id: String,
+    group_id: String,
+    title: String,
+    description: String,
+    starts_at: Date,
+    ends_at: Date,
+    location: String,
+    venue_id: String,
+    visibility: EventVisibility,
+    capacity: Nat,
+    package: Package,
+    paid: Bool,
+    slug: String,
+    cancelled: Bool,
+    recurrence: RecurrenceRule
+  }
+
+  // Group: the product-layer group (richer than protocol state).
+  interface Group {
+    group_id: String,
+    canonical_name: String,
+    display_name: String,
+    description: String,
+    hosting_mode: HostingMode,
+    hosting_tier: HostingTier,
+    package: Package,
+    custom_domain: String,
+    member_count: Nat,
+    created_at: Date
+  }
+
+  // GroupMember: a member of a group with a role.
+  interface GroupMember {
+    group_id: String,
+    user_email: String,
+    role: Role,
+    joined_at: Date
+  }
+
+  // RSVP: the product-layer RSVP (richer than protocol's binary rsvp list).
+  interface Rsvp {
+    event_id: String,
+    user_email: String,
+    status: RsvpStatus,
+    created_at: Date,
+    attended: Bool
+  }
+
+  // ─── Product events (commands that mutate product state) ────
+
+  event CreateTicket {
+    event_id: String,
+    ticket_id: String,
+    name: String,
+    tier_type: TicketTierType,
+    price_amount: Nat,
+    price_currency: String,
+    capacity: Nat,
+    sale_starts_at: Date,
+    sale_ends_at: Date
+  }
+
+  event UpdateTicket {
+    ticket_id: String,
+    name: String,
+    price_amount: Nat,
+    price_currency: String,
+    capacity: Nat
+  }
+
+  event PurchaseTicket {
+    ticket_id: String,
+    attendee_email: String,
+    stripe_session_id: String
+  }
+
+  event RefundOrder {
+    order_id: String,
+    amount: Nat,
+    reason: String
+  }
+
+  event CreateRecurrence {
+    event_id: String,
+    rrule: String,
+    timezone: String
+  }
+
+  event AddException {
+    event_id: String,
+    exception_date: String
+  }
+
+  event SetGroupPackage {
+    group_id: String,
+    package: Package
+  }
+
+  event SetHostingTier {
+    group_id: String,
+    tier: HostingTier
+  }
+
+  event UpdateVisibility {
+    event_id: String,
+    visibility: EventVisibility
+  }
+
+  event SetMemberRole {
+    group_id: String,
+    user_email: String,
+    role: Role
+  }
+
+  event MarkAttended {
+    event_id: String,
+    user_email: String,
+    attended: Bool
+  }
+
+  // ─── Transition envelope (product-layer) ───────────────────
+  // Product transitions are separate from protocol transitions.
+  // They mutate product state (tickets, orders, recurrence, roles).
+
+  oneof ProductPayload {
+    create_ticket: CreateTicket,
+    update_ticket: UpdateTicket,
+    purchase_ticket: PurchaseTicket,
+    refund_order: RefundOrder,
+    create_recurrence: CreateRecurrence,
+    add_exception: AddException,
+    set_group_package: SetGroupPackage,
+    set_hosting_tier: SetHostingTier,
+    update_visibility: UpdateVisibility,
+    set_member_role: SetMemberRole,
+    mark_attended: MarkAttended
+  }
+
+  interface ProductTransitionType {
+    CreateTicket,
+    UpdateTicket,
+    PurchaseTicket,
+    RefundOrder,
+    CreateRecurrence,
+    AddException,
+    SetGroupPackage,
+    SetHostingTier,
+    UpdateVisibility,
+    SetMemberRole,
+    MarkAttended
+  }
+
+  transition ProductTransition {
+    type: ProductTransitionType,
+    payload: ProductPayload,
+    group_id: String,
+    hlc: Bytes
+  }
+
+  // ─── Product RPC service ───────────────────────────────────
+  // Organizer-facing + attendee-facing surface.
+  // Read RPCs are public (no auth for public events).
+  // Write RPCs require magic-link auth (RSVP) or organizer auth (ticket mgmt).
+
+  service ProductService {
+    rpc get_public_event(GetPublicEventRequest) returns (GetPublicEventResponse);
+    rpc list_upcoming_events(ListUpcomingEventsRequest) returns (ListUpcomingEventsResponse);
+    rpc submit_rsvp(SubmitRsvpRequest) returns (SubmitRsvpResponse);
+    rpc cancel_rsvp(CancelRsvpRequest) returns (CancelRsvpResponse);
+    rpc list_my_rsvps(ListMyRsvpsRequest) returns (ListMyRsvpsResponse);
+    rpc get_organizer_dashboard(GetOrganizerDashboardRequest) returns (GetOrganizerDashboardResponse);
+    rpc list_attendees(ListAttendeesRequest) returns (ListAttendeesResponse);
+    rpc create_ticket(CreateTicketRequest) returns (CreateTicketResponse);
+    rpc list_tickets(ListTicketsRequest) returns (ListTicketsResponse);
+    rc_purchase_ticket(PurchaseTicketRequest) returns (PurchaseTicketResponse);
+    rpc refund_order(RefundOrderRequest) returns (RefundOrderResponse);
+    rpc list_orders(ListOrdersRequest) returns (ListOrdersResponse);
+    rpc check_in_attendee(CheckInAttendeeRequest) returns (CheckInAttendeeResponse);
+  }
+
+  // ─── Request / response messages ───────────────────────────
+
+  interface GetPublicEventRequest {
+    slug: String,
+    event_id: String
+  }
+
+  interface GetPublicEventResponse {
+    event: Event,
+    tickets: List<Ticket>,
+    rsvp_count: Nat,
+    capacity: Nat
+  }
+
+  interface ListUpcomingEventsRequest {
+    group_id: String,
+    cursor: String,
+    page_size: Nat
+  }
+
+  interface ListUpcomingEventsResponse {
+    events: List<Event>,
+    next_cursor: String
+  }
+
+  interface SubmitRsvpRequest {
+    event_id: String,
+    email: String,
+    name: String
+  }
+
+  interface SubmitRsvpResponse {
+    rsvp: Rsvp,
+    magic_link: String
+  }
+
+  interface CancelRsvpRequest {
+    event_id: String,
+    email: String,
+    token: String
+  }
+
+  interface CancelRsvpResponse {
+    cancelled: Bool
+  }
+
+  interface ListMyRsvpsRequest {
+    email: String,
+    token: String
+  }
+
+  interface ListMyRsvpsResponse {
+    rsvps: List<Rsvp>
+  }
+
+  interface GetOrganizerDashboardRequest {
+    group_id: String,
+    organizer_token: String
+  }
+
+  interface GetOrganizerDashboardResponse {
+    upcoming_events: List<Event>,
+    total_rsvps: Nat,
+    total_revenue: Money,
+    pending_actions: StringList
+  }
+
+  interface ListAttendeesRequest {
+    event_id: String,
+    organizer_token: String
+  }
+
+  interface ListAttendeesResponse {
+    attendees: List<Rsvp>
+  }
+
+  interface CreateTicketRequest {
+    event_id: String,
+    organizer_token: String,
+    ticket: Ticket
+  }
+
+  interface CreateTicketResponse {
+    ticket_id: String
+  }
+
+  interface ListTicketsRequest {
+    event_id: String
+  }
+
+  interface ListTicketsResponse {
+    tickets: List<Ticket>
+  }
+
+  interface PurchaseTicketRequest {
+    ticket_id: String,
+    attendee_email: String,
+    attendee_name: String,
+    quantity: Nat
+  }
+
+  interface PurchaseTicketResponse {
+    order_id: String,
+    stripe_checkout_url: String
+  }
+
+  interface RefundOrderRequest {
+    order_id: String,
+    organizer_token: String,
+    amount: Nat,
+    reason: String
+  }
+
+  interface RefundOrderResponse {
+    order: Order
+  }
+
+  interface ListOrdersRequest {
+    event_id: String,
+    organizer_token: String,
+    cursor: String,
+    page_size: Nat
+  }
+
+  interface ListOrdersResponse {
+    orders: List<Order>,
+    next_cursor: String
+  }
+
+  interface CheckInAttendeeRequest {
+    event_id: String,
+    attendee_email: String,
+    organizer_token: String
+  }
+
+  interface CheckInAttendeeResponse {
+    checked_in: Bool
+  }
+
+  // ─── Constraints ────────────────────────────────────────────
+
+  // Money: amount is in cents, must be non-negative.
+  constraint: forall m in tickets: m.price.amount >= 0
+  constraint: forall m in tickets: len(m.price.currency) == 3
+  // Ticket: sold count cannot exceed capacity.
+  constraint: forall t in tickets: t.sold <= t.capacity
+  // Ticket: sale window must be valid.
+  constraint: forall t in tickets: t.sale_starts_at <= t.sale_ends_at
+  // Event: capacity must be positive.
+  constraint: forall e in events: e.capacity > 0
+  // Order: refunded orders have a refunded_at timestamp.
+  constraint: forall o in orders: implies(o.status == Refunded, o.refunded_at != nil)
+  // RSVP: attended can only be true if status is Going.
+  constraint: forall r in rsvps: implies(r.attended, r.status == Going)
+  // Group: paid hosting tier implies paid hosting mode.
+  constraint: forall g in groups: implies(g.hosting_tier != Free, g.hosting_mode == PaidHost)
+
+  // ─── Verification ───────────────────────────────────────────
+
+  verify: always(implies(event == PurchaseTicket, ticket_id in tickets))
+  verify: always(implies(event == RefundOrder, order_id in orders))
+  verify: always(implies(event == CreateTicket, sale_starts_at <= sale_ends_at))
+  verify: always(implies(event == SetMemberRole, role != Pending))
+  verify: eventually(implies(event == PurchaseTicket, ticket.sold < ticket.capacity))
+  verify: always(implies(event == MarkAttended, rsvp.status == Going))
+}
