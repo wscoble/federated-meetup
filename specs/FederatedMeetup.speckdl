@@ -162,6 +162,61 @@ speck FederatedMeetup {
     parent_branch: Nat
   }
 
+  // ─── Cycle 65: Transition envelope ────────────────────────────
+  // The federated-meetup wire format wraps every payload in a
+  // single Transition message with a oneof. The 13 events above
+  // become <Name>Payload messages (via the event_suffix directive),
+  // and this transition+oneof references them so the consumer's
+  // apply switch can dispatch on Transition.payload.
+  oneof TransitionPayload {
+    create_group:        CreateGroup
+    add_steward:         AddSteward
+    remove_steward:      RemoveSteward
+    change_threshold:    ChangeThreshold
+    add_member:          AddMember
+    remove_member:       RemoveMember
+    create_event:        CreateEvent
+    update_event:        UpdateEvent
+    cancel_event:        CancelEvent
+    rsvp:                Rsvp
+    issue_host_cert:     IssueHostCert
+    add_host_peer:       AddHostPeer
+    branch_create:       BranchCreate
+  }
+
+  // Discriminator enum. The handwritten proto used TransitionType
+  // with explicit field numbers; Speckl's enum emission starts at 1.
+  // Field numbers are stable across regen because enum names are
+  // sorted alphabetically by the Speckl compiler.
+  interface TransitionType {
+    CreateGroup
+    AddSteward
+    RemoveSteward
+    ChangeThreshold
+    AddMember
+    RemoveMember
+    CreateEvent
+    UpdateEvent
+    CancelEvent
+    Rsvp
+    IssueHostCert
+    AddHostPeer
+    BranchCreate
+  }
+
+  // Cycle 65: the Transition envelope itself. The discriminator
+  // (TransitionType) and the payload (TransitionPayload) are
+  // reference-only fields — the generator inlines the oneof inside
+  // the message body. hlc, branch_id, signed_at, and steward_signatures
+  // are real wire fields. prior_state is intentionally absent here;
+  // the consumer (internal/group/) builds it from HLC.
+  transition Transition {
+    type:              TransitionType
+    payload:           TransitionPayload
+    hlc:               Bytes
+    branch_id:         Nat
+  }
+
   // ─── RPC service (ConnectRPC over HTTPS) ──────────────────────
   // These map directly to gRPC service definitions when compiled to .proto.
   // The .proto → buf generate → protoc-gen-go + protoc-gen-connect-go
@@ -201,7 +256,10 @@ speck FederatedMeetup {
 
   interface SubmitTransitionRequest {
     group_key: Bytes,
-    transition: AddMember
+    // Cycle 65: the type was AddMember (a single event name) but
+    // the wire format is a single Transition envelope wrapping any
+    // event payload via its oneof. Reference the envelope here.
+    transition: Transition
   }
 
   interface SubmitTransitionResponse {
