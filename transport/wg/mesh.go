@@ -284,6 +284,7 @@ func (m *Mesh) DeliverFrom(to PeerID, from PeerID, payload []byte) error {
 }
 
 // registerBind associates a peer with its bind (called by StartPeer).
+//lint:ignore U1000 reserved for future use
 func (m *Mesh) registerBind(p PeerID, b *simBind) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -396,6 +396,7 @@ func stewardKPsForTest(w *sim.World) []crypto.KeyPair {
 
 // Debug helper: returns the raw seed bytes for a label (to compare with
 // what setupVegasProgrammers would compute).
+//lint:ignore U1000 debug helper kept for future use
 func stewardSeedFor(w *sim.World, label string) [32]byte {
 	s := w.DeriveSeed(label)
 	var seed [32]byte

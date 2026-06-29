@@ -224,6 +224,7 @@ func domainPrefix(domain string, msg []byte) []byte {
 // convention. Not used in production code paths (production hosts
 // produce signatures themselves) — included so tests can construct
 // valid ADD_HOST_PEER transitions without going through wireguard-go.
+//lint:ignore U1000 test helper kept for future use
 func signStewardEd25519(priv ed25519.PrivateKey, domain string, msg []byte) []byte {
 	return ed25519.Sign(priv, domainPrefix(domain, msg))
 }

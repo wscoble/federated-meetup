@@ -67,11 +67,13 @@ type Branch struct {
 	initialThreshold uint32
 
 	// log is the per-branch transition log.
+	//lint:ignore U1000 reserved for future use
 	log []*Transition
 
 	// equivocation tracks (steward, prior_state) within this branch.
 	// Cross-branch equivocation is meaningless — different branches
 	// are different state machines.
+	//lint:ignore U1000 reserved for future use
 	equivocation *equivocationLog
 
 	// transitionCount is incremented on every Apply. Surfaced via
@@ -168,38 +170,6 @@ func (b *Branch) InitialThreshold() uint32 {
 	return b.initialThreshold
 }
 
-// stewardsAtLocked returns the steward set at the given state root.
-// nil root = current head.
-func (b *Branch) stewardsAtLocked(root *pb.StateRoot) []Steward {
-	if root == nil || len(root.GetHash()) == 0 {
-		if st, ok := b.stewardHistory[b.snapshot.Root()]; ok {
-			return append([]Steward(nil), st...)
-		}
-		return append([]Steward(nil), b.initialStewards...)
-	}
-	var h types.Hash
-	copy(h[:], root.GetHash())
-	if st, ok := b.stewardHistory[h]; ok {
-		return append([]Steward(nil), st...)
-	}
-	return nil
-}
-
-// thresholdAtLocked returns the threshold at the given state root.
-func (b *Branch) thresholdAtLocked(root *pb.StateRoot) uint32 {
-	if root == nil || len(root.GetHash()) == 0 {
-		if t, ok := b.thresholdHistory[b.snapshot.Root()]; ok {
-			return t
-		}
-		return b.initialThreshold
-	}
-	var h types.Hash
-	copy(h[:], root.GetHash())
-	if t, ok := b.thresholdHistory[h]; ok {
-		return t
-	}
-	return 0
-}
 
 // =============================================================================
 // Branch registry — group-level
@@ -257,18 +227,6 @@ func (r *branchRegistry) allocate(parent BranchID, reason string) *Branch {
 	b.parentBranchID = parent
 	b.reason = reason
 	r.branches[id] = b
-	return b
-}
-
-// allocateGenesis creates branch 0 with the given initial steward
-// set and threshold. Called from State.Apply on CREATE_GROUP.
-func (r *branchRegistry) allocateGenesis(initialStewards []Steward, threshold uint32) *Branch {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	b := newBranch(GenesisBranchID)
-	b.initialStewards = initialStewards
-	b.initialThreshold = threshold
-	r.branches[GenesisBranchID] = b
 	return b
 }
 

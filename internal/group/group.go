@@ -361,7 +361,7 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 	// CREATE_GROUP itself will populate initialStewards/etc.
 	if targetBranch == nil {
 		if branchID == GenesisBranchID {
-			targetBranch = s.branches.getOrCreate(GenesisBranchID)
+			_ = s.branches.getOrCreate(GenesisBranchID)
 		} else {
 			return fmt.Errorf("group: transition targets unknown branch %d", branchID)
 		}

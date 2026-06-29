@@ -18,6 +18,7 @@ func sha256SumImpl(b []byte) [32]byte {
 
 // typesHashOfBytes builds a types.Hash from raw bytes (capped or padded
 // to 32 bytes). Used to construct tx-hash-style identifiers in tests.
+//lint:ignore U1000 test helper kept for future use
 func typesHashOfBytes(b []byte) types.Hash {
 	var out types.Hash
 	copy(out[:], b)

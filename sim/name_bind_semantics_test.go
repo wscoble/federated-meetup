@@ -144,7 +144,7 @@ func TestNameBind_DifferentNotAfter_CreatesDistinctEntries(t *testing.T) {
 	var found1, found2 bool
 	for _, e := range entries {
 		if len(e.Key) >= 10 && e.Key[:10] == "name_bind/" {
-			if e.Value == nil || len(e.Value) == 0 || e.Value[0] != 1 {
+			if len(e.Value) == 0 || e.Value[0] != 1 {
 				continue
 			}
 			// Check if the not_after timestamp appears in the key.
