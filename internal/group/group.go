@@ -71,6 +71,16 @@ func NewTransition(t *pb.Transition, gid types.GroupID) (*Transition, error) {
 // GroupID returns the group this transition belongs to.
 func (t *Transition) GroupID() GroupID { return t.groupID }
 
+// Type returns the discriminator of the wrapped protobuf transition. This
+// is the enum value in the TransitionType field of pb.Transition. The
+// ConnectRPC host service uses this to filter the event log.
+func (t *Transition) Type() pb.TransitionType {
+	if t == nil || t.Proto == nil {
+		return pb.TransitionType_TRANSITION_TYPE_UNSPECIFIED
+	}
+	return t.Proto.Type
+}
+
 // Canonical returns the canonical sign-bytes for this transition.
 func (t *Transition) Canonical() []byte { return t.canonical }
 
@@ -215,6 +225,15 @@ func NewState(gid GroupID) *State {
 	}
 }
 
+// GroupID returns the group this state machine is bound to. Exposed so
+// callers (e.g. the ConnectRPC host service) can route requests to the
+// right State when more than one is hosted.
+func (s *State) GroupID() types.GroupID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.groupID
+}
+
 // Snapshot returns the current state snapshot.
 func (s *State) Snapshot() types.StateSnapshot {
 	s.mu.Lock()
@@ -227,6 +246,17 @@ func (s *State) Root() types.Hash {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.snapshot.Root()
+}
+
+// TransitionCount returns the number of transitions currently in the log.
+// It is the index that the NEXT applied transition will receive — i.e.
+// the "head" index, not the count of past transitions. This matches the
+// proto contract (SubmitTransitionResponse.TransitionIndex is set BEFORE
+// Apply so clients can correlate).
+func (s *State) TransitionCount() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return uint64(len(s.log))
 }
 
 // Stewards returns the steward set at the current state head.
