@@ -86,6 +86,7 @@ func TestBootstrap_InitialMeshPeers(t *testing.T) {
 		seedPeerSeed[j] = byte(sp >> (8 * j))
 	}
 	seedPeerKP := crypto.KeyPairFromSeed(seedPeerSeed)
+	seedPeerCoSignerPub := ed25519.NewKeyFromSeed(seedPeerSeed[:]).Public().(ed25519.PublicKey)
 	seedPeerMeshIP := []byte{10, 0, 0, 1}
 
 	// Step 1: CREATE_GROUP with initial_mesh_peers.
@@ -95,7 +96,11 @@ func TestBootstrap_InitialMeshPeers(t *testing.T) {
 		InitialStewards: stewardPBs(stewards),
 		Threshold:       2,
 		InitialMeshPeers: []*pb.InitialMeshPeer{
-			{HostWgKey: seedPeerKP.Public[:], MeshIp: seedPeerMeshIP},
+			{
+				HostWgKey:   seedPeerKP.Public[:],
+				MeshIp:      seedPeerMeshIP,
+				CosignerKey: seedPeerCoSignerPub,
+			},
 		},
 	}
 	canonical, err := group.MarshalCanonicalForSigningHelper(&pb.Transition{
@@ -158,7 +163,7 @@ func TestBootstrap_InitialMeshPeers(t *testing.T) {
 	addPayload := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: newPeerKP.Public[:]},
 		MeshIp:          newPeerMeshIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSignerPub},
 	}
 	// Compute the deterministic canonical bytes for the cosigner
 	// signature (matching verifyCoSignerSignature in gates.go).
@@ -291,6 +296,7 @@ func TestBootstrap_RemoveThenReAddPeer(t *testing.T) {
 		seedPeerSeed[j] = byte(sp >> (8 * j))
 	}
 	seedPeerKP := crypto.KeyPairFromSeed(seedPeerSeed)
+	seedPeerCoSignerPub := ed25519.NewKeyFromSeed(seedPeerSeed[:]).Public().(ed25519.PublicKey)
 	seedPeerMeshIP := []byte{10, 0, 0, 1}
 
 	// Peer that will be ADD'd, REMOVE'd, and ADD'd again.
@@ -309,7 +315,11 @@ func TestBootstrap_RemoveThenReAddPeer(t *testing.T) {
 		InitialStewards: stewardPBs(stewards),
 		Threshold:       2,
 		InitialMeshPeers: []*pb.InitialMeshPeer{
-			{HostWgKey: seedPeerKP.Public[:], MeshIp: seedPeerMeshIP},
+			{
+				HostWgKey:   seedPeerKP.Public[:],
+				MeshIp:      seedPeerMeshIP,
+				CosignerKey: seedPeerCoSignerPub,
+			},
 		},
 	}
 	canonical, err := group.MarshalCanonicalForSigningHelper(&pb.Transition{
@@ -347,7 +357,7 @@ func TestBootstrap_RemoveThenReAddPeer(t *testing.T) {
 	addPayload := &pb.AddHostPeerPayload{
 		HostWgKey:        &pb.PublicKey{Raw: targetPeerKP.Public[:]},
 		MeshIp:           targetPeerMeshIP,
-		CosignerPeerKey:  &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSignerPub},
 	}
 	cosigCanonical, err := proto.MarshalOptions{Deterministic: true}.Marshal(addPayload)
 	if err != nil {
@@ -403,7 +413,7 @@ func TestBootstrap_RemoveThenReAddPeer(t *testing.T) {
 	add2Payload := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: targetPeerKP.Public[:]},
 		MeshIp:          targetPeerMeshIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSignerPub},
 	}
 	cosigCanonical2, err := proto.MarshalOptions{Deterministic: true}.Marshal(add2Payload)
 	if err != nil {
@@ -492,9 +502,13 @@ func buildSignedTransitionForRemovePeer(
 	return group.NewTransition(tr, gid)
 }
 
-// signCosigner signs a cosigner message using the Ed25519 view of
-// the seed (which is also the wg pubkey). Mirrors
-// internal/group/gates.go signStewardEd25519.
+// signCosigner signs a cosigner message using the dedicated Ed25519
+// CoSigner key (cycle 56). The seed-peer pattern uses the same 32
+// bytes as both the wg key seed and the Ed25519 CoSigner seed —
+// this happens to work because the test seeds are fabricated, not
+// X25519-derived. In production, X25519 outputs do not coincide
+// with Ed25519 points (cycle 51); hosts must hold a separate
+// Ed25519 keypair for cosigning.
 func signCosigner(seed [32]byte, msg []byte) []byte {
 	priv := ed25519.NewKeyFromSeed(seed[:])
 	prefixed := bootstrapDomainPrefix("add_host_peer_cosig", msg)

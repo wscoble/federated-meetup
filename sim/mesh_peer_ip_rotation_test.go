@@ -26,6 +26,7 @@
 package sim_test
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func bytesEqual(a, b []byte) bool {
 // group whose initial mesh peer is seedPeer. Returns the world, group ID,
 // steward KPs, seed peer KP, and seed peer seed — enough to build
 // ADD/REMOVE transitions in the test body (signCosigner needs the seed).
-func meshPeerIPRotationSetup(t *testing.T, seed uint64) (*sim.World, types.GroupID, []crypto.KeyPair, crypto.KeyPair, [32]byte) {
+func meshPeerIPRotationSetup(t *testing.T, seed uint64) (*sim.World, types.GroupID, []crypto.KeyPair, ed25519.PublicKey, [32]byte) {
 	t.Helper()
 	w, err := sim.NewWorld(sim.Config{
 		Seed:        seed,
@@ -96,6 +97,7 @@ func meshPeerIPRotationSetup(t *testing.T, seed uint64) (*sim.World, types.Group
 		seedPeerSeed[j] = byte(sp >> (8 * j))
 	}
 	seedPeerKP := crypto.KeyPairFromSeed(seedPeerSeed)
+	seedPeerCoSigner := ed25519.NewKeyFromSeed(seedPeerSeed[:]).Public().(ed25519.PublicKey)
 	seedPeerMeshIP := []byte{10, 0, 0, 1}
 
 	// CREATE_GROUP with initial_mesh_peers=[seedPeer].
@@ -105,7 +107,11 @@ func meshPeerIPRotationSetup(t *testing.T, seed uint64) (*sim.World, types.Group
 		InitialStewards: stewardPBs(stewards),
 		Threshold:       2,
 		InitialMeshPeers: []*pb.InitialMeshPeer{
-			{HostWgKey: seedPeerKP.Public[:], MeshIp: seedPeerMeshIP},
+			{
+				HostWgKey:   seedPeerKP.Public[:],
+				MeshIp:      seedPeerMeshIP,
+				CosignerKey: seedPeerCoSigner,
+			},
 		},
 	}
 	canonical, err := group.MarshalCanonicalForSigningHelper(&pb.Transition{
@@ -136,11 +142,11 @@ func meshPeerIPRotationSetup(t *testing.T, seed uint64) (*sim.World, types.Group
 		}
 	}
 	w.Advance(50 * time.Millisecond)
-	return w, groupKP.Public, stewards, seedPeerKP, seedPeerSeed
+	return w, groupKP.Public, stewards, seedPeerCoSigner, seedPeerSeed
 }
 
 func TestMeshPeer_IPRotation_ReAddSameKeyRejected(t *testing.T) {
-	w, gid, stewards, seedPeerKP, seedPeerSeed := meshPeerIPRotationSetup(t, 81)
+	w, gid, stewards, seedPeerCoSigner, seedPeerSeed := meshPeerIPRotationSetup(t, 81)
 	defer w.Close()
 
 	// Target peer (will be added, then attempted to be re-added).
@@ -158,7 +164,7 @@ func TestMeshPeer_IPRotation_ReAddSameKeyRejected(t *testing.T) {
 	addPayload := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: targetPeerKP.Public[:]},
 		MeshIp:          originalIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSigner},
 	}
 	cosigCanonical, _ := proto.MarshalOptions{Deterministic: true}.Marshal(addPayload)
 	addPayload.CosignerPeerSignature = &pb.Signature{Raw: signCosigner(seedPeerSeed, cosigCanonical)}
@@ -182,7 +188,7 @@ func TestMeshPeer_IPRotation_ReAddSameKeyRejected(t *testing.T) {
 	badAdd := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: targetPeerKP.Public[:]},
 		MeshIp:          rotatedIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSigner},
 	}
 	cosigCanonical2, _ := proto.MarshalOptions{Deterministic: true}.Marshal(badAdd)
 	badAdd.CosignerPeerSignature = &pb.Signature{Raw: signCosigner(seedPeerSeed, cosigCanonical2)}
@@ -207,7 +213,7 @@ func TestMeshPeer_IPRotation_ReAddSameKeyRejected(t *testing.T) {
 }
 
 func TestMeshPeer_IPRotation_ReUseIPRejected(t *testing.T) {
-	w, gid, stewards, seedPeerKP, seedPeerSeed := meshPeerIPRotationSetup(t, 82)
+	w, gid, stewards, seedPeerCoSigner, seedPeerSeed := meshPeerIPRotationSetup(t, 82)
 	defer w.Close()
 
 	// First target peer at IP 10.0.0.2.
@@ -232,7 +238,7 @@ func TestMeshPeer_IPRotation_ReUseIPRejected(t *testing.T) {
 	add1 := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: target1KP.Public[:]},
 		MeshIp:          sharedIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSigner},
 	}
 	cosig1, _ := proto.MarshalOptions{Deterministic: true}.Marshal(add1)
 	add1.CosignerPeerSignature = &pb.Signature{Raw: signCosigner(seedPeerSeed, cosig1)}
@@ -250,7 +256,7 @@ func TestMeshPeer_IPRotation_ReUseIPRejected(t *testing.T) {
 	add2 := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: target2KP.Public[:]},
 		MeshIp:          sharedIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSigner},
 	}
 	cosig2, _ := proto.MarshalOptions{Deterministic: true}.Marshal(add2)
 	add2.CosignerPeerSignature = &pb.Signature{Raw: signCosigner(seedPeerSeed, cosig2)}
@@ -273,7 +279,7 @@ func TestMeshPeer_IPRotation_ReUseIPRejected(t *testing.T) {
 }
 
 func TestMeshPeer_IPRotation_RemoveAddWorkflow(t *testing.T) {
-	w, gid, stewards, seedPeerKP, seedPeerSeed := meshPeerIPRotationSetup(t, 83)
+	w, gid, stewards, seedPeerCoSigner, seedPeerSeed := meshPeerIPRotationSetup(t, 83)
 	defer w.Close()
 
 	// Target peer will rotate from 10.0.0.2 → 10.0.0.3.
@@ -291,7 +297,7 @@ func TestMeshPeer_IPRotation_RemoveAddWorkflow(t *testing.T) {
 	add1 := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: targetKP.Public[:]},
 		MeshIp:          originalIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSigner},
 	}
 	cosig1, _ := proto.MarshalOptions{Deterministic: true}.Marshal(add1)
 	add1.CosignerPeerSignature = &pb.Signature{Raw: signCosigner(seedPeerSeed, cosig1)}
@@ -339,7 +345,7 @@ func TestMeshPeer_IPRotation_RemoveAddWorkflow(t *testing.T) {
 	add2 := &pb.AddHostPeerPayload{
 		HostWgKey:       &pb.PublicKey{Raw: targetKP.Public[:]},
 		MeshIp:          rotatedIP,
-		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerKP.Public[:]},
+		CosignerPeerKey: &pb.PublicKey{Raw: seedPeerCoSigner},
 	}
 	cosig2, _ := proto.MarshalOptions{Deterministic: true}.Marshal(add2)
 	add2.CosignerPeerSignature = &pb.Signature{Raw: signCosigner(seedPeerSeed, cosig2)}
