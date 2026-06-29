@@ -6,7 +6,7 @@
 // This file is the only place domain code touches protobuf types —
 // every method body is a thin bridge that:
 //   1. Decodes the request (a few bytes → domain types).
-//   2. Calls into internal/group, internal/types, internal/transition.
+//   2. Calls into internal/group, internal/types.
 //   3. Encodes the response (domain types → a few bytes).
 //
 // No handler boilerplate is hand-written. To add or change a method:
@@ -33,15 +33,15 @@ import (
 
 // Service implements federatedmeetupv1connect.HostServiceHandler.
 //
-// At v0 the Service wraps a single *group.State — the host's "home" group.
-// Multi-group indexing (ListGroups across N groups) is added in a later cycle
-// by replacing state with map[types.GroupID]*group.State.
+// The host runs multiple groups; each request is routed to the right
+// *group.State via the MultiGroup registry. At v0 the registry is
+// populated at construction time; future cycles will populate it
+// dynamically (gossip, peer sync, on-disk persistence).
 type Service struct {
-	// state is the group's authoritative state. Mutated only via Apply.
-	// Reads may happen concurrently; writes are serialized by internal/group.
-	state *group.State
+	// groups is the host's "which groups am I currently serving" registry.
+	groups *MultiGroup
 	// name is the canonical name this host uses to advertise itself in
-	// ResolveName responses (host's hostname or URL).
+	// ResolveName responses.
 	name string
 	// now is overridable for tests. Defaults to time.Now in NewService.
 	now func() time.Time
@@ -50,16 +50,36 @@ type Service struct {
 // Compile-time assertion: Service satisfies the generated handler interface.
 var _ federatedmeetupv1connect.HostServiceHandler = (*Service)(nil)
 
-// NewService constructs a Service bound to the given group state.
+// NewService constructs a Service bound to a MultiGroup registry.
 //
-// groupID is the group's identity. state is the authoritative state machine.
 // name is the host's canonical name (used in ResolveName responses).
-func NewService(state *group.State, name string) *Service {
-	return &Service{state: state, name: name, now: time.Now}
+// states are the *group.State instances this host serves (one per
+// group). Each state machine's GroupID() is the registry key; a
+// nil entry is silently skipped.
+//
+// For backward compatibility with the single-group v0 callers, you
+// can also construct a Service via NewServiceSingle, which wraps a
+// single state in a one-entry MultiGroup.
+func NewService(name string, states ...*group.State) *Service {
+	return &Service{
+		groups: NewMultiGroup(name, states...),
+		name:   name,
+		now:    time.Now,
+	}
+}
+
+// NewServiceSingle is a convenience constructor for the single-group
+// case. Equivalent to NewService(name, state).
+func NewServiceSingle(state *group.State, name string) *Service {
+	return NewService(name, state)
 }
 
 // SetClock overrides the time source. Test-only.
 func (s *Service) SetClock(now func() time.Time) { s.now = now }
+
+// Groups returns the underlying MultiGroup registry. Read-only access
+// for tests; production callers should go through the service methods.
+func (s *Service) Groups() *MultiGroup { return s.groups }
 
 // ----- Reads ---------------------------------------------------------------
 
@@ -88,16 +108,14 @@ func (s *Service) GetGroup(
 	default:
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("missing identifier"))
 	}
-	if s.state.GroupID() != groupKey {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("group not hosted here"))
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return nil, err
 	}
-
-	snap := s.state.Snapshot()
-	root := s.state.Root()
 	resp := &pb.GetGroupResponse{
-		Snapshot:  stateSnapshotToProto(snap, root),
-		Stewards:  stewardsToProto(s.state.Stewards()),
-		Threshold: s.state.Threshold(),
+		Snapshot:  stateSnapshotToProto(state.Snapshot(), state.Root()),
+		Stewards:  stewardsToProto(state.Stewards()),
+		Threshold: state.Threshold(),
 	}
 	return connect.NewResponse(resp), nil
 }
@@ -117,11 +135,12 @@ func (s *Service) GetEvent(
 	if r.EventId == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("event_id is empty"))
 	}
-	if s.state.GroupID() != bytesToKey(r.GroupKey.Raw) {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("group not hosted here"))
+	state, err := s.lookup(bytesToKey(r.GroupKey.Raw))
+	if err != nil {
+		return nil, err
 	}
-	// v0: walk the log looking for CREATE_EVENT with matching event_id.
-	for _, t := range s.state.Log() {
+	// Walk the log looking for CREATE_EVENT with matching event_id.
+	for _, t := range state.Log() {
 		if t == nil || t.Proto == nil {
 			continue
 		}
@@ -130,8 +149,6 @@ func (s *Service) GetEvent(
 		}
 		p := t.Proto.GetCreateEvent()
 		if p != nil && p.EventId == r.EventId {
-			// v0: RSVPs and cancellation status are not yet wired into the
-			// state machine's read path; report what we have.
 			return connect.NewResponse(&pb.GetEventResponse{
 				Event:     p,
 				Rsvps:     nil,
@@ -142,12 +159,7 @@ func (s *Service) GetEvent(
 	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("event %q not found", r.EventId))
 }
 
-// ListEvents pages through the group's event log.
-//
-// v0: returns the most recent events (filtered to CREATE_EVENT transitions)
-// in reverse-chronological order. Pagination is by transition index encoded
-// as a base-10 string in the cursor. A future cycle will replace this with
-// a proper index.
+// ListEvents pages through a group's event log.
 func (s *Service) ListEvents(
 	ctx context.Context,
 	req *connect.Request[pb.ListEventsRequest],
@@ -159,8 +171,9 @@ func (s *Service) ListEvents(
 	if r.GroupKey == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_key is nil"))
 	}
-	if s.state.GroupID() != bytesToKey(r.GroupKey.Raw) {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("group not hosted here"))
+	state, err := s.lookup(bytesToKey(r.GroupKey.Raw))
+	if err != nil {
+		return nil, err
 	}
 
 	pageSize := int(r.PageSize)
@@ -168,7 +181,6 @@ func (s *Service) ListEvents(
 		pageSize = 50
 	}
 
-	// Cursor = starting index in the log (0 = newest at the end of the log).
 	startIdx := uint64(0)
 	if r.Cursor != "" {
 		if _, err := fmt.Sscan(r.Cursor, &startIdx); err != nil {
@@ -176,10 +188,8 @@ func (s *Service) ListEvents(
 		}
 	}
 
-	log := s.state.Log()
-	// Walk backwards: log[Len-1] is newest.
+	log := state.Log()
 	endIdx := uint64(len(log))
-	// If cursor is set, page starts at endIdx - startIdx (so cursor=0 means "newest first").
 	if r.Cursor != "" {
 		if startIdx > endIdx {
 			startIdx = endIdx
@@ -210,31 +220,31 @@ func (s *Service) ListEvents(
 	}), nil
 }
 
-// ListGroups lists groups hosted by this host. v0 returns only the home group.
+// ListGroups lists all groups hosted by this host.
 func (s *Service) ListGroups(
 	ctx context.Context,
 	req *connect.Request[pb.ListGroupsRequest],
 ) (*connect.Response[pb.ListGroupsResponse], error) {
 	_ = req
-	summary := &pb.ListGroupsResponse_GroupSummary{
-		GroupKey: keyToProto(s.state.GroupID()),
-		// v0: a real host would include name, member count, event count.
+	gids := s.groups.All()
+	summaries := make([]*pb.ListGroupsResponse_GroupSummary, 0, len(gids))
+	for _, gid := range gids {
+		summaries = append(summaries, &pb.ListGroupsResponse_GroupSummary{
+			GroupKey: keyToProto(gid),
+		})
 	}
 	return connect.NewResponse(&pb.ListGroupsResponse{
-		Groups:     []*pb.ListGroupsResponse_GroupSummary{summary},
+		Groups:     summaries,
 		NextCursor: "",
 	}), nil
 }
 
 // ----- Writes --------------------------------------------------------------
 
-// SubmitTransition applies a steward-signed transition.
-//
-// The transition is verified against the current state by internal/group:
-//   - Cosigner signatures are checked via verifyCoSignerSignature.
-//   - Multisig threshold is checked via verifyMultisig.
-//   - Equivocation evidence is checked via CheckEquivocation.
-//   - State invariants are checked during Apply.
+// SubmitTransition applies a steward-signed transition to a group's
+// state machine. The transition is verified against the current state
+// by internal/group: cosigner signatures, multisig threshold,
+// equivocation, and state invariants.
 func (s *Service) SubmitTransition(
 	ctx context.Context,
 	req *connect.Request[pb.SubmitTransitionRequest],
@@ -250,22 +260,20 @@ func (s *Service) SubmitTransition(
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("transition is nil"))
 	}
 	groupKey := bytesToKey(r.GroupKey.Raw)
-	if s.state.GroupID() != groupKey {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("group not hosted here"))
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return nil, err
 	}
-	// v0: do not enforce a per-transition deadline. Future cycles may enforce
-	// `ctx.Done()` for rate-limited submit paths.
-
 	t, err := group.NewTransition(r.Transition, groupKey)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid transition: %w", err))
 	}
-	idx := s.state.TransitionCount()
-	if err := s.state.Apply(t, s.now()); err != nil {
+	idx := state.TransitionCount()
+	if err := state.Apply(t, s.now()); err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("apply: %w", err))
 	}
 	return connect.NewResponse(&pb.SubmitTransitionResponse{
-		NewSnapshot:     stateSnapshotToProto(s.state.Snapshot(), s.state.Root()),
+		NewSnapshot:     stateSnapshotToProto(state.Snapshot(), state.Root()),
 		TransitionIndex: idx,
 	}), nil
 }
@@ -273,8 +281,7 @@ func (s *Service) SubmitTransition(
 // SubmitUserAction applies a user-signed action (RSVP, ATTEST, CANCEL_RSVP).
 //
 // v0: this is a stub that rejects with Unimplemented. Wiring user-signed
-// actions into the apply switch is cycle 80+ work — they currently live in
-// the log but have no separate verifyUserAction path.
+// actions into the apply switch is cycle 80+ work.
 func (s *Service) SubmitUserAction(
 	ctx context.Context,
 	req *connect.Request[pb.SubmitUserActionRequest],
@@ -284,8 +291,8 @@ func (s *Service) SubmitUserAction(
 
 // ResolveName resolves a canonical name to the group key + hosting URLs.
 //
-// v0: returns the home group's key and this host's name. A future cycle
-// will add a name directory (LocalNameTable) and DNS-style delegation.
+// v0: returns the FIRST hosted group + this host's name. A future cycle
+// will add a name directory and a real name → GroupID mapping.
 func (s *Service) ResolveName(
 	ctx context.Context,
 	req *connect.Request[pb.ResolveNameRequest],
@@ -294,15 +301,30 @@ func (s *Service) ResolveName(
 	if r == nil || r.CanonicalName == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("canonical_name is empty"))
 	}
-	// v0: only this host's home group is resolvable.
+	gids := s.groups.All()
+	if len(gids) == 0 {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("no groups hosted here"))
+	}
 	hosts := []string{}
 	if s.name != "" {
 		hosts = append(hosts, s.name)
 	}
 	return connect.NewResponse(&pb.ResolveNameResponse{
-		GroupKey: keyToProto(s.state.GroupID()),
+		GroupKey: keyToProto(gids[0]),
 		Hosts:    hosts,
 	}), nil
+}
+
+// ----- Internal helpers ----------------------------------------------------
+
+// lookup resolves a group public key to a *group.State. Returns
+// (nil, NotFound) if this host does not serve that group.
+func (s *Service) lookup(gid types.PublicKey) (*group.State, error) {
+	st, ok := s.groups.Get(gid)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("group not hosted here"))
+	}
+	return st, nil
 }
 
 // ----- Type bridges --------------------------------------------------------

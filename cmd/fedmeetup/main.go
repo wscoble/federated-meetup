@@ -96,7 +96,7 @@ func main() {
 	}
 
 	state := group.NewState(cfg.groupKey)
-	svc := host.NewService(state, cfg.name)
+	svc := host.NewService(cfg.name, state)
 
 	mux := http.NewServeMux()
 	path, handler := federatedmeetupv1connect.NewHostServiceHandler(svc)

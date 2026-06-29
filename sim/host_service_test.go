@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
+	"github.com/sscoble/federated-meetup/internal/group"
 	"github.com/sscoble/federated-meetup/internal/host"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 	"github.com/sscoble/federated-meetup/sim"
@@ -52,7 +53,7 @@ func freshService(t *testing.T) (*host.Service, *sim.World, crypto.KeyPair) {
 	if state == nil {
 		t.Fatal("setupVegasProgrammers did not produce a state on host 0")
 	}
-	svc := host.NewService(state, "host-0.test")
+	svc := host.NewService("host-0.test", state)
 	return svc, w, gkp
 }
 
@@ -295,5 +296,116 @@ func TestHostService_SubmitUserAction_Unimplemented(t *testing.T) {
 	}
 	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Errorf("code = %v, want Unimplemented", connect.CodeOf(err))
+	}
+}
+
+// TestHostService_MultiGroup_ListGroups verifies the host can serve
+// multiple groups simultaneously and ListGroups returns all of them.
+func TestHostService_MultiGroup_ListGroups(t *testing.T) {
+	w, err := sim.NewWorld(sim.Config{
+		Seed:        2,
+		HostCount:   1,
+		InitialTime: time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("NewWorld: %v", err)
+	}
+	t.Cleanup(func() { w.Close() })
+
+	gkp1 := setupVegasProgrammers(w)
+	// Construct a state for a second group with a different key.
+	seed2 := w.DeriveSeed("reno-programmers")
+	var seedBytes [32]byte
+	for j := 0; j < 8; j++ {
+		seedBytes[j] = byte(seed2 >> (8 * j))
+	}
+	gkp2 := crypto.KeyPairFromSeed(seedBytes)
+
+	state1 := w.Hosts()[0].State(gkp1.Public)
+	if state1 == nil {
+		t.Fatal("setupVegasProgrammers did not produce state1")
+	}
+	state2 := group.NewState(gkp2.Public)
+	svc := host.NewService("host-multi", state1, state2)
+	if svc.Groups().Len() != 2 {
+		t.Fatalf("Groups().Len() = %d, want 2", svc.Groups().Len())
+	}
+
+	req := connect.NewRequest(&pb.ListGroupsRequest{})
+	resp, err := svc.ListGroups(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ListGroups: %v", err)
+	}
+	if len(resp.Msg.Groups) != 2 {
+		t.Fatalf("len(groups) = %d, want 2", len(resp.Msg.Groups))
+	}
+	seen := map[[32]byte]bool{}
+	for _, g := range resp.Msg.Groups {
+		var k [32]byte
+		copy(k[:], g.GroupKey.Raw)
+		seen[k] = true
+	}
+	if !seen[gkp1.Public] {
+		t.Errorf("group 1 (%x) not in ListGroups", gkp1.Public)
+	}
+	if !seen[gkp2.Public] {
+		t.Errorf("group 2 (%x) not in ListGroups", gkp2.Public)
+	}
+}
+
+// TestHostService_MultiGroup_Routing verifies that requests for
+// a hosted group succeed and requests for a non-hosted group
+// return NotFound.
+func TestHostService_MultiGroup_Routing(t *testing.T) {
+	w, err := sim.NewWorld(sim.Config{
+		Seed:        3,
+		HostCount:   1,
+		InitialTime: time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("NewWorld: %v", err)
+	}
+	t.Cleanup(func() { w.Close() })
+	gkp1 := setupVegasProgrammers(w)
+	state1 := w.Hosts()[0].State(gkp1.Public)
+
+	// Make a state for a different group key (not registered).
+	otherKey := [32]byte{}
+	for i := range otherKey {
+		otherKey[i] = 0xAB
+	}
+	state2 := group.NewState(otherKey)
+	svc := host.NewService("host-routing", state1, state2)
+
+	// gkp1 is registered → GetGroup succeeds.
+	req := connect.NewRequest(&pb.GetGroupRequest{
+		Identifier: &pb.GetGroupRequest_GroupKey{GroupKey: &pb.PublicKey{Raw: gkp1.Public[:]}},
+	})
+	if _, err := svc.GetGroup(context.Background(), req); err != nil {
+		t.Errorf("GetGroup on hosted group: %v", err)
+	}
+
+	// otherKey is registered too → also succeeds.
+	req2 := connect.NewRequest(&pb.GetGroupRequest{
+		Identifier: &pb.GetGroupRequest_GroupKey{GroupKey: &pb.PublicKey{Raw: otherKey[:]}},
+	})
+	if _, err := svc.GetGroup(context.Background(), req2); err != nil {
+		t.Errorf("GetGroup on second hosted group: %v", err)
+	}
+
+	// A key that is NOT registered → NotFound.
+	var missingKey [32]byte
+	for i := range missingKey {
+		missingKey[i] = 0xFF
+	}
+	req3 := connect.NewRequest(&pb.GetGroupRequest{
+		Identifier: &pb.GetGroupRequest_GroupKey{GroupKey: &pb.PublicKey{Raw: missingKey[:]}},
+	})
+	_, err = svc.GetGroup(context.Background(), req3)
+	if err == nil {
+		t.Fatal("expected NotFound, got nil")
+	}
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Errorf("code = %v, want NotFound", connect.CodeOf(err))
 	}
 }
