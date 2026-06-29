@@ -32,7 +32,7 @@ import (
 // mesh IP + a CoSigner pubkey. The peer is identified by the wg key.
 type MeshPeer struct {
 	// HostWGKey is the peer's WireGuard X25519 public key (32 bytes).
-	HostWGKey pb.PublicKey
+	HostWGKey *pb.PublicKey
 	// MeshIP is the peer's static private IP in the overlay space.
 	// IPv4 (4 bytes) or IPv6 (16 bytes).
 	MeshIP []byte
@@ -42,7 +42,7 @@ type MeshPeer struct {
 	// coincide with Ed25519 points (cycle 51). May be empty for
 	// bootstrap peers that pre-date the CoSigner convention; in
 	// that case the peer cannot cosign ADD_HOST_PEER.
-	CoSignerKey pb.PublicKey
+	CoSignerKey *pb.PublicKey
 }
 
 // PeerID returns a fixed-size key suitable for use as a map key.

@@ -28,7 +28,7 @@ import (
 // in time. A steward may re-declare (raising or lowering their tier) —
 // each declaration is a separate transition and is recorded here.
 type CustodyDeclaration struct {
-	Steward pb.PublicKey
+	Steward *pb.PublicKey
 	Tier    pb.CustodyTier
 }
 
