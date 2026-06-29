@@ -14,8 +14,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Drift check: catch .speckdl ↔ .proto schema drift before we regenerate.
+# Drift checks: catch .speckdl ↔ .proto schema drift before we regenerate.
+# Protocol layer.
 scripts/drift-check.sh
+# Product layer (cycle 73).
+scripts/drift-check-product.sh
 
 buf format -w
 buf generate
