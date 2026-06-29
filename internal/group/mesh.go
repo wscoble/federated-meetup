@@ -29,13 +29,20 @@ import (
 )
 
 // MeshPeer is one entry in the mesh peer set: a wg public key + a
-// mesh IP. The peer is identified by the wg key.
+// mesh IP + a CoSigner pubkey. The peer is identified by the wg key.
 type MeshPeer struct {
 	// HostWGKey is the peer's WireGuard X25519 public key (32 bytes).
 	HostWGKey pb.PublicKey
 	// MeshIP is the peer's static private IP in the overlay space.
 	// IPv4 (4 bytes) or IPv6 (16 bytes).
 	MeshIP []byte
+	// CoSignerKey is the peer's dedicated Ed25519 CoSigner public
+	// key (32 bytes). Used to verify ADD_HOST_PEER cosignatures.
+	// Distinct from HostWGKey because X25519 outputs do not
+	// coincide with Ed25519 points (cycle 51). May be empty for
+	// bootstrap peers that pre-date the CoSigner convention; in
+	// that case the peer cannot cosign ADD_HOST_PEER.
+	CoSignerKey pb.PublicKey
 }
 
 // PeerID returns a fixed-size key suitable for use as a map key.
@@ -53,18 +60,20 @@ func (p *MeshPeer) PeerID() ([32]byte, bool) {
 // meshPeerRegistry is the per-State view of the current mesh. Tracks
 // the live set and the history of add/remove operations.
 type meshPeerRegistry struct {
-	mu       sync.Mutex
-	peers    map[[32]byte]*MeshPeer // keyed by wg key
-	byIP     map[string]*MeshPeer   // keyed by canonical mesh IP string
-	addLog   []MeshPeer             // ordered list of additions
-	removeLog []*MeshPeer           // ordered list of removals
+	mu         sync.Mutex
+	peers      map[[32]byte]*MeshPeer // keyed by wg key
+	byIP       map[string]*MeshPeer   // keyed by canonical mesh IP string
+	byCoSigner map[[32]byte]*MeshPeer // keyed by CoSigner Ed25519 pubkey (cycle 56)
+	addLog     []MeshPeer             // ordered list of additions
+	removeLog  []*MeshPeer            // ordered list of removals
 }
 
 // newMeshPeerRegistry returns an empty registry.
 func newMeshPeerRegistry() *meshPeerRegistry {
 	return &meshPeerRegistry{
-		peers:  make(map[[32]byte]*MeshPeer),
-		byIP:   make(map[string]*MeshPeer),
+		peers:      make(map[[32]byte]*MeshPeer),
+		byIP:       make(map[string]*MeshPeer),
+		byCoSigner: make(map[[32]byte]*MeshPeer),
 	}
 }
 
@@ -86,6 +95,11 @@ func (r *meshPeerRegistry) add(p *MeshPeer) error {
 	}
 	r.peers[id] = p
 	r.byIP[ipKey] = p
+	if ck := p.CoSignerKey.GetRaw(); len(ck) == 32 {
+		var key [32]byte
+		copy(key[:], ck)
+		r.byCoSigner[key] = p
+	}
 	r.addLog = append(r.addLog, *p)
 	return nil
 }
@@ -104,6 +118,11 @@ func (r *meshPeerRegistry) remove(p *MeshPeer) error {
 	}
 	delete(r.peers, id)
 	delete(r.byIP, string(p.MeshIP))
+	if ck := p.CoSignerKey.GetRaw(); len(ck) == 32 {
+		var key [32]byte
+		copy(key[:], ck)
+		delete(r.byCoSigner, key)
+	}
 	r.removeLog = append(r.removeLog, p)
 	return nil
 }
@@ -205,6 +224,16 @@ func (s *State) IsMeshMemberLocked(wgKey [32]byte) bool {
 		return false
 	}
 	return s.meshPeers.IsMember(wgKey)
+}
+
+// MeshPeerByCoSigner returns the mesh peer whose CoSignerKey matches
+// the given Ed25519 pubkey, if any. Used to validate the cosigner of
+// an ADD_HOST_PEER transition (cycle 56). Returns nil if no match.
+func (s *State) MeshPeerByCoSigner(cosignerKey [32]byte) *MeshPeer {
+	if s.meshPeers == nil {
+		return nil
+	}
+	return s.meshPeers.byCoSigner[cosignerKey]
 }
 
 // addMeshPeerLocked inserts a peer into the state's registry. Called

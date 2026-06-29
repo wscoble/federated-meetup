@@ -229,6 +229,7 @@ message CreateGroupPayload {
 message InitialMeshPeer {
   bytes host_wg_key = 1; // X25519, 32 bytes
   bytes mesh_ip = 2; // 4 bytes (IPv4 overlay address)
+  bytes cosigner_key = 3; // Ed25519 CoSigner pubkey (cycle 56)
 }
 
 message AddStewardPayload {
