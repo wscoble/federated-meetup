@@ -6,9 +6,25 @@ speck FederatedMeetup {
   version: "0.1.0"
   author:  "sscoble"
   license: "MIT"
+  // Cycle 63: top-of-file directives that align the Speckl-generated
+  // .proto with the consumer Go code's expected message names.
+  //   proto_package: matches the existing handwritten
+  //                  proto/federated_meetup/v1/{state,rpc}.proto
+  //                  package declaration.
+  //   go_package:    matches the import path used by
+  //                  internal/types/types.go and friends.
+  //   event_suffix:  every `event` block emits as <Name>Payload, the
+  //                  convention the consumer's transition apply switch
+  //                  expects (pb.CreateGroupPayload, pb.AddStewardPayload, ...).
+  proto_package: "federated_meetup.v1"
+  go_package:    "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1"
+  event_suffix:  "Payload"
 
   // ─── State (per-branch) ──────────────────────────────────
-  state: {
+  // Cycle 63: renamed from FederatedMeetupState (the Speckl default
+  // namespaces the state block by the speck name) to StateSnapshot,
+  // the name the consumer's internal/types/types.go imports.
+  state as StateSnapshot {
     branch_id:         Nat,
     group_name:        String,
     stewards:          StringList,
