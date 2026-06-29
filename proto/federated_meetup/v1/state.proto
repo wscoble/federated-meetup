@@ -11,9 +11,9 @@ syntax = "proto3";
 
 package federated_meetup.v1;
 
-option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1";
-
 import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1";
 
 // =============================================================================
 // Identity
@@ -228,7 +228,7 @@ message CreateGroupPayload {
 // is operationally distinct (different hosts, different operators).
 message InitialMeshPeer {
   bytes host_wg_key = 1; // X25519, 32 bytes
-  bytes mesh_ip = 2;    // 4 bytes (IPv4 overlay address)
+  bytes mesh_ip = 2; // 4 bytes (IPv4 overlay address)
 }
 
 message AddStewardPayload {
@@ -424,14 +424,17 @@ message AddHostPeerPayload {
   // Static private IP for this peer in the mesh's overlay space.
   // Must be unique across the mesh.
   bytes mesh_ip = 2;
-  // The existing peer's wg public key that co-signs this admission.
-  // The existing peer MUST be a current mesh member (verified at
-  // Apply time).
+  // The existing peer's CoSigner (Ed25519) public key. This is the
+  // identity under which the cosignature below is verified. Distinct
+  // from the cosigner's WireGuard X25519 key — the protocol requires
+  // hosts to also hold a dedicated Ed25519 CoSigner keypair because
+  // X25519 outputs do not coincide with Ed25519 points (cycle 51).
   PublicKey cosigner_peer_key = 3;
   // Co-signature from the existing peer over the canonical
-  // AddHostPeerPayload bytes. Proves the existing peer actually
-  // ran the operation, not just that a key allegedly belonging to
-  // the peer signed it.
+  // AddHostPeerPayload bytes (with this field and
+  // cosigner_peer_signature cleared). Proves the existing peer
+  // actually ran the operation, not just that a key allegedly
+  // belonging to the peer signed it.
   Signature cosigner_peer_signature = 4;
 }
 

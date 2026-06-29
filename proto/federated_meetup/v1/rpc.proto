@@ -14,9 +14,9 @@ syntax = "proto3";
 
 package federated_meetup.v1;
 
-option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1";
-
 import "federated_meetup/v1/state.proto";
+
+option go_package = "github.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1";
 
 // =============================================================================
 // Read RPCs
