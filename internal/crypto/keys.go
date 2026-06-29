@@ -205,17 +205,66 @@ func TLSPublicKeyFromBytes(b []byte) (TLSPublicKey, error) {
 // Identity bundle — a host's complete key set
 // =============================================================================
 
-// HostIdentity is the bundle of three independent key domains owned by one
+// CoSignerKey is an Ed25519 key used by a host to cosign ADD_HOST_PEER
+// transitions. Distinct from StewardKey because the cosignature is on a
+// different domain ("add_host_peer_cosig") and is verified against the
+// host's mesh-membership identity rather than the steward set.
+//
+// Cycle 52 (audit fix C-1): previously the protocol required hosts to use
+// their WireGuard X25519 key bytes as an Ed25519 pubkey for cosignature
+// verification. Empirically, NO randomly-generated X25519 key is also a
+// valid Ed25519 point (cycle 51: 0/256 coincide). The CoSignerKey is the
+// correct fix: a separate Ed25519 keypair dedicated to cosignatures.
+type CoSignerKey struct {
+	pub  ed25519.PublicKey
+	priv ed25519.PrivateKey
+}
+
+// CoSignerPublicKey is the public half of a CoSignerKey.
+type CoSignerPublicKey struct {
+	pub ed25519.PublicKey
+}
+
+// GenerateCoSignerKey creates a fresh CoSignerKey.
+func GenerateCoSignerKey(r io.Reader) (CoSignerKey, error) {
+	if r == nil {
+		r = rand.Reader
+	}
+	pub, priv, err := ed25519.GenerateKey(r)
+	if err != nil {
+		return CoSignerKey{}, fmt.Errorf("crypto: generate cosigner key: %w", err)
+	}
+	return CoSignerKey{pub: pub, priv: priv}, nil
+}
+
+// Public returns the public half.
+func (k CoSignerKey) Public() CoSignerPublicKey {
+	return CoSignerPublicKey{pub: k.pub}
+}
+
+// Bytes returns the 32-byte public key.
+func (k CoSignerPublicKey) Bytes() []byte { return k.pub }
+
+// CoSignerPublicKeyFromBytes reconstructs a public key.
+func CoSignerPublicKeyFromBytes(b []byte) (CoSignerPublicKey, error) {
+	if len(b) != ed25519.PublicKeySize {
+		return CoSignerPublicKey{}, fmt.Errorf("crypto: cosigner public key must be %d bytes, got %d", ed25519.PublicKeySize, len(b))
+	}
+	return CoSignerPublicKey{pub: ed25519.PublicKey(b)}, nil
+}
+
+// HostIdentity is the bundle of independent key domains owned by one
 // host. The host operator generates this at install time and stores it in a
 // single secret file (or split across KMS-backed keyrings).
 type HostIdentity struct {
-	Steward   StewardKey       // Layer 2 — signs transitions on behalf of THIS host
-	WireGuard WireGuardKey     // Layer 1 — authenticates this host on the mesh
-	TLS       TLSKey           // Layer 3 — signs this host's TLS cert
+	Steward   StewardKey       // signs transitions on behalf of THIS host
+	WireGuard WireGuardKey     // authenticates this host on the mesh
+	TLS       TLSKey           // signs this host's TLS cert
+	CoSigner  CoSignerKey      // cosigns ADD_HOST_PEER transitions (cycle 52)
 	HostID    types.PublicKey  // canonical identifier (== Steward.Public().Bytes())
 }
 
-// GenerateHostIdentity creates a fresh three-domain identity bundle.
+// GenerateHostIdentity creates a fresh identity bundle.
 func GenerateHostIdentity() (HostIdentity, error) {
 	s, err := GenerateStewardKey(nil)
 	if err != nil {
@@ -229,10 +278,15 @@ func GenerateHostIdentity() (HostIdentity, error) {
 	if err != nil {
 		return HostIdentity{}, err
 	}
+	c, err := GenerateCoSignerKey(nil)
+	if err != nil {
+		return HostIdentity{}, err
+	}
 	return HostIdentity{
 		Steward:   s,
 		WireGuard: w,
 		TLS:       t,
+		CoSigner:  c,
 		HostID:    types.PublicKey(s.Public().Bytes()),
 	}, nil
 }
