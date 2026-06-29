@@ -216,6 +216,36 @@ speck FederatedMeetup {
     added_by:     String
   }
 
+  // Cycle 67: the remaining 6 events from the handwritten proto.
+  // Skeleton fields only — the exact field shapes are not yet
+  // exercised by the consumer's apply switch (cycles 90-100 cover
+  // the test coverage).
+  event RemoveHostPeer {
+    host_wg_key:  Bytes
+  }
+
+  event RevokeHostCert {
+    hostname:     String
+  }
+
+  event DeclareStewardCustody {
+    steward:      String,
+    tier:         CustodyTier
+  }
+
+  event SlashSteward {
+    slashed_steward: String,
+    prior_state:     StateRoot
+  }
+
+  event NameBind {
+    name:          String
+  }
+
+  event SignedEnvelope {
+    message:       Bytes
+  }
+
   event BranchCreate {
     new_branch_id: Nat,
     parent_branch: Nat
@@ -244,6 +274,11 @@ speck FederatedMeetup {
     migrate:             Migrate
     issue_host_cert:     IssueHostCert
     add_host_peer:       AddHostPeer
+    remove_host_peer:    RemoveHostPeer
+    revoke_host_cert:    RevokeHostCert
+    declare_steward_custody: DeclareStewardCustody
+    slash_steward:       SlashSteward
+    name_bind:           NameBind
     branch_create:       BranchCreate
   }
 
@@ -268,6 +303,11 @@ speck FederatedMeetup {
     Migrate
     IssueHostCert
     AddHostPeer
+    RemoveHostPeer
+    RevokeHostCert
+    DeclareStewardCustody
+    SlashSteward
+    NameBind
     BranchCreate
   }
 
