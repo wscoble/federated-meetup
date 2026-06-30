@@ -5,10 +5,15 @@ package payment
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/stripe/stripe-go/v76/webhook"
 )
 
 // mockOrderUpdater is a test implementation of WebhookOrderUpdater.
@@ -68,7 +73,8 @@ func makeStripeEvent(eventType string, orderID string) []byte {
 	})
 
 	event := map[string]interface{}{
-		"type": eventType,
+		"type":        eventType,
+		"api_version": "2023-10-16",
 		"data": map[string]interface{}{
 			"object": json.RawMessage(dataObject),
 		},
@@ -230,6 +236,91 @@ func TestWebhook_MethodNotAllowed(t *testing.T) {
 
 // Ensure mockOrderUpdater also satisfies the interface at compile time.
 var _ WebhookOrderUpdater = (*mockOrderUpdater)(nil)
+
+// TestWebhook_SignatureVerification tests that the webhook handler correctly
+// verifies Stripe-signed payloads and rejects tampered ones.
+func TestWebhook_SignatureVerification(t *testing.T) {
+	updater := newMockOrderUpdater()
+	secret := "whsec_test_secret_12345"
+	h := NewWebhookHandler(updater, secret)
+
+	body := makeStripeEvent("checkout.session.completed", "ord-sig")
+
+	// Build a valid Stripe-Signature header.
+	ts := time.Now()
+	sig := webhook.ComputeSignature(ts, body, secret)
+	header := fmt.Sprintf("t=%d,v1=%s", ts.Unix(), hex.EncodeToString(sig))
+
+	req := httptest.NewRequest(http.MethodPost, "/stripe/webhook", bytes.NewReader(body))
+	req.Header.Set("Stripe-Signature", header)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if !updater.completed["ord-sig"] {
+		t.Error("order should have been marked completed with valid signature")
+	}
+}
+
+// TestWebhook_SignatureRejection tests that the webhook handler rejects
+// payloads with invalid signatures.
+func TestWebhook_SignatureRejection(t *testing.T) {
+	updater := newMockOrderUpdater()
+	secret := "whsec_test_secret_12345"
+	h := NewWebhookHandler(updater, secret)
+
+	body := makeStripeEvent("checkout.session.completed", "ord-bad")
+
+	// Build a header with the wrong secret.
+	ts := time.Now()
+	wrongSecret := "whsec_wrong_secret"
+	sig := webhook.ComputeSignature(ts, body, wrongSecret)
+	header := fmt.Sprintf("t=%d,v1=%s", ts.Unix(), hex.EncodeToString(sig))
+
+	req := httptest.NewRequest(http.MethodPost, "/stripe/webhook", bytes.NewReader(body))
+	req.Header.Set("Stripe-Signature", header)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for bad signature", w.Code)
+	}
+	if updater.completed["ord-bad"] {
+		t.Error("order should NOT have been marked completed with bad signature")
+	}
+}
+
+// TestWebhook_ExpiredTimestamp tests that the webhook handler rejects
+// payloads with timestamps outside the tolerance window.
+func TestWebhook_ExpiredTimestamp(t *testing.T) {
+	updater := newMockOrderUpdater()
+	secret := "whsec_test_secret_12345"
+	h := NewWebhookHandler(updater, secret)
+
+	body := makeStripeEvent("checkout.session.completed", "ord-expired")
+
+	// Use a timestamp from 10 minutes ago (outside default 5 min tolerance).
+	ts := time.Now().Add(-10 * time.Minute)
+	sig := webhook.ComputeSignature(ts, body, secret)
+	header := fmt.Sprintf("t=%d,v1=%s", ts.Unix(), hex.EncodeToString(sig))
+
+	req := httptest.NewRequest(http.MethodPost, "/stripe/webhook", bytes.NewReader(body))
+	req.Header.Set("Stripe-Signature", header)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for expired timestamp", w.Code)
+	}
+	if updater.completed["ord-expired"] {
+		t.Error("order should NOT have been marked completed with expired timestamp")
+	}
+}
 
 // Ensure MockProvider still works (regression).
 func TestPaymentProvider_MockStillWorks(t *testing.T) {

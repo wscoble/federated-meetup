@@ -65,7 +65,9 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Verify Stripe signature if a secret is configured.
 	if h.secret != "" {
 		signature := r.Header.Get("Stripe-Signature")
-		event, err := webhook.ConstructEvent(body, signature, h.secret)
+		event, err := webhook.ConstructEventWithOptions(body, signature, h.secret, webhook.ConstructEventOptions{
+			IgnoreAPIVersionMismatch: true,
+		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("signature verification failed: %v", err), http.StatusBadRequest)
 			return
