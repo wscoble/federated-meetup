@@ -292,19 +292,14 @@ func (s *Service) PurchaseTicket(
 		quantity = 1
 	}
 
+	// Read the ticket to compute the amount and currency. This read is safe
+	// even without holding the lock through the purchase: AtomicPurchaseTicket
+	// re-reads the ticket under the write lock and performs the capacity check
+	// atomically.
 	ticket, ok := s.store.GetTicket(req.Msg.TicketId)
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("ticket not found"))
 	}
-
-	// Check sold-out.
-	if ticket.Capacity > 0 && ticket.Sold+uint64(quantity) > ticket.Capacity {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("ticket is sold out"))
-	}
-
-	orderID := newID()
-	sessionID := newID()
-	checkoutURL := fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", sessionID)
 
 	// Compute amount paid.
 	var amount uint64
@@ -316,26 +311,27 @@ func (s *Service) PurchaseTicket(
 		currency = ticket.Price.Currency
 	}
 
-	order := &pb.Order{
-		OrderId:         orderID,
-		TicketId:        req.Msg.TicketId,
-		AttendeeEmail:   req.Msg.AttendeeEmail,
-		Status:          pb.OrderStatus_ORDER_STATUS_PENDING,
-		StripeSessionId: sessionID,
-		AmountPaid: &pb.Money{
-			Amount:   amount,
-			Currency: currency,
-		},
-		CreatedAt: timestamppb.Now(),
-	}
-	s.store.PutOrder(order)
+	sessionID := newID()
+	checkoutURL := fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", sessionID)
 
-	// Increment sold.
-	ticket.Sold += uint64(quantity)
-	s.store.UpdateTicket(ticket)
+	// Atomically check capacity, increment sold, and create the order.
+	order, found, soldOut := s.store.AtomicPurchaseTicket(
+		req.Msg.TicketId,
+		req.Msg.AttendeeEmail,
+		sessionID,
+		uint64(quantity),
+		amount,
+		currency,
+	)
+	if !found {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("ticket not found"))
+	}
+	if soldOut {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("ticket is sold out"))
+	}
 
 	return connect.NewResponse(&pb.PurchaseTicketResponse{
-		OrderId:           orderID,
+		OrderId:           order.OrderId,
 		StripeCheckoutUrl: checkoutURL,
 	}), nil
 }
@@ -464,7 +460,9 @@ func (s *Service) CreateTicket(
 }
 
 // RefundOrder sets the order status to Refunded, sets refunded_at, and
-// decrements the ticket's sold count.
+// decrements the ticket's sold count. This is atomic and idempotent — calling
+// RefundOrder on an already-refunded order returns the order (with
+// alreadyRefunded=true) without decrementing the sold count a second time.
 func (s *Service) RefundOrder(
 	ctx context.Context,
 	req *connect.Request[pb.RefundOrderRequest],
@@ -473,22 +471,15 @@ func (s *Service) RefundOrder(
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("order_id is required"))
 	}
 
-	order, ok := s.store.GetOrder(req.Msg.OrderId)
-	if !ok {
+	order, found, alreadyRefunded := s.store.AtomicRefundOrder(req.Msg.OrderId)
+	if !found {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("order not found"))
 	}
 
-	// Set status to refunded.
-	order.Status = pb.OrderStatus_ORDER_STATUS_REFUNDED
-	order.RefundedAt = timestamppb.Now()
-	s.store.UpdateOrder(order)
-
-	// Decrement ticket sold count.
-	if ticket, ok := s.store.GetTicket(order.TicketId); ok {
-		if ticket.Sold > 0 {
-			ticket.Sold--
-			s.store.UpdateTicket(ticket)
-		}
+	// If the order was already refunded, return a FailedPrecondition error
+	// so the caller knows the second refund was a no-op.
+	if alreadyRefunded {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("order already refunded"))
 	}
 
 	return connect.NewResponse(&pb.RefundOrderResponse{

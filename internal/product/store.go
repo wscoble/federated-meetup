@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Store is a thread-safe in-memory store for all product-layer domain objects.
@@ -301,4 +302,93 @@ func (s *Store) DeleteToken(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tokens, token)
+}
+
+// --- Atomic compound operations ---
+//
+// These methods perform check-and-mutate sequences under a single write lock
+// to eliminate TOCTOU (time-of-check-to-time-of-use) races. Without them, a
+// goroutine could read the ticket with an RLock, check capacity, release the
+// lock, then try to write — and another goroutine could sneak in between the
+// check and the write.
+
+// AtomicPurchaseTicket checks capacity and, if sufficient, atomically
+// increments the ticket's Sold counter and creates a pending Order. It returns
+// the newly created order. If the ticket doesn't exist it returns (nil, false).
+// If capacity is insufficient it returns (nil, true) with soldOut=true.
+//
+// The caller is responsible for providing the order fields (ticket_id,
+// attendee_email, amount, currency, stripe_session_id); AtomicPurchaseTicket
+// generates the order_id and sets status=PENDING and created_at.
+func (s *Store) AtomicPurchaseTicket(
+	ticketID, attendeeEmail, stripeSessionID string,
+	quantity uint64,
+	amount uint64,
+	currency string,
+) (*pb.Order, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ticket, ok := s.tickets[ticketID]
+	if !ok {
+		return nil, false, false // not found
+	}
+
+	// Check capacity (capacity==0 means unlimited).
+	if ticket.Capacity > 0 && ticket.Sold+quantity > ticket.Capacity {
+		return nil, true, true // found but sold out
+	}
+
+	// Atomically increment sold.
+	ticket.Sold += quantity
+
+	orderID := newID()
+	order := &pb.Order{
+		OrderId:         orderID,
+		TicketId:        ticketID,
+		AttendeeEmail:   attendeeEmail,
+		Status:          pb.OrderStatus_ORDER_STATUS_PENDING,
+		StripeSessionId: stripeSessionID,
+		AmountPaid: &pb.Money{
+			Amount:   amount,
+			Currency: currency,
+		},
+		CreatedAt: timestamppb.Now(),
+	}
+	s.orders[orderID] = order
+
+	return order, true, false
+}
+
+// AtomicRefundOrder atomically sets an order's status to REFUNDED (if not
+// already refunded) and decrements the associated ticket's Sold counter. It
+// returns (order, found, alreadyRefunded):
+//   - found=false if the order doesn't exist.
+//   - alreadyRefunded=true if the order was already in REFUNDED status (no
+//     duplicate decrement of Sold).
+func (s *Store) AtomicRefundOrder(orderID string) (*pb.Order, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	order, ok := s.orders[orderID]
+	if !ok {
+		return nil, false, false
+	}
+
+	// Idempotency: don't double-decrement Sold on already-refunded orders.
+	if order.Status == pb.OrderStatus_ORDER_STATUS_REFUNDED {
+		return order, true, true
+	}
+
+	order.Status = pb.OrderStatus_ORDER_STATUS_REFUNDED
+	order.RefundedAt = timestamppb.Now()
+
+	// Decrement the associated ticket's sold count (but not below zero).
+	if ticket, ok := s.tickets[order.TicketId]; ok {
+		if ticket.Sold > 0 {
+			ticket.Sold--
+		}
+	}
+
+	return order, true, false
 }
