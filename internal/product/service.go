@@ -64,6 +64,52 @@ func defaultPageSize(sz uint32) uint32 {
 	return sz
 }
 
+// validateOrganizerTokenForGroup checks that the organizer token is valid and
+// scoped to the given group_id. Returns a connect error if invalid.
+func (s *Service) validateOrganizerTokenForGroup(token, groupID string) error {
+	if token == "" {
+		return connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("organizer_token is required"))
+	}
+	if !s.store.ValidateOrganizerToken(token, groupID) {
+		return connect.NewError(connect.CodePermissionDenied, fmt.Errorf("invalid or unauthorized organizer token"))
+	}
+	return nil
+}
+
+// validateOrganizerTokenForEvent checks that the organizer token is valid for
+// the group that owns the given event_id. Returns a connect error if invalid.
+func (s *Service) validateOrganizerTokenForEvent(token, eventID string) error {
+	if token == "" {
+		return connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("organizer_token is required"))
+	}
+	event, ok := s.store.GetEvent(eventID)
+	if !ok {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("event not found"))
+	}
+	if !s.store.ValidateOrganizerToken(token, event.GroupId) {
+		return connect.NewError(connect.CodePermissionDenied, fmt.Errorf("invalid or unauthorized organizer token for this event"))
+	}
+	return nil
+}
+
+// validateOrganizerTokenForOrder checks that the organizer token is valid for
+// the group that owns the event associated with the given order_id.
+// Resolves: order → ticket → event → group.
+func (s *Service) validateOrganizerTokenForOrder(token, orderID string) error {
+	if token == "" {
+		return connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("organizer_token is required"))
+	}
+	order, ok := s.store.GetOrder(orderID)
+	if !ok {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("order not found"))
+	}
+	eventID, ok := s.store.GetTicketEvent(order.TicketId)
+	if !ok {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("ticket event not found"))
+	}
+	return s.validateOrganizerTokenForEvent(token, eventID)
+}
+
 // ---------------------------------------------------------------------------
 // Public reads
 // ---------------------------------------------------------------------------
@@ -372,6 +418,9 @@ func (s *Service) GetOrganizerDashboard(
 	if req.Msg.GroupId == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_id is required"))
 	}
+	if err := s.validateOrganizerTokenForGroup(req.Msg.OrganizerToken, req.Msg.GroupId); err != nil {
+		return nil, err
+	}
 
 	events := s.store.EventsForGroup(req.Msg.GroupId)
 
@@ -442,6 +491,9 @@ func (s *Service) ListAttendees(
 	if req.Msg.EventId == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("event_id is required"))
 	}
+	if err := s.validateOrganizerTokenForEvent(req.Msg.OrganizerToken, req.Msg.EventId); err != nil {
+		return nil, err
+	}
 
 	rsvps := s.store.RsvpsForEvent(req.Msg.EventId)
 	var attendees []*pb.Rsvp
@@ -463,6 +515,9 @@ func (s *Service) CreateTicket(
 ) (*connect.Response[pb.CreateTicketResponse], error) {
 	if req.Msg.EventId == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("event_id is required"))
+	}
+	if err := s.validateOrganizerTokenForEvent(req.Msg.OrganizerToken, req.Msg.EventId); err != nil {
+		return nil, err
 	}
 	if req.Msg.Ticket == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("ticket is required"))
@@ -494,6 +549,9 @@ func (s *Service) RefundOrder(
 ) (*connect.Response[pb.RefundOrderResponse], error) {
 	if req.Msg.OrderId == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("order_id is required"))
+	}
+	if err := s.validateOrganizerTokenForOrder(req.Msg.OrganizerToken, req.Msg.OrderId); err != nil {
+		return nil, err
 	}
 
 	// Look up the order first to get the Stripe session ID for the refund.
@@ -535,6 +593,9 @@ func (s *Service) ListOrders(
 ) (*connect.Response[pb.ListOrdersResponse], error) {
 	if req.Msg.EventId == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("event_id is required"))
+	}
+	if err := s.validateOrganizerTokenForEvent(req.Msg.OrganizerToken, req.Msg.EventId); err != nil {
+		return nil, err
 	}
 
 	pageSize := defaultPageSize(req.Msg.PageSize)
@@ -582,6 +643,9 @@ func (s *Service) CheckInAttendee(
 ) (*connect.Response[pb.CheckInAttendeeResponse], error) {
 	if req.Msg.EventId == "" || req.Msg.AttendeeEmail == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("event_id and attendee_email are required"))
+	}
+	if err := s.validateOrganizerTokenForEvent(req.Msg.OrganizerToken, req.Msg.EventId); err != nil {
+		return nil, err
 	}
 
 	rsvp, ok := s.store.GetRsvp(req.Msg.EventId, req.Msg.AttendeeEmail)

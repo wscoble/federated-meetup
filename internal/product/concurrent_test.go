@@ -260,6 +260,7 @@ func TestConcurrent_ListOrdersWhilePurchasing(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "rw-evt", "grp1", "rw-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "rw-evt", "rw-tkt", "Regular", 1000, 5000)
 
 	// Pre-seed some orders so ListOrders has data.
@@ -293,7 +294,8 @@ func TestConcurrent_ListOrdersWhilePurchasing(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, _ = svc.ListOrders(ctx, connectReq(&pb.ListOrdersRequest{
-				EventId: "rw-evt",
+				EventId:        "rw-evt",
+				OrganizerToken: testOrganizerToken,
 			}))
 		}()
 	}
@@ -315,6 +317,7 @@ func TestConcurrent_CreateTicketAndListTickets(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "create-list-evt", "grp1", "create-list-event")
+	seedOrganizerToken(store, "grp1")
 
 	const writers = 20
 	const readers = 20
@@ -326,7 +329,8 @@ func TestConcurrent_CreateTicketAndListTickets(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			svc.CreateTicket(ctx, connectReq(&pb.CreateTicketRequest{
-				EventId: "create-list-evt",
+				EventId:        "create-list-evt",
+				OrganizerToken: testOrganizerToken,
 				Ticket: &pb.Ticket{
 					Name: fmt.Sprintf("Ticket-%d", idx),
 					Price: &pb.Money{
@@ -370,6 +374,7 @@ func TestConcurrentRefund_SameOrder(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "concurrent-refund-evt", "grp1", "concurrent-refund-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "concurrent-refund-evt", "concurrent-refund-tkt", "Refundable", 10, 5000)
 
 	// Purchase one ticket.
@@ -399,9 +404,10 @@ func TestConcurrentRefund_SameOrder(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-				OrderId: orderID,
-				Amount:  5000,
-				Reason:  "concurrent refund test",
+				OrderId:        orderID,
+				OrganizerToken: testOrganizerToken,
+				Amount:         5000,
+				Reason:         "concurrent refund test",
 			}))
 			if err == nil {
 				atomic.AddInt64(&successCount, 1)

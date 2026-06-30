@@ -52,6 +52,14 @@ func seedTicket(store *Store, eventID, ticketID, name string, capacity uint64, p
 	return t
 }
 
+// testOrganizerToken is the standard organizer token used in tests.
+const testOrganizerToken = "test-organizer-token"
+
+// seedOrganizerToken registers the test organizer token for the given group.
+func seedOrganizerToken(store *Store, groupID string) {
+	store.PutOrganizerToken(testOrganizerToken, groupID)
+}
+
 // connectReq wraps a proto message pointer in a connect.Request.
 func connectReq[T any](msg *T) *connect.Request[T] {
 	return connect.NewRequest[T](msg)
@@ -64,10 +72,12 @@ func TestTicketLifecycle_CreateListPurchaseRefund(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt1", "grp1", "test-event")
+	seedOrganizerToken(store, "grp1")
 
 	// 1. Create a ticket.
 	createResp, err := svc.CreateTicket(ctx, connectReq(&pb.CreateTicketRequest{
-		EventId: "evt1",
+		EventId:        "evt1",
+		OrganizerToken: testOrganizerToken,
 		Ticket: &pb.Ticket{
 			Name: "Early Bird",
 			Price: &pb.Money{
@@ -125,9 +135,10 @@ func TestTicketLifecycle_CreateListPurchaseRefund(t *testing.T) {
 
 	// 4. Refund the order — sold should decrement.
 	refundResp, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  5000,
-		Reason:  "customer request",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
+		Reason:         "customer request",
 	}))
 	if err != nil {
 		t.Fatalf("RefundOrder failed: %v", err)
@@ -153,6 +164,7 @@ func TestRsvpLifecycle_SubmitListCancelCheckIn(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt2", "grp1", "rsvp-event")
+	seedOrganizerToken(store, "grp1")
 
 	// 1. Submit RSVP.
 	submitResp, err := svc.SubmitRsvp(ctx, connectReq(&pb.SubmitRsvpRequest{
@@ -226,8 +238,9 @@ func TestRsvpLifecycle_SubmitListCancelCheckIn(t *testing.T) {
 	_ = submitResp2
 
 	checkInResp, err := svc.CheckInAttendee(ctx, connectReq(&pb.CheckInAttendeeRequest{
-		EventId:       "evt2",
-		AttendeeEmail: "carol@example.com",
+		EventId:        "evt2",
+		AttendeeEmail:  "carol@example.com",
+		OrganizerToken: testOrganizerToken,
 	}))
 	if err != nil {
 		t.Fatalf("CheckInAttendee failed: %v", err)
@@ -295,6 +308,7 @@ func TestOrganizerDashboard_CorrectAggregation(t *testing.T) {
 
 	seedEvent(store, "evt4", "grp1", "dash-event")
 	seedEvent(store, "evt5", "grp1", "dash-event2")
+	seedOrganizerToken(store, "grp1")
 
 	// Create tickets.
 	t1 := seedTicket(store, "evt4", "tkt4a", "Regular", 100, 5000)
@@ -346,7 +360,8 @@ func TestOrganizerDashboard_CorrectAggregation(t *testing.T) {
 
 	// Get dashboard.
 	dashResp, err := svc.GetOrganizerDashboard(ctx, connectReq(&pb.GetOrganizerDashboardRequest{
-		GroupId: "grp1",
+		GroupId:        "grp1",
+		OrganizerToken: testOrganizerToken,
 	}))
 	if err != nil {
 		t.Fatalf("GetOrganizerDashboard failed: %v", err)
@@ -389,6 +404,7 @@ func TestOrganizerDashboard_PendingActions(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt6", "grp1", "pending-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "evt6", "tkt6", "Regular", 100, 5000)
 
 	// Purchase a ticket (order will be pending by default).
@@ -402,7 +418,8 @@ func TestOrganizerDashboard_PendingActions(t *testing.T) {
 	}
 
 	dashResp, err := svc.GetOrganizerDashboard(ctx, connectReq(&pb.GetOrganizerDashboardRequest{
-		GroupId: "grp1",
+		GroupId:        "grp1",
+		OrganizerToken: testOrganizerToken,
 	}))
 	if err != nil {
 		t.Fatalf("GetOrganizerDashboard failed: %v", err)
@@ -625,6 +642,7 @@ func TestListOrders_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt-ord", "grp1", "orders-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "evt-ord", "tkt-ord", "Regular", 100, 1000)
 
 	// Create 3 orders.
@@ -638,8 +656,9 @@ func TestListOrders_Pagination(t *testing.T) {
 
 	// Page size 2.
 	resp, err := svc.ListOrders(ctx, connectReq(&pb.ListOrdersRequest{
-		EventId:  "evt-ord",
-		PageSize: 2,
+		EventId:        "evt-ord",
+		OrganizerToken: testOrganizerToken,
+		PageSize:       2,
 	}))
 	if err != nil {
 		t.Fatalf("ListOrders failed: %v", err)
@@ -653,9 +672,10 @@ func TestListOrders_Pagination(t *testing.T) {
 
 	// Second page.
 	resp2, err := svc.ListOrders(ctx, connectReq(&pb.ListOrdersRequest{
-		EventId:  "evt-ord",
-		PageSize: 2,
-		Cursor:   resp.Msg.NextCursor,
+		EventId:        "evt-ord",
+		OrganizerToken: testOrganizerToken,
+		PageSize:       2,
+		Cursor:         resp.Msg.NextCursor,
 	}))
 	if err != nil {
 		t.Fatalf("ListOrders page 2 failed: %v", err)
@@ -674,7 +694,8 @@ func TestCreateTicket_EventNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.CreateTicket(ctx, connectReq(&pb.CreateTicketRequest{
-		EventId: "nonexistent",
+		EventId:        "nonexistent",
+		OrganizerToken: testOrganizerToken,
 		Ticket: &pb.Ticket{
 			Name: "Test",
 		},
@@ -719,10 +740,12 @@ func TestCheckInAttendee_RsvpNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt-chk", "grp1", "checkin-event")
+	seedOrganizerToken(store, "grp1")
 
 	_, err := svc.CheckInAttendee(ctx, connectReq(&pb.CheckInAttendeeRequest{
-		EventId:       "evt-chk",
-		AttendeeEmail: "nonexistent@example.com",
+		EventId:        "evt-chk",
+		AttendeeEmail:  "nonexistent@example.com",
+		OrganizerToken: testOrganizerToken,
 	}))
 	if err == nil {
 		t.Fatal("expected error for non-existent RSVP")
@@ -742,8 +765,9 @@ func TestRefundOrder_OrderNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: "nonexistent",
-		Amount:  1000,
+		OrderId:        "nonexistent",
+		OrganizerToken: testOrganizerToken,
+		Amount:         1000,
 	}))
 	if err == nil {
 		t.Fatal("expected error for non-existent order")
@@ -763,6 +787,7 @@ func TestListAttendees_OnlyGoing(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt-att", "grp1", "attendees-event")
+	seedOrganizerToken(store, "grp1")
 
 	// Submit 2 RSVPs (going).
 	svc.SubmitRsvp(ctx, connectReq(&pb.SubmitRsvpRequest{
@@ -786,7 +811,8 @@ func TestListAttendees_OnlyGoing(t *testing.T) {
 	}))
 
 	resp, err := svc.ListAttendees(ctx, connectReq(&pb.ListAttendeesRequest{
-		EventId: "evt-att",
+		EventId:        "evt-att",
+		OrganizerToken: testOrganizerToken,
 	}))
 	if err != nil {
 		t.Fatalf("ListAttendees failed: %v", err)

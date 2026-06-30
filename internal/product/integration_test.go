@@ -36,6 +36,9 @@ func setupTestServer(t *testing.T) (federatedmeetupproductv1connect.ProductServi
 		CreatedAt:     timestamppb.Now(),
 	})
 
+	// Seed organizer token for the group so organizer RPCs work.
+	store.PutOrganizerToken("test-organizer-token", "grp-yoga")
+
 	store.PutEvent(&pb.Event{
 		EventId:    "evt-flow-1",
 		GroupId:    "grp-yoga",
@@ -213,7 +216,7 @@ func TestIntegration_RSVPFlow(t *testing.T) {
 	// 3. List attendees (should include Dave)
 	attendeesResp, err := client.ListAttendees(ctx, connect.NewRequest(&pb.ListAttendeesRequest{
 		EventId:        "evt-flow-1",
-		OrganizerToken: "test-token",
+		OrganizerToken: "test-organizer-token",
 	}))
 	if err != nil {
 		t.Fatalf("ListAttendees: %v", err)
@@ -226,7 +229,7 @@ func TestIntegration_RSVPFlow(t *testing.T) {
 	checkInResp, err := client.CheckInAttendee(ctx, connect.NewRequest(&pb.CheckInAttendeeRequest{
 		EventId:        "evt-flow-1",
 		AttendeeEmail:  "dave@example.com",
-		OrganizerToken: "test-token",
+		OrganizerToken: "test-organizer-token",
 	}))
 	if err != nil {
 		t.Fatalf("CheckInAttendee: %v", err)
@@ -286,8 +289,8 @@ func TestIntegration_OrganizerDashboard(t *testing.T) {
 	})
 
 	dashResp, err := client.GetOrganizerDashboard(ctx, connect.NewRequest(&pb.GetOrganizerDashboardRequest{
-		GroupId:        "grp-yoga",
-		OrganizerToken:  "test-token",
+		GroupId:         "grp-yoga",
+		OrganizerToken:  "test-organizer-token",
 	}))
 	if err != nil {
 		t.Fatalf("GetOrganizerDashboard: %v", err)

@@ -23,6 +23,7 @@ func TestPaymentEdge_RefundAlreadyRefundedOrder(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "edge-refund-evt", "grp1", "edge-refund-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "edge-refund-evt", "edge-refund-tkt", "Edge", 10, 5000)
 
 	// Purchase one ticket.
@@ -44,9 +45,10 @@ func TestPaymentEdge_RefundAlreadyRefundedOrder(t *testing.T) {
 
 	// First refund — should succeed.
 	_, err = svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  5000,
-		Reason:  "first refund",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
+		Reason:         "first refund",
 	}))
 	if err != nil {
 		t.Fatalf("first RefundOrder failed: %v", err)
@@ -60,9 +62,10 @@ func TestPaymentEdge_RefundAlreadyRefundedOrder(t *testing.T) {
 
 	// Second refund — should return an error (already refunded).
 	_, err = svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  5000,
-		Reason:  "second refund",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
+		Reason:         "second refund",
 	}))
 	if err == nil {
 		t.Fatal("expected error for double refund, got nil")
@@ -93,6 +96,7 @@ func TestPaymentEdge_PartialRefund(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "partial-refund-evt", "grp1", "partial-refund-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "partial-refund-evt", "partial-refund-tkt", "Partial", 10, 10000)
 
 	// Purchase 2 tickets (amount = 2 * 10000 = 20000).
@@ -120,9 +124,10 @@ func TestPaymentEdge_PartialRefund(t *testing.T) {
 
 	// Attempt a partial refund of 5000 (less than the 20000 total).
 	refundResp, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  5000, // partial — quarter of the total
-		Reason:  "partial refund",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000, // partial — quarter of the total
+		Reason:         "partial refund",
 	}))
 	if err != nil {
 		t.Fatalf("RefundOrder failed: %v", err)
@@ -159,6 +164,7 @@ func TestPaymentEdge_CumulativePartialRefundToFull(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "evt-cumref", "grp1", "cumref")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "evt-cumref", "tkt-cumref", "Full", 10, 10000)
 
 	// Purchase 1 ticket (amount = 10000).
@@ -180,9 +186,10 @@ func TestPaymentEdge_CumulativePartialRefundToFull(t *testing.T) {
 
 	// Partial refund 6000.
 	resp1, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  6000,
-		Reason:  "partial 1",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         6000,
+		Reason:         "partial 1",
 	}))
 	if err != nil {
 		t.Fatalf("first partial refund failed: %v", err)
@@ -202,9 +209,10 @@ func TestPaymentEdge_CumulativePartialRefundToFull(t *testing.T) {
 
 	// Second partial refund 4000 — cumulatively equals full amount (10000).
 	resp2, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  4000,
-		Reason:  "partial 2 — completes full refund",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         4000,
+		Reason:         "partial 2 — completes full refund",
 	}))
 	if err != nil {
 		t.Fatalf("second partial refund failed: %v", err)
@@ -226,9 +234,10 @@ func TestPaymentEdge_CumulativePartialRefundToFull(t *testing.T) {
 
 	// Third refund attempt should fail (already refunded).
 	_, err = svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orderID,
-		Amount:  0,
-		Reason:  "should fail",
+		OrderId:        orderID,
+		OrganizerToken: testOrganizerToken,
+		Amount:         0,
+		Reason:         "should fail",
 	}))
 	if err == nil {
 		t.Fatal("expected error on refunding already-refunded order, got nil")
@@ -350,9 +359,10 @@ func TestPaymentEdge_RefundNonExistentOrder(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: "nonexistent-order-id",
-		Amount:  1000,
-		Reason:  "test",
+		OrderId:        "nonexistent-order-id",
+		OrganizerToken: testOrganizerToken,
+		Amount:         1000,
+		Reason:         "test",
 	}))
 	if err == nil {
 		t.Fatal("expected error for non-existent order refund")
@@ -373,6 +383,7 @@ func TestPaymentEdge_RefundDecrementsSoldCount(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "refund-decrement-evt", "grp1", "refund-decrement-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "refund-decrement-evt", "refund-decrement-tkt", "Decrement", 10, 5000)
 
 	// Purchase 3 tickets.
@@ -401,9 +412,10 @@ func TestPaymentEdge_RefundDecrementsSoldCount(t *testing.T) {
 
 	// Refund one order.
 	_, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orders[0].OrderId,
-		Amount:  5000,
-		Reason:  "test decrement",
+		OrderId:        orders[0].OrderId,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
+		Reason:         "test decrement",
 	}))
 	if err != nil {
 		t.Fatalf("RefundOrder failed: %v", err)
@@ -432,6 +444,7 @@ func TestPaymentEdge_DoubleRefundDoesNotDecrementTwice(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "double-refund-evt", "grp1", "double-refund-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "double-refund-evt", "double-refund-tkt", "Double", 10, 5000)
 
 	// Purchase 2 tickets.
@@ -459,8 +472,9 @@ func TestPaymentEdge_DoubleRefundDoesNotDecrementTwice(t *testing.T) {
 
 	// First refund — should succeed and decrement sold to 1.
 	_, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orders[0].OrderId,
-		Amount:  5000,
+		OrderId:        orders[0].OrderId,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
 	}))
 	if err != nil {
 		t.Fatalf("first RefundOrder failed: %v", err)
@@ -473,8 +487,9 @@ func TestPaymentEdge_DoubleRefundDoesNotDecrementTwice(t *testing.T) {
 
 	// Second refund on same order — should fail and NOT decrement sold again.
 	_, err = svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: orders[0].OrderId,
-		Amount:  5000,
+		OrderId:        orders[0].OrderId,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
 	}))
 	if err == nil {
 		t.Fatal("expected error for double refund")
@@ -569,8 +584,9 @@ func TestPaymentEdge_RefundOrderWithEmptyId(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: "",
-		Amount:  1000,
+		OrderId:        "",
+		OrganizerToken: testOrganizerToken,
+		Amount:         1000,
 	}))
 	if err == nil {
 		t.Fatal("expected error for empty order_id")
@@ -592,6 +608,7 @@ func TestPaymentEdge_RefundOrderWithMissingTicket(t *testing.T) {
 	ctx := context.Background()
 
 	seedEvent(store, "missing-tkt-evt", "grp1", "missing-tkt-event")
+	seedOrganizerToken(store, "grp1")
 	seedTicket(store, "missing-tkt-evt", "missing-tkt-ref-tkt", "Temp", 10, 5000)
 
 	// Purchase a ticket.
@@ -607,20 +624,23 @@ func TestPaymentEdge_RefundOrderWithMissingTicket(t *testing.T) {
 	// Delete the ticket from the store (simulating a data loss / cleanup).
 	store.DeleteTicket("missing-tkt-ref-tkt")
 
-	// Refund should still succeed (status changes to REFUNDED, but sold
-	// decrement is skipped because the ticket is gone).
+	// Refund now fails at the organizer-token validation step because the
+	// auth check resolves order → ticket → event → group, and the ticket is
+	// gone. The service returns CodeNotFound ("ticket event not found").
 	_, err = svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
-		OrderId: purchaseResp.Msg.OrderId,
-		Amount:  5000,
-		Reason:  "ticket deleted",
+		OrderId:        purchaseResp.Msg.OrderId,
+		OrganizerToken: testOrganizerToken,
+		Amount:         5000,
+		Reason:         "ticket deleted",
 	}))
-	if err != nil {
-		t.Fatalf("RefundOrder with missing ticket should still succeed: %v", err)
+	if err == nil {
+		t.Fatal("expected error when ticket is deleted (auth cannot resolve group)")
 	}
-
-	// Verify the order is refunded.
-	order, _ := store.GetOrder(purchaseResp.Msg.OrderId)
-	if order.Status != pb.OrderStatus_ORDER_STATUS_REFUNDED {
-		t.Fatalf("expected REFUNDED status, got %s", order.Status)
+	ce, ok := err.(*connect.Error)
+	if !ok {
+		t.Fatalf("expected connect.Error, got %T", err)
+	}
+	if ce.Code() != connect.CodeNotFound {
+		t.Fatalf("expected CodeNotFound (ticket event not found), got %s", ce.Code())
 	}
 }

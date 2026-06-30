@@ -25,19 +25,21 @@ type Store struct {
 	rsvps        map[string]*pb.Rsvp        // key: event_id + ":" + email
 	members      map[string]*pb.GroupMember // key: group_id + ":" + email
 	tokens       map[string]string          // magic-link token → email
+	organizerTokens map[string]string       // organizer token → group_id
 }
 
 // NewStore creates a new empty Store.
 func NewStore() *Store {
 	return &Store{
-		groups:       make(map[string]*pb.Group),
-		events:        make(map[string]*pb.Event),
-		tickets:       make(map[string]*pb.Ticket),
-		ticketEvents:  make(map[string]string),
-		orders:        make(map[string]*pb.Order),
-		rsvps:         make(map[string]*pb.Rsvp),
-		members:       make(map[string]*pb.GroupMember),
-		tokens:        make(map[string]string),
+		groups:          make(map[string]*pb.Group),
+		events:          make(map[string]*pb.Event),
+		tickets:         make(map[string]*pb.Ticket),
+		ticketEvents:    make(map[string]string),
+		orders:          make(map[string]*pb.Order),
+		rsvps:           make(map[string]*pb.Rsvp),
+		members:         make(map[string]*pb.GroupMember),
+		tokens:          make(map[string]string),
+		organizerTokens: make(map[string]string),
 	}
 }
 
@@ -302,6 +304,35 @@ func (s *Store) DeleteToken(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tokens, token)
+}
+
+// --- Organizer Token ---
+
+// PutOrganizerToken associates an organizer token with a group_id.
+// This token is required for all organizer-scoped RPCs (CreateTicket,
+// RefundOrder, ListOrders, etc.).
+func (s *Store) PutOrganizerToken(token, groupID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.organizerTokens[token] = groupID
+}
+
+// GetOrganizerTokenGroup returns the group_id associated with an organizer
+// token, or false if the token doesn't exist.
+func (s *Store) GetOrganizerTokenGroup(token string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	groupID, ok := s.organizerTokens[token]
+	return groupID, ok
+}
+
+// ValidateOrganizerToken checks that the token exists and is scoped to the
+// given group_id. Returns true if valid.
+func (s *Store) ValidateOrganizerToken(token, groupID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	gid, ok := s.organizerTokens[token]
+	return ok && gid == groupID
 }
 
 // --- Atomic compound operations ---
