@@ -190,20 +190,22 @@ func nameBindStorageKey(p *pb.NameBindPayload) string {
 // Cryptographic helpers used by the gates
 // =============================================================================
 
-// verifyCoSignerSignature verifies an Ed25519 signature where the
-// 32-byte "public key" is actually a wg X25519 key being interpreted
-// as an Ed25519 key. This is the protocol convention: when a host
-// joins the mesh, it registers the same 32 bytes as both an X25519
-// wg key and an Ed25519 signing identity.
+// verifyCoSignerSignature verifies an Ed25519 signature against the
+// cosigner's dedicated Ed25519 CoSigner public key. This is NOT the
+// WireGuard X25519 key — X25519 public keys are random 32-byte strings
+// that are valid Ed25519 points only ~50% of the time, so using them
+// for Ed25519 verification would silently reject ~half of legitimate
+// cosignatures. The CoSigner key is a separate Ed25519 keypair generated
+// at host-install time (see crypto.CoSignerKey / HostIdentity.CoSigner).
 //
 // The domain-separation prefix prevents the co-signature from being
 // reused as a steward signature or any other kind of signature.
-func verifyCoSignerSignature(wgPubKey, msg, sig []byte) bool {
-	if len(wgPubKey) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+func verifyCoSignerSignature(cosignerPubKey, msg, sig []byte) bool {
+	if len(cosignerPubKey) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
 		return false
 	}
 	prefixed := domainPrefix("add_host_peer_cosig", msg)
-	return ed25519.Verify(ed25519.PublicKey(wgPubKey), prefixed, sig)
+	return ed25519.Verify(ed25519.PublicKey(cosignerPubKey), prefixed, sig)
 }
 
 // domainPrefix computes a deterministic, length-prefixed domain
@@ -219,14 +221,22 @@ func domainPrefix(domain string, msg []byte) []byte {
 	return h.Sum(nil)
 }
 
-// signStewardEd25519 is a helper used by tests and by callers that
-// need to produce a co-signature using the wg-key-as-ed25519-key
-// convention. Not used in production code paths (production hosts
-// produce signatures themselves) — included so tests can construct
-// valid ADD_HOST_PEER transitions without going through wireguard-go.
+// signWithEd25519 is a helper used by tests and by callers that
+// need to produce an Ed25519 signature with a domain prefix. It
+// works with any Ed25519 private key (CoSigner, TLS, Steward).
+// Not used in production code paths (production hosts produce
+// signatures themselves) — included so tests can construct valid
+// signed transitions without going through a full key generation flow.
+//lint:ignore U1000 test helper kept for future use
+func signWithEd25519(priv ed25519.PrivateKey, domain string, msg []byte) []byte {
+	return ed25519.Sign(priv, domainPrefix(domain, msg))
+}
+
+// signStewardEd25519 is kept for backward compatibility with existing
+// test code that references it by name.
 //lint:ignore U1000 test helper kept for future use
 func signStewardEd25519(priv ed25519.PrivateKey, domain string, msg []byte) []byte {
-	return ed25519.Sign(priv, domainPrefix(domain, msg))
+	return signWithEd25519(priv, domain, msg)
 }
 
 // avoid "imported and not used" for crypto in case future edits

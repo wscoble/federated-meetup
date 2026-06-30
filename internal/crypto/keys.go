@@ -121,6 +121,15 @@ func (k WireGuardKey) Public() WireGuardPublicKey {
 	return WireGuardPublicKey{pub: k.pub}
 }
 
+// PrivateBytes returns the 32-byte private key. Used by tests that
+// need to demonstrate the X25519/Ed25519 key derivation mismatch.
+// Not used in production code paths.
+func (k WireGuardKey) PrivateBytes() []byte {
+	out := make([]byte, 32)
+	copy(out, k.priv[:])
+	return out
+}
+
 // Bytes returns the 32-byte public key (canonical wireguard encoding).
 func (k WireGuardPublicKey) Bytes() []byte {
 	out := make([]byte, 32)
@@ -240,6 +249,13 @@ func GenerateCoSignerKey(r io.Reader) (CoSignerKey, error) {
 // Public returns the public half.
 func (k CoSignerKey) Public() CoSignerPublicKey {
 	return CoSignerPublicKey{pub: k.pub}
+}
+
+// PrivateKey returns the Ed25519 private key. Used by callers that
+// need to produce cosignatures (e.g., the host daemon signing an
+// ADD_HOST_PEER cosignature). Test helpers also use this.
+func (k CoSignerKey) PrivateKey() ed25519.PrivateKey {
+	return k.priv
 }
 
 // Bytes returns the 32-byte public key.
