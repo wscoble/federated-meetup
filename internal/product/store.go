@@ -359,13 +359,14 @@ func (s *Store) AtomicPurchaseTicket(
 	return order, true, false
 }
 
-// AtomicRefundOrder atomically sets an order's status to REFUNDED (if not
-// already refunded) and decrements the associated ticket's Sold counter. It
-// returns (order, found, alreadyRefunded):
+// AtomicRefundOrder atomically processes a refund for an order. If amountCents
+// is 0, it's a full refund: status → REFUNDED and sold count decremented.
+// If amountCents > 0, it's a partial refund: status → PARTIALLY_REFUNDED,
+// refunded_amount is incremented, and sold count is NOT decremented.
+// Returns (order, found, alreadyRefunded):
 //   - found=false if the order doesn't exist.
-//   - alreadyRefunded=true if the order was already in REFUNDED status (no
-//     duplicate decrement of Sold).
-func (s *Store) AtomicRefundOrder(orderID string) (*pb.Order, bool, bool) {
+//   - alreadyRefunded=true if the order was already fully REFUNDED (no-op).
+func (s *Store) AtomicRefundOrder(orderID string, amountCents uint64) (*pb.Order, bool, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -374,18 +375,46 @@ func (s *Store) AtomicRefundOrder(orderID string) (*pb.Order, bool, bool) {
 		return nil, false, false
 	}
 
-	// Idempotency: don't double-decrement Sold on already-refunded orders.
+	// Idempotency: don't process refunds on already-fully-refunded orders.
 	if order.Status == pb.OrderStatus_ORDER_STATUS_REFUNDED {
 		return order, true, true
 	}
 
-	order.Status = pb.OrderStatus_ORDER_STATUS_REFUNDED
-	order.RefundedAt = timestamppb.Now()
+	// Initialize refunded_amount if nil.
+	if order.RefundedAmount == nil {
+		order.RefundedAmount = &pb.Money{Amount: 0, Currency: order.AmountPaid.Currency}
+	}
 
-	// Decrement the associated ticket's sold count (but not below zero).
-	if ticket, ok := s.tickets[order.TicketId]; ok {
-		if ticket.Sold > 0 {
-			ticket.Sold--
+	if amountCents == 0 {
+		// Full refund.
+		order.Status = pb.OrderStatus_ORDER_STATUS_REFUNDED
+		order.RefundedAt = timestamppb.Now()
+		order.RefundedAmount.Amount = order.AmountPaid.Amount
+
+		// Decrement the associated ticket's sold count (but not below zero).
+		if ticket, ok := s.tickets[order.TicketId]; ok {
+			if ticket.Sold > 0 {
+				ticket.Sold--
+			}
+		}
+	} else {
+		// Partial refund.
+		order.RefundedAmount.Amount += amountCents
+		order.RefundedAmount.Currency = order.AmountPaid.Currency
+
+		// If cumulative refunds equal the full amount, transition to REFUNDED.
+		if order.RefundedAmount.Amount >= order.AmountPaid.Amount {
+			order.Status = pb.OrderStatus_ORDER_STATUS_REFUNDED
+			order.RefundedAt = timestamppb.Now()
+
+			// Decrement sold count since the ticket is effectively returned.
+			if ticket, ok := s.tickets[order.TicketId]; ok {
+				if ticket.Sold > 0 {
+					ticket.Sold--
+				}
+			}
+		} else {
+			order.Status = pb.OrderStatus_ORDER_STATUS_PARTIALLY_REFUNDED
 		}
 	}
 

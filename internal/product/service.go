@@ -512,7 +512,7 @@ func (s *Service) RefundOrder(
 	}
 
 	// Atomically update order status and decrement sold count.
-	order, found, alreadyRefunded := s.store.AtomicRefundOrder(req.Msg.OrderId)
+	order, found, alreadyRefunded := s.store.AtomicRefundOrder(req.Msg.OrderId, req.Msg.Amount)
 	if !found {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("order not found"))
 	}

@@ -119,34 +119,120 @@ func TestPaymentEdge_PartialRefund(t *testing.T) {
 	}
 
 	// Attempt a partial refund of 5000 (less than the 20000 total).
-	// The current implementation ignores the amount field and fully refunds.
 	refundResp, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
 		OrderId: orderID,
-		Amount:  5000, // partial — half the total
+		Amount:  5000, // partial — quarter of the total
 		Reason:  "partial refund",
 	}))
 	if err != nil {
 		t.Fatalf("RefundOrder failed: %v", err)
 	}
 
-	// Current behavior: the order is marked as fully REFUNDED.
-	if refundResp.Msg.Order.Status != pb.OrderStatus_ORDER_STATUS_REFUNDED {
-		t.Fatalf("expected REFUNDED status (current full-refund behavior), got %s",
+	// Partial refund: status should be PARTIALLY_REFUNDED, not REFUNDED.
+	if refundResp.Msg.Order.Status != pb.OrderStatus_ORDER_STATUS_PARTIALLY_REFUNDED {
+		t.Fatalf("expected PARTIALLY_REFUNDED status, got %s",
 			refundResp.Msg.Order.Status)
 	}
 
-	// Current behavior: sold is decremented by 1 (not proportionally).
+	// Partial refund: sold should NOT be decremented.
 	ticket, _ = store.GetTicket("partial-refund-tkt")
-	if ticket.Sold != 1 {
-		t.Fatalf("expected sold=1 after partial refund (current behavior decrements by 1), got %d",
+	if ticket.Sold != 2 {
+		t.Fatalf("expected sold=2 after partial refund (no decrement), got %d",
 			ticket.Sold)
 	}
 
-	// Document the known limitation: the amount field is ignored.
-	// A future implementation should set status=PARTIALLY_REFUNDED and
-	// track the remaining refundable amount.
-	t.Logf("NOTE: RefundOrder currently ignores the amount field and fully refunds. " +
-		"A proper partial refund would set status=PARTIALLY_REFUNDED and only decrement proportionally.")
+	// Verify refunded_amount is tracked.
+	if refundResp.Msg.Order.RefundedAmount == nil {
+		t.Fatal("expected refunded_amount to be set, got nil")
+	}
+	if refundResp.Msg.Order.RefundedAmount.Amount != 5000 {
+		t.Fatalf("expected refunded_amount=5000, got %d",
+			refundResp.Msg.Order.RefundedAmount.Amount)
+	}
+}
+
+// TestPaymentEdge_CumulativePartialRefundToFull verifies that multiple partial
+// refunds that cumulatively equal the full amount transition the order to
+// REFUNDED and decrement the sold count.
+func TestPaymentEdge_CumulativePartialRefundToFull(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	seedEvent(store, "evt-cumref", "grp1", "cumref")
+	seedTicket(store, "evt-cumref", "tkt-cumref", "Full", 10, 10000)
+
+	// Purchase 1 ticket (amount = 10000).
+	purchaseResp, err := svc.PurchaseTicket(ctx, connectReq(&pb.PurchaseTicketRequest{
+		TicketId:      "tkt-cumref",
+		AttendeeEmail: "cumref@test.com",
+		Quantity:      1,
+	}))
+	if err != nil {
+		t.Fatalf("PurchaseTicket failed: %v", err)
+	}
+	orderID := purchaseResp.Msg.OrderId
+
+	// Verify sold=1.
+	ticket, _ := store.GetTicket("tkt-cumref")
+	if ticket.Sold != 1 {
+		t.Fatalf("expected sold=1 after purchase, got %d", ticket.Sold)
+	}
+
+	// Partial refund 6000.
+	resp1, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
+		OrderId: orderID,
+		Amount:  6000,
+		Reason:  "partial 1",
+	}))
+	if err != nil {
+		t.Fatalf("first partial refund failed: %v", err)
+	}
+	if resp1.Msg.Order.Status != pb.OrderStatus_ORDER_STATUS_PARTIALLY_REFUNDED {
+		t.Fatalf("expected PARTIALLY_REFUNDED after first partial, got %s", resp1.Msg.Order.Status)
+	}
+	if resp1.Msg.Order.RefundedAmount.Amount != 6000 {
+		t.Fatalf("expected refunded_amount=6000, got %d", resp1.Msg.Order.RefundedAmount.Amount)
+	}
+
+	// Sold should still be 1 (partial doesn't decrement).
+	ticket, _ = store.GetTicket("tkt-cumref")
+	if ticket.Sold != 1 {
+		t.Fatalf("expected sold=1 after partial refund, got %d", ticket.Sold)
+	}
+
+	// Second partial refund 4000 — cumulatively equals full amount (10000).
+	resp2, err := svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
+		OrderId: orderID,
+		Amount:  4000,
+		Reason:  "partial 2 — completes full refund",
+	}))
+	if err != nil {
+		t.Fatalf("second partial refund failed: %v", err)
+	}
+
+	// Should transition to REFUNDED.
+	if resp2.Msg.Order.Status != pb.OrderStatus_ORDER_STATUS_REFUNDED {
+		t.Fatalf("expected REFUNDED after cumulative full refund, got %s", resp2.Msg.Order.Status)
+	}
+	if resp2.Msg.Order.RefundedAmount.Amount != 10000 {
+		t.Fatalf("expected refunded_amount=10000, got %d", resp2.Msg.Order.RefundedAmount.Amount)
+	}
+
+	// Sold should now be 0 (full refund decrements).
+	ticket, _ = store.GetTicket("tkt-cumref")
+	if ticket.Sold != 0 {
+		t.Fatalf("expected sold=0 after cumulative full refund, got %d", ticket.Sold)
+	}
+
+	// Third refund attempt should fail (already refunded).
+	_, err = svc.RefundOrder(ctx, connectReq(&pb.RefundOrderRequest{
+		OrderId: orderID,
+		Amount:  0,
+		Reason:  "should fail",
+	}))
+	if err == nil {
+		t.Fatal("expected error on refunding already-refunded order, got nil")
+	}
 }
 
 // TestPaymentEdge_PurchaseQuantityExceedsCapacity verifies that purchasing

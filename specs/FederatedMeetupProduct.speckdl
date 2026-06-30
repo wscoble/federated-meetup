@@ -115,6 +115,7 @@ speck FederatedMeetupProduct {
     status: OrderStatus,
     stripe_session_id: String,
     amount_paid: Money,
+    refunded_amount: Money,
     created_at: Date,
     refunded_at: Date
   }

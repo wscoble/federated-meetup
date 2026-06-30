@@ -717,6 +717,7 @@ type Order struct {
 	Status          OrderStatus            `protobuf:"varint,6,opt,name=status,proto3,enum=federated_meetup.product.v1.OrderStatus" json:"status,omitempty"`
 	StripeSessionId string                 `protobuf:"bytes,7,opt,name=stripe_session_id,json=stripeSessionId,proto3" json:"stripe_session_id,omitempty"`
 	AmountPaid      *Money                 `protobuf:"bytes,1,opt,name=amount_paid,json=amountPaid,proto3" json:"amount_paid,omitempty"`
+	RefundedAmount  *Money                 `protobuf:"bytes,9,opt,name=refunded_amount,json=refundedAmount,proto3" json:"refunded_amount,omitempty"`
 	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	RefundedAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=refunded_at,json=refundedAt,proto3" json:"refunded_at,omitempty"`
 	unknownFields   protoimpl.UnknownFields
@@ -791,6 +792,13 @@ func (x *Order) GetStripeSessionId() string {
 func (x *Order) GetAmountPaid() *Money {
 	if x != nil {
 		return x.AmountPaid
+	}
+	return nil
+}
+
+func (x *Order) GetRefundedAmount() *Money {
+	if x != nil {
+		return x.RefundedAmount
 	}
 	return nil
 }
@@ -2420,7 +2428,7 @@ const file_federated_meetup_product_v1_state_proto_rawDesc = "" +
 	"\x04sold\x18\x06 \x01(\x04R\x04sold\x12@\n" +
 	"\x0esale_starts_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\fsaleStartsAt\x12<\n" +
 	"\fsale_ends_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"saleEndsAt\"\x91\x03\n" +
+	"saleEndsAt\"\xde\x03\n" +
 	"\x05Order\x12\x19\n" +
 	"\border_id\x18\x04 \x01(\tR\aorderId\x12\x1b\n" +
 	"\tticket_id\x18\b \x01(\tR\bticketId\x12%\n" +
@@ -2428,7 +2436,8 @@ const file_federated_meetup_product_v1_state_proto_rawDesc = "" +
 	"\x06status\x18\x06 \x01(\x0e2(.federated_meetup.product.v1.OrderStatusR\x06status\x12*\n" +
 	"\x11stripe_session_id\x18\a \x01(\tR\x0fstripeSessionId\x12C\n" +
 	"\vamount_paid\x18\x01 \x01(\v2\".federated_meetup.product.v1.MoneyR\n" +
-	"amountPaid\x129\n" +
+	"amountPaid\x12K\n" +
+	"\x0frefunded_amount\x18\t \x01(\v2\".federated_meetup.product.v1.MoneyR\x0erefundedAmount\x129\n" +
 	"\n" +
 	"created_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
 	"\vrefunded_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -2695,45 +2704,46 @@ var file_federated_meetup_product_v1_state_proto_depIdxs = []int32{
 	31, // 3: federated_meetup.product.v1.Ticket.sale_ends_at:type_name -> google.protobuf.Timestamp
 	6,  // 4: federated_meetup.product.v1.Order.status:type_name -> federated_meetup.product.v1.OrderStatus
 	9,  // 5: federated_meetup.product.v1.Order.amount_paid:type_name -> federated_meetup.product.v1.Money
-	31, // 6: federated_meetup.product.v1.Order.created_at:type_name -> google.protobuf.Timestamp
-	31, // 7: federated_meetup.product.v1.Order.refunded_at:type_name -> google.protobuf.Timestamp
-	31, // 8: federated_meetup.product.v1.Event.starts_at:type_name -> google.protobuf.Timestamp
-	31, // 9: federated_meetup.product.v1.Event.ends_at:type_name -> google.protobuf.Timestamp
-	3,  // 10: federated_meetup.product.v1.Event.visibility:type_name -> federated_meetup.product.v1.EventVisibility
-	0,  // 11: federated_meetup.product.v1.Event.package:type_name -> federated_meetup.product.v1.Package
-	12, // 12: federated_meetup.product.v1.Event.recurrence:type_name -> federated_meetup.product.v1.RecurrenceRule
-	1,  // 13: federated_meetup.product.v1.Group.hosting_mode:type_name -> federated_meetup.product.v1.HostingMode
-	2,  // 14: federated_meetup.product.v1.Group.hosting_tier:type_name -> federated_meetup.product.v1.HostingTier
-	0,  // 15: federated_meetup.product.v1.Group.package:type_name -> federated_meetup.product.v1.Package
-	31, // 16: federated_meetup.product.v1.Group.created_at:type_name -> google.protobuf.Timestamp
-	4,  // 17: federated_meetup.product.v1.GroupMember.role:type_name -> federated_meetup.product.v1.Role
-	31, // 18: federated_meetup.product.v1.GroupMember.joined_at:type_name -> google.protobuf.Timestamp
-	7,  // 19: federated_meetup.product.v1.Rsvp.status:type_name -> federated_meetup.product.v1.RsvpStatus
-	31, // 20: federated_meetup.product.v1.Rsvp.created_at:type_name -> google.protobuf.Timestamp
-	5,  // 21: federated_meetup.product.v1.CreateTicketPayload.tier_type:type_name -> federated_meetup.product.v1.TicketTierType
-	31, // 22: federated_meetup.product.v1.CreateTicketPayload.sale_starts_at:type_name -> google.protobuf.Timestamp
-	31, // 23: federated_meetup.product.v1.CreateTicketPayload.sale_ends_at:type_name -> google.protobuf.Timestamp
-	0,  // 24: federated_meetup.product.v1.SetGroupPackagePayload.package:type_name -> federated_meetup.product.v1.Package
-	2,  // 25: federated_meetup.product.v1.SetHostingTierPayload.tier:type_name -> federated_meetup.product.v1.HostingTier
-	3,  // 26: federated_meetup.product.v1.UpdateVisibilityPayload.visibility:type_name -> federated_meetup.product.v1.EventVisibility
-	4,  // 27: federated_meetup.product.v1.SetMemberRolePayload.role:type_name -> federated_meetup.product.v1.Role
-	8,  // 28: federated_meetup.product.v1.ProductTransition.type:type_name -> federated_meetup.product.v1.ProductTransitionType
-	19, // 29: federated_meetup.product.v1.ProductTransition.create_ticket:type_name -> federated_meetup.product.v1.CreateTicketPayload
-	20, // 30: federated_meetup.product.v1.ProductTransition.update_ticket:type_name -> federated_meetup.product.v1.UpdateTicketPayload
-	21, // 31: federated_meetup.product.v1.ProductTransition.purchase_ticket:type_name -> federated_meetup.product.v1.PurchaseTicketPayload
-	22, // 32: federated_meetup.product.v1.ProductTransition.refund_order:type_name -> federated_meetup.product.v1.RefundOrderPayload
-	23, // 33: federated_meetup.product.v1.ProductTransition.create_recurrence:type_name -> federated_meetup.product.v1.CreateRecurrencePayload
-	24, // 34: federated_meetup.product.v1.ProductTransition.add_exception:type_name -> federated_meetup.product.v1.AddExceptionPayload
-	25, // 35: federated_meetup.product.v1.ProductTransition.set_group_package:type_name -> federated_meetup.product.v1.SetGroupPackagePayload
-	26, // 36: federated_meetup.product.v1.ProductTransition.set_hosting_tier:type_name -> federated_meetup.product.v1.SetHostingTierPayload
-	27, // 37: federated_meetup.product.v1.ProductTransition.update_visibility:type_name -> federated_meetup.product.v1.UpdateVisibilityPayload
-	28, // 38: federated_meetup.product.v1.ProductTransition.set_member_role:type_name -> federated_meetup.product.v1.SetMemberRolePayload
-	29, // 39: federated_meetup.product.v1.ProductTransition.mark_attended:type_name -> federated_meetup.product.v1.MarkAttendedPayload
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	9,  // 6: federated_meetup.product.v1.Order.refunded_amount:type_name -> federated_meetup.product.v1.Money
+	31, // 7: federated_meetup.product.v1.Order.created_at:type_name -> google.protobuf.Timestamp
+	31, // 8: federated_meetup.product.v1.Order.refunded_at:type_name -> google.protobuf.Timestamp
+	31, // 9: federated_meetup.product.v1.Event.starts_at:type_name -> google.protobuf.Timestamp
+	31, // 10: federated_meetup.product.v1.Event.ends_at:type_name -> google.protobuf.Timestamp
+	3,  // 11: federated_meetup.product.v1.Event.visibility:type_name -> federated_meetup.product.v1.EventVisibility
+	0,  // 12: federated_meetup.product.v1.Event.package:type_name -> federated_meetup.product.v1.Package
+	12, // 13: federated_meetup.product.v1.Event.recurrence:type_name -> federated_meetup.product.v1.RecurrenceRule
+	1,  // 14: federated_meetup.product.v1.Group.hosting_mode:type_name -> federated_meetup.product.v1.HostingMode
+	2,  // 15: federated_meetup.product.v1.Group.hosting_tier:type_name -> federated_meetup.product.v1.HostingTier
+	0,  // 16: federated_meetup.product.v1.Group.package:type_name -> federated_meetup.product.v1.Package
+	31, // 17: federated_meetup.product.v1.Group.created_at:type_name -> google.protobuf.Timestamp
+	4,  // 18: federated_meetup.product.v1.GroupMember.role:type_name -> federated_meetup.product.v1.Role
+	31, // 19: federated_meetup.product.v1.GroupMember.joined_at:type_name -> google.protobuf.Timestamp
+	7,  // 20: federated_meetup.product.v1.Rsvp.status:type_name -> federated_meetup.product.v1.RsvpStatus
+	31, // 21: federated_meetup.product.v1.Rsvp.created_at:type_name -> google.protobuf.Timestamp
+	5,  // 22: federated_meetup.product.v1.CreateTicketPayload.tier_type:type_name -> federated_meetup.product.v1.TicketTierType
+	31, // 23: federated_meetup.product.v1.CreateTicketPayload.sale_starts_at:type_name -> google.protobuf.Timestamp
+	31, // 24: federated_meetup.product.v1.CreateTicketPayload.sale_ends_at:type_name -> google.protobuf.Timestamp
+	0,  // 25: federated_meetup.product.v1.SetGroupPackagePayload.package:type_name -> federated_meetup.product.v1.Package
+	2,  // 26: federated_meetup.product.v1.SetHostingTierPayload.tier:type_name -> federated_meetup.product.v1.HostingTier
+	3,  // 27: federated_meetup.product.v1.UpdateVisibilityPayload.visibility:type_name -> federated_meetup.product.v1.EventVisibility
+	4,  // 28: federated_meetup.product.v1.SetMemberRolePayload.role:type_name -> federated_meetup.product.v1.Role
+	8,  // 29: federated_meetup.product.v1.ProductTransition.type:type_name -> federated_meetup.product.v1.ProductTransitionType
+	19, // 30: federated_meetup.product.v1.ProductTransition.create_ticket:type_name -> federated_meetup.product.v1.CreateTicketPayload
+	20, // 31: federated_meetup.product.v1.ProductTransition.update_ticket:type_name -> federated_meetup.product.v1.UpdateTicketPayload
+	21, // 32: federated_meetup.product.v1.ProductTransition.purchase_ticket:type_name -> federated_meetup.product.v1.PurchaseTicketPayload
+	22, // 33: federated_meetup.product.v1.ProductTransition.refund_order:type_name -> federated_meetup.product.v1.RefundOrderPayload
+	23, // 34: federated_meetup.product.v1.ProductTransition.create_recurrence:type_name -> federated_meetup.product.v1.CreateRecurrencePayload
+	24, // 35: federated_meetup.product.v1.ProductTransition.add_exception:type_name -> federated_meetup.product.v1.AddExceptionPayload
+	25, // 36: federated_meetup.product.v1.ProductTransition.set_group_package:type_name -> federated_meetup.product.v1.SetGroupPackagePayload
+	26, // 37: federated_meetup.product.v1.ProductTransition.set_hosting_tier:type_name -> federated_meetup.product.v1.SetHostingTierPayload
+	27, // 38: federated_meetup.product.v1.ProductTransition.update_visibility:type_name -> federated_meetup.product.v1.UpdateVisibilityPayload
+	28, // 39: federated_meetup.product.v1.ProductTransition.set_member_role:type_name -> federated_meetup.product.v1.SetMemberRolePayload
+	29, // 40: federated_meetup.product.v1.ProductTransition.mark_attended:type_name -> federated_meetup.product.v1.MarkAttendedPayload
+	41, // [41:41] is the sub-list for method output_type
+	41, // [41:41] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_federated_meetup_product_v1_state_proto_init() }

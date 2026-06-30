@@ -24,7 +24,7 @@ func (a webhookAdapter) AtomicMarkOrderDisputed(orderID string) (bool, bool) {
 	return found, already
 }
 func (a webhookAdapter) AtomicRefundOrder(orderID string) (bool, bool) {
-	_, found, already := a.store.AtomicRefundOrder(orderID)
+	_, found, already := a.store.AtomicRefundOrder(orderID, 0) // webhook refunds are always full
 	return found, already
 }
 
