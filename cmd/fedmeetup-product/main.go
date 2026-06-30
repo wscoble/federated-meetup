@@ -43,6 +43,15 @@ func main() {
 	)
 	mux.Handle(path, handler)
 
+	// Mount Stripe webhook handler if configured.
+	if payment.IsWebhookConfigured() {
+		wh := store.WebhookHandler("")
+		mux.Handle("/stripe/webhook", wh)
+		log.Printf("Stripe webhook: /stripe/webhook (signature verification enabled)")
+	} else {
+		log.Printf("Stripe webhook: disabled (set STRIPE_WEBHOOK_SECRET to enable)")
+	}
+
 	addr := getenv("PRODUCT_LISTEN_ADDR", ":18081")
 	fmt.Printf("ProductService daemon listening on %s\n", addr)
 	fmt.Printf("Endpoint: http://127.0.0.1%s%s\n", addr, path)

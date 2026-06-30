@@ -391,3 +391,76 @@ func (s *Store) AtomicRefundOrder(orderID string) (*pb.Order, bool, bool) {
 
 	return order, true, false
 }
+
+// AtomicCompleteOrder transitions an order from PENDING to COMPLETED.
+// This is called when the Stripe webhook confirms a successful payment.
+// Returns (order, found, alreadyCompleted):
+//   - found=false if the order doesn't exist.
+//   - alreadyCompleted=true if the order was already COMPLETED (idempotent).
+func (s *Store) AtomicCompleteOrder(orderID string) (*pb.Order, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	order, ok := s.orders[orderID]
+	if !ok {
+		return nil, false, false
+	}
+
+	if order.Status == pb.OrderStatus_ORDER_STATUS_COMPLETED {
+		return order, true, true
+	}
+
+	order.Status = pb.OrderStatus_ORDER_STATUS_COMPLETED
+	return order, true, false
+}
+
+// AtomicMarkOrderFailed transitions an order from PENDING to FAILED.
+// Called when a Stripe payment fails or is cancelled.
+// Returns (order, found, alreadyTerminal):
+//   - found=false if the order doesn't exist.
+//   - alreadyTerminal=true if the order was already in a terminal state
+//     (COMPLETED, REFUNDED, FAILED, DISPUTED).
+func (s *Store) AtomicMarkOrderFailed(orderID string) (*pb.Order, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	order, ok := s.orders[orderID]
+	if !ok {
+		return nil, false, false
+	}
+
+	// Don't transition from a terminal state.
+	if order.Status != pb.OrderStatus_ORDER_STATUS_PENDING {
+		return order, true, true
+	}
+
+	order.Status = pb.OrderStatus_ORDER_STATUS_FAILED
+
+	// Decrement sold count since the purchase didn't complete.
+	if ticket, ok := s.tickets[order.TicketId]; ok {
+		if ticket.Sold > 0 {
+			ticket.Sold--
+		}
+	}
+
+	return order, true, false
+}
+
+// AtomicMarkOrderDisputed transitions an order to DISPUTED.
+// Called when a Stripe dispute webhook is received.
+func (s *Store) AtomicMarkOrderDisputed(orderID string) (*pb.Order, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	order, ok := s.orders[orderID]
+	if !ok {
+		return nil, false, false
+	}
+
+	if order.Status == pb.OrderStatus_ORDER_STATUS_DISPUTED {
+		return order, true, true
+	}
+
+	order.Status = pb.OrderStatus_ORDER_STATUS_DISPUTED
+	return order, true, false
+}
