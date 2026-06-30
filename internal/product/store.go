@@ -321,7 +321,7 @@ func (s *Store) DeleteToken(token string) {
 // attendee_email, amount, currency, stripe_session_id); AtomicPurchaseTicket
 // generates the order_id and sets status=PENDING and created_at.
 func (s *Store) AtomicPurchaseTicket(
-	ticketID, attendeeEmail, stripeSessionID string,
+	ticketID, attendeeEmail, orderID, stripeSessionID string,
 	quantity uint64,
 	amount uint64,
 	currency string,
@@ -342,7 +342,6 @@ func (s *Store) AtomicPurchaseTicket(
 	// Atomically increment sold.
 	ticket.Sold += quantity
 
-	orderID := newID()
 	order := &pb.Order{
 		OrderId:         orderID,
 		TicketId:        ticketID,

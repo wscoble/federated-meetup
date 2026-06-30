@@ -15,6 +15,7 @@ import (
 	federatedmeetupproductv1connect "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
 
+	"github.com/sscoble/federated-meetup/internal/payment"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -23,12 +24,17 @@ var _ federatedmeetupproductv1connect.ProductServiceHandler = (*Service)(nil)
 
 // Service implements ProductServiceHandler backed by an in-memory Store.
 type Service struct {
-	store *Store
+	store   *Store
+	pay     payment.Provider
 }
 
-// NewService creates a Service backed by the given Store.
-func NewService(store *Store) *Service {
-	return &Service{store: store}
+// NewService creates a Service backed by the given Store and payment Provider.
+// If pay is nil, a MockProvider is used (for tests and local dev).
+func NewService(store *Store, pay payment.Provider) *Service {
+	if pay == nil {
+		pay = payment.NewMockProvider()
+	}
+	return &Service{store: store, pay: pay}
 }
 
 // newID generates a random 16-char hex ID using crypto/rand.
@@ -311,13 +317,30 @@ func (s *Service) PurchaseTicket(
 		currency = ticket.Price.Currency
 	}
 
-	sessionID := newID()
-	checkoutURL := fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", sessionID)
+	// Create checkout session via the payment provider.
+	// If Stripe is configured, this creates a real Stripe Checkout Session.
+	// If not, the mock provider returns a fake URL.
+	orderID := newID()
+	sessionID, checkoutURL, err := s.pay.CreateCheckoutSession(ctx, payment.CheckoutParams{
+		TicketID:      req.Msg.TicketId,
+		TicketName:    ticket.Name,
+		AmountCents:   amount,
+		Currency:      currency,
+		Quantity:      uint64(quantity),
+		AttendeeEmail: req.Msg.AttendeeEmail,
+		OrderID:       orderID,
+		SuccessURL:    "https://app.federatedmeetup.com/checkout/success",
+		CancelURL:     "https://app.federatedmeetup.com/checkout/cancel",
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("failed to create checkout session: %w", err))
+	}
 
 	// Atomically check capacity, increment sold, and create the order.
 	order, found, soldOut := s.store.AtomicPurchaseTicket(
 		req.Msg.TicketId,
 		req.Msg.AttendeeEmail,
+		orderID,
 		sessionID,
 		uint64(quantity),
 		amount,
@@ -463,6 +486,8 @@ func (s *Service) CreateTicket(
 // decrements the ticket's sold count. This is atomic and idempotent — calling
 // RefundOrder on an already-refunded order returns the order (with
 // alreadyRefunded=true) without decrementing the sold count a second time.
+//
+// If a payment provider is configured, it also issues a refund through Stripe.
 func (s *Service) RefundOrder(
 	ctx context.Context,
 	req *connect.Request[pb.RefundOrderRequest],
@@ -471,6 +496,22 @@ func (s *Service) RefundOrder(
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("order_id is required"))
 	}
 
+	// Look up the order first to get the Stripe session ID for the refund.
+	order, ok := s.store.GetOrder(req.Msg.OrderId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("order not found"))
+	}
+
+	// Issue refund through the payment provider (real Stripe or mock).
+	if err := s.pay.RefundPayment(ctx, payment.RefundParams{
+		StripeSessionID: order.StripeSessionId,
+		AmountCents:     req.Msg.Amount, // 0 = full refund
+		Reason:          req.Msg.Reason,
+	}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("failed to issue refund: %w", err))
+	}
+
+	// Atomically update order status and decrement sold count.
 	order, found, alreadyRefunded := s.store.AtomicRefundOrder(req.Msg.OrderId)
 	if !found {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("order not found"))

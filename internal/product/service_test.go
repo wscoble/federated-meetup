@@ -19,7 +19,7 @@ import (
 func newTestService(t *testing.T) (*Service, *Store) {
 	t.Helper()
 	store := NewStore()
-	svc := NewService(store)
+	svc := NewService(store, nil)
 	return svc, store
 }
 

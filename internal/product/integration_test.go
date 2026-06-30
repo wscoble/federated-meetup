@@ -61,7 +61,7 @@ func setupTestServer(t *testing.T) (federatedmeetupproductv1connect.ProductServi
 		SaleEndsAt:    timestamppb.New(time.Now().Add(12 * time.Hour)),
 	})
 
-	svc := product.NewService(store)
+	svc := product.NewService(store, nil)
 	mux := http.NewServeMux()
 	path, handler := federatedmeetupproductv1connect.NewProductServiceHandler(svc)
 	mux.Handle(path, handler)
