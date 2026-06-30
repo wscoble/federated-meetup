@@ -1,0 +1,31 @@
+# docker-compose.yml — self-host federated-meetup product service
+#
+# Usage:
+#   docker compose up -d
+#   curl http://localhost:18081/federated_meetup.product.v1.ProductService/GetPublicEvent \
+#     -H "Content-Type: application/json" \
+#     -d '{"slug":"", "event_id":""}'
+#
+# The product service is stateless in-memory by default.
+# For production, add a volume for persistence and env vars for Stripe keys.
+
+services:
+  product:
+    build:
+      context: .
+      dockerfile: Dockerfile.product
+    ports:
+      - "18081:18081"
+    environment:
+      # Stripe Connect keys (set in .env or override at deploy time)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      # ConnectRPC endpoint
+      - PRODUCT_LISTEN_ADDR=:18081
+    restart: unless-stopped
+    healthcheck:
+      # Simple TCP check — the service responds to HTTP on this port.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:18081/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

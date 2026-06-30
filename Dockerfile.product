@@ -1,0 +1,29 @@
+# Dockerfile.product — self-host federated-meetup product service
+# Multi-stage build: Go builder + minimal runtime image.
+
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /src
+
+# Cache deps: copy go.mod/go.sum first, download, then copy the rest.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Build the product daemon as a static binary.
+# CGO disabled for a fully static binary suitable for scratch/distroless.
+RUN CGO_ENABLED=0 go build -o /fedmeetup-product ./cmd/fedmeetup-product
+
+# --- Runtime stage ---
+
+FROM alpine:3.20
+
+# ca-certificates for HTTPS calls to Stripe etc.
+RUN apk add --no-cache ca-certificates
+
+COPY --from=builder /fedmeetup-product /usr/local/bin/fedmeetup-product
+
+EXPOSE 18081
+
+ENTRYPOINT ["/usr/local/bin/fedmeetup-product"]
