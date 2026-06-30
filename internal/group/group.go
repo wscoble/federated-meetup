@@ -343,7 +343,7 @@ func (s *State) thresholdAtLocked(root *pb.StateRoot) uint32 {
 
 // Apply validates the transition's signatures against the current steward
 // set and prior_state, applies the changes, and advances the state machine.
-func (s *State) Apply(t *Transition, now time.Time) error {
+func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -381,16 +381,80 @@ func (s *State) Apply(t *Transition, now time.Time) error {
 		}
 	}
 
-	// From here on, lock the target branch for branch-local ops.
-	// We hold s.mu the whole time (as before) to keep the existing
-	// lock discipline simple. The branch-local fields (snapshot,
-	// stewardHistory, etc.) are protected by s.mu under the legacy
-	// model — when we move them fully to Branch.mu, this gets more
-	// nuanced. For now, branch 0's legacy fields ARE the source of
-	// truth, and Apply works against them directly.
+	// From here on, we need to operate on the target branch's state.
+	// For genesis (branch 0), the legacy fields on State ARE the branch
+	// state. For non-genesis branches, we swap the branch's state into
+	// the legacy fields for the duration of Apply, then swap back.
+	//
+	// This is a pragmatic fix for C-6: the apply switch (488-918 below)
+	// reads/writes s.snapshot, s.stewardHistory, s.thresholdHistory,
+	// s.log, s.keySeq, s.initialStewards, s.initialThreshold directly.
+	// Routing these through the Branch struct would be a larger refactor
+	// (moving all per-branch fields off State). The swap lets us reuse
+	// the entire apply path unchanged for non-genesis branches.
+	var restoreGenesis func(applyErr error)
 	if branchID != GenesisBranchID {
-		return fmt.Errorf("group: branch-local mutations on non-genesis branches not yet wired (branch %d)", branchID)
+		// BRANCH_CREATE itself is applied to the PARENT branch (genesis),
+		// even though it allocates a new branch. So if this is a
+		// BRANCH_CREATE, we stay on genesis. The new branch will receive
+		// mutations on SUBSEQUENT transitions that target it.
+		if t.Proto.GetType() == pb.TransitionType_TRANSITION_TYPE_BRANCH_CREATE {
+			// Stay on genesis. No swap needed.
+			restoreGenesis = func(_ error) {}
+		} else {
+			// Swap: save genesis state, load branch state into legacy fields.
+			b := targetBranch
+			b.mu.Lock()
+			savedSnapshot := s.snapshot
+			savedStewardHistory := s.stewardHistory
+			savedThresholdHistory := s.thresholdHistory
+			savedKeySeq := s.keySeq
+			savedInitialStewards := s.initialStewards
+			savedInitialThreshold := s.initialThreshold
+			savedLog := s.log
+			savedEquivocation := s.equivocation
+
+			s.snapshot = b.snapshot
+			s.stewardHistory = b.stewardHistory
+			s.thresholdHistory = b.thresholdHistory
+			s.keySeq = b.keySeq
+			s.initialStewards = append([]Steward(nil), b.initialStewards...)
+			s.initialThreshold = b.initialThreshold
+			s.log = b.log
+			s.equivocation = b.equivocation
+			b.mu.Unlock()
+
+			restoreGenesis = func(applyErr error) {
+				// Only write back to the branch if Apply succeeded.
+				if applyErr == nil {
+					b.mu.Lock()
+					b.snapshot = s.snapshot
+					b.stewardHistory = s.stewardHistory
+					b.thresholdHistory = s.thresholdHistory
+					b.keySeq = s.keySeq
+					b.initialStewards = append([]Steward(nil), s.initialStewards...)
+					b.initialThreshold = s.initialThreshold
+					b.log = s.log
+					b.equivocation = s.equivocation
+					b.transitionCount++
+					b.mu.Unlock()
+				}
+
+				// Always restore genesis state to legacy fields.
+				s.snapshot = savedSnapshot
+				s.stewardHistory = savedStewardHistory
+				s.thresholdHistory = savedThresholdHistory
+				s.keySeq = savedKeySeq
+				s.initialStewards = savedInitialStewards
+				s.initialThreshold = savedInitialThreshold
+				s.log = savedLog
+				s.equivocation = savedEquivocation
+			}
+		}
+	} else {
+		restoreGenesis = func(_ error) {}
 	}
+	defer func() { restoreGenesis(applyErr) }()
 
 	// Verify the prior_state matches our current head.
 	currentRoot := s.snapshot.Root()
