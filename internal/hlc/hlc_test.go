@@ -201,3 +201,143 @@ func TestHLC_BadSize(t *testing.T) {
 		t.Fatal("expected error on bad size")
 	}
 }
+
+// TestHLC_PartitionAwareTick verifies that after a short partition
+// (wall jump within PartitionWindow), Tick preserves counter
+// continuity instead of resetting to 0. This is the H-3 fix.
+func TestHLC_PartitionAwareTick(t *testing.T) {
+	t1 := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+
+	// First tick at t1: counter = 0.
+	h1, _ := hlc.Tick(hlc.Zero, t1)
+
+	// Second tick at same time: counter = 1.
+	h2, _ := hlc.Tick(h1, t1)
+
+	// Now the wall advances by 30 seconds (within the 60s partition window).
+	// Counter was non-zero (1), so Tick should bump it to 2 instead of
+	// resetting to 0. This preserves monotonicity for events pending
+	// during the partition.
+	t2 := t1.Add(30 * time.Second)
+	h3, err := hlc.Tick(h2, t2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if h3.Counter() != 2 {
+		t.Fatalf("partition-aware tick: expected counter 2 (preserve continuity), got %d", h3.Counter())
+	}
+	if h3.Time() != t2 {
+		t.Fatalf("wall should advance to t2; got %v want %v", h3.Time(), t2)
+	}
+	if !h3.After(h2) {
+		t.Fatalf("h3 must be > h2; got h2=%s h3=%s", h2, h3)
+	}
+}
+
+// TestHLC_LongPartitionResetsCounter verifies that after a long
+// partition (wall jump beyond PartitionWindow), Tick resets the counter
+// to 0 — a true disconnection where counter continuity is irrelevant.
+func TestHLC_LongPartitionResetsCounter(t *testing.T) {
+	t1 := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+
+	// First tick: counter = 0.
+	h1, _ := hlc.Tick(hlc.Zero, t1)
+
+	// Second tick at same time: counter = 1.
+	h2, _ := hlc.Tick(h1, t1)
+
+	// Now the wall advances by 10 minutes (beyond the 60s partition window).
+	t2 := t1.Add(10 * time.Minute)
+	h3, err := hlc.Tick(h2, t2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if h3.Counter() != 0 {
+		t.Fatalf("long partition: expected counter reset to 0, got %d", h3.Counter())
+	}
+	if h3.Time() != t2 {
+		t.Fatalf("wall should advance to t2; got %v want %v", h3.Time(), t2)
+	}
+	if !h3.After(h2) {
+		t.Fatalf("h3 must be > h2; got h2=%s h3=%s", h2, h3)
+	}
+}
+
+// TestHLC_DDILPartitionRecovery simulates a DDIL partition scenario:
+// a host is partitioned for 10 minutes. During the partition, events
+// were generated with non-zero counters. After recovery, the host's
+// first Tick should produce a monotonically increasing HLC. The
+// 10-minute partition is beyond the partition window, so the counter
+// resets — but subsequent ticks at the new wall time still produce
+// strictly monotonic values. (Audit H-3.)
+func TestHLC_DDILPartitionRecovery(t *testing.T) {
+	baseTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+
+	// Host generates events before partition.
+	h1, _ := hlc.Tick(hlc.Zero, baseTime)
+	h2, _ := hlc.Tick(h1, baseTime) // counter = 1
+
+	// Partition: 10 minutes pass (beyond PartitionWindow).
+	// During partition, the host can't generate events (no wall clock
+	// advance in our simulation). After recovery at baseTime + 10min:
+	recoveryTime := baseTime.Add(10 * time.Minute)
+
+	// First tick after recovery: counter resets to 0 (long partition).
+	h3, _ := hlc.Tick(h2, recoveryTime)
+	if h3.Counter() != 0 {
+		t.Fatalf("post-recovery tick: expected counter 0 (long partition), got %d", h3.Counter())
+	}
+	if !h3.After(h2) {
+		t.Fatalf("post-recovery h3 must be > h2 (monotonic); got h2=%s h3=%s", h2, h3)
+	}
+
+	// Second tick at same wall: counter = 1 (normal monotonic advance).
+	h4, _ := hlc.Tick(h3, recoveryTime)
+	if h4.Counter() != 1 {
+		t.Fatalf("post-recovery tick2: expected counter 1, got %d", h4.Counter())
+	}
+	if !h4.After(h3) {
+		t.Fatalf("h4 must be > h3; got h3=%s h4=%s", h3, h4)
+	}
+
+	// Third tick at same wall: counter = 2.
+	h5, _ := hlc.Tick(h4, recoveryTime)
+	if h5.Counter() != 2 {
+		t.Fatalf("post-recovery tick3: expected counter 2, got %d", h5.Counter())
+	}
+	if !h5.After(h4) {
+		t.Fatalf("h5 must be > h4; got h4=%s h5=%s", h4, h5)
+	}
+}
+
+// TestHLC_ShortPartitionPreservesMonotonicity verifies that events
+// generated during a short partition (within PartitionWindow) maintain
+// counter monotonicity — the key property the H-3 fix provides.
+func TestHLC_ShortPartitionPreservesMonotonicity(t *testing.T) {
+	baseTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+
+	// Generate 5 events at the same wall time (counter 0..4).
+	var h hlc.HLC
+	h, _ = hlc.Tick(hlc.Zero, baseTime)
+	for i := 0; i < 4; i++ {
+		next, _ := hlc.Tick(h, baseTime)
+		h = next
+	}
+	if h.Counter() != 4 {
+		t.Fatalf("expected counter 4, got %d", h.Counter())
+	}
+
+	// Short partition: wall advances by 45 seconds (within 60s window).
+	afterPartition := baseTime.Add(45 * time.Second)
+
+	// Tick after partition: counter should be 5 (bump, not reset).
+	hAfter, _ := hlc.Tick(h, afterPartition)
+	if hAfter.Counter() != 5 {
+		t.Fatalf("short partition: expected counter 5 (preserved), got %d", hAfter.Counter())
+	}
+	if !hAfter.After(h) {
+		t.Fatalf("hAfter must be > h; got h=%s hAfter=%s", h, hAfter)
+	}
+}

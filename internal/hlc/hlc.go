@@ -120,6 +120,22 @@ func (h HLC) Equal(other HLC) bool { return h.Compare(other) == 0 }
 // Tick / Observe — the two operations a host calls to maintain its clock.
 // =============================================================================
 
+// PartitionWindow is the wall-clock jump threshold (in nanoseconds)
+// below which Tick preserves the counter on a wall advance. If the
+// wall clock moves forward by less than this window and the prior
+// counter was non-zero, Tick bumps the counter instead of resetting
+// it to 0 — preserving monotonicity for events that were pending
+// during a short partition. (Audit H-3.)
+//
+// Default: 60 seconds. A wall jump beyond this is treated as a true
+// disconnection (host was offline long enough that counter continuity
+// is irrelevant); the counter resets to 0.
+const PartitionWindow = 60 * int64(time.Second)
+
+// PartitionWindowNanos is PartitionWindow in nanoseconds, pre-computed
+// for use in the hot path of Tick.
+var PartitionWindowNanos = uint64(PartitionWindow)
+
 // Tick returns the HLC a host should assign to a locally-generated event
 // at wall-clock time `now`. The caller maintains its own prior HLC and
 // passes it in. Tick is the monotonic-local-time primitive.
@@ -168,9 +184,36 @@ func Tick(last HLC, now time.Time) (HLC, error) {
 		}
 	default:
 		// Local clock advanced strictly past last (the common case).
-		// Counter resets to 0; the wall component dominates ordering.
-		binary.BigEndian.PutUint64(out[0:8], nowNanos)
-		binary.BigEndian.PutUint16(out[16:18], 0)
+		//
+		// H-3 partition-aware mode: if the wall jump is "recent" (within
+		// PartitionWindow, default 60s) and the prior counter was non-zero,
+		// preserve counter continuity by bumping counter+1 instead of
+		// resetting to 0. This preserves monotonicity for events that were
+		// pending during a short partition / wall-clock adjustment.
+		//
+		// Only reset to 0 if the wall has advanced by more than
+		// PartitionWindow — a true disconnection where counter continuity
+		// is irrelevant.
+		counter := binary.BigEndian.Uint16(last[16:18])
+		jump := nowNanos - lastNanos
+		if counter > 0 && jump <= PartitionWindowNanos {
+			// Recent wall advance with pending counter — bump counter
+			// to preserve monotonicity across the partition.
+			binary.BigEndian.PutUint64(out[0:8], nowNanos)
+			if counter == 0xFFFF {
+				// Overflow: bump wall by 1ns, reset counter.
+				binary.BigEndian.PutUint64(out[0:8], nowNanos+1)
+				binary.BigEndian.PutUint16(out[16:18], 0)
+			} else {
+				binary.BigEndian.PutUint16(out[16:18], counter+1)
+			}
+		} else {
+			// Either the counter was already 0 (normal case) or the wall
+			// jumped beyond the partition window (true disconnection).
+			// Counter resets to 0; the wall component dominates ordering.
+			binary.BigEndian.PutUint64(out[0:8], nowNanos)
+			binary.BigEndian.PutUint16(out[16:18], 0)
+		}
 	}
 
 	return out, nil
