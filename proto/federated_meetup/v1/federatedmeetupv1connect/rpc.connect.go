@@ -67,6 +67,9 @@ const (
 	HostServiceResolveNameProcedure = "/federated_meetup.v1.HostService/ResolveName"
 	// HostServiceSubscribeProcedure is the fully-qualified name of the HostService's Subscribe RPC.
 	HostServiceSubscribeProcedure = "/federated_meetup.v1.HostService/Subscribe"
+	// HostServiceSubmitEvidenceProcedure is the fully-qualified name of the HostService's
+	// SubmitEvidence RPC.
+	HostServiceSubmitEvidenceProcedure = "/federated_meetup.v1.HostService/SubmitEvidence"
 )
 
 // HostServiceClient is a client for the federated_meetup.v1.HostService service.
@@ -90,6 +93,10 @@ type HostServiceClient interface {
 	// The stream is per-group; clients wanting multiple groups open
 	// one Subscribe per group.
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.TransitionEvent], error)
+	// Federation. SubmitEvidence lets a peer gossip equivocation
+	// evidence to this host. The host stores it for SLASH_STEWARD
+	// submission and forwards to its own peers.
+	SubmitEvidence(context.Context, *connect.Request[v1.EvidenceEnvelope]) (*connect.Response[v1.Ack], error)
 }
 
 // NewHostServiceClient constructs a client for the federated_meetup.v1.HostService service. By
@@ -163,6 +170,12 @@ func NewHostServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(hostServiceMethods.ByName("Subscribe")),
 			connect.WithClientOptions(opts...),
 		),
+		submitEvidence: connect.NewClient[v1.EvidenceEnvelope, v1.Ack](
+			httpClient,
+			baseURL+HostServiceSubmitEvidenceProcedure,
+			connect.WithSchema(hostServiceMethods.ByName("SubmitEvidence")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -178,6 +191,7 @@ type hostServiceClient struct {
 	submitUserAction *connect.Client[v1.SubmitUserActionRequest, v1.SubmitUserActionResponse]
 	resolveName      *connect.Client[v1.ResolveNameRequest, v1.ResolveNameResponse]
 	subscribe        *connect.Client[v1.SubscribeRequest, v1.TransitionEvent]
+	submitEvidence   *connect.Client[v1.EvidenceEnvelope, v1.Ack]
 }
 
 // GetGroup calls federated_meetup.v1.HostService.GetGroup.
@@ -230,6 +244,11 @@ func (c *hostServiceClient) Subscribe(ctx context.Context, req *connect.Request[
 	return c.subscribe.CallServerStream(ctx, req)
 }
 
+// SubmitEvidence calls federated_meetup.v1.HostService.SubmitEvidence.
+func (c *hostServiceClient) SubmitEvidence(ctx context.Context, req *connect.Request[v1.EvidenceEnvelope]) (*connect.Response[v1.Ack], error) {
+	return c.submitEvidence.CallUnary(ctx, req)
+}
+
 // HostServiceHandler is an implementation of the federated_meetup.v1.HostService service.
 type HostServiceHandler interface {
 	// Reads.
@@ -251,6 +270,10 @@ type HostServiceHandler interface {
 	// The stream is per-group; clients wanting multiple groups open
 	// one Subscribe per group.
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.TransitionEvent]) error
+	// Federation. SubmitEvidence lets a peer gossip equivocation
+	// evidence to this host. The host stores it for SLASH_STEWARD
+	// submission and forwards to its own peers.
+	SubmitEvidence(context.Context, *connect.Request[v1.EvidenceEnvelope]) (*connect.Response[v1.Ack], error)
 }
 
 // NewHostServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -320,6 +343,12 @@ func NewHostServiceHandler(svc HostServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(hostServiceMethods.ByName("Subscribe")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostServiceSubmitEvidenceHandler := connect.NewUnaryHandler(
+		HostServiceSubmitEvidenceProcedure,
+		svc.SubmitEvidence,
+		connect.WithSchema(hostServiceMethods.ByName("SubmitEvidence")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/federated_meetup.v1.HostService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostServiceGetGroupProcedure:
@@ -342,6 +371,8 @@ func NewHostServiceHandler(svc HostServiceHandler, opts ...connect.HandlerOption
 			hostServiceResolveNameHandler.ServeHTTP(w, r)
 		case HostServiceSubscribeProcedure:
 			hostServiceSubscribeHandler.ServeHTTP(w, r)
+		case HostServiceSubmitEvidenceProcedure:
+			hostServiceSubmitEvidenceHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -389,4 +420,8 @@ func (UnimplementedHostServiceHandler) ResolveName(context.Context, *connect.Req
 
 func (UnimplementedHostServiceHandler) Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.TransitionEvent]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.Subscribe is not implemented"))
+}
+
+func (UnimplementedHostServiceHandler) SubmitEvidence(context.Context, *connect.Request[v1.EvidenceEnvelope]) (*connect.Response[v1.Ack], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.SubmitEvidence is not implemented"))
 }

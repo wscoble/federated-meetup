@@ -204,4 +204,9 @@ service HostService {
   // The stream is per-group; clients wanting multiple groups open
   // one Subscribe per group.
   rpc Subscribe(SubscribeRequest) returns (stream TransitionEvent);
+
+  // Federation. SubmitEvidence lets a peer gossip equivocation
+  // evidence to this host. The host stores it for SLASH_STEWARD
+  // submission and forwards to its own peers.
+  rpc SubmitEvidence(EvidenceEnvelope) returns (Ack);
 }

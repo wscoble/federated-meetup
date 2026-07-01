@@ -253,21 +253,46 @@ func bytesEqual(a, b []byte) bool {
 // it's enough that ANY verifying steward equivocated. Hosts that see
 // evidence can act on it.
 //
-// The returned transition stubs (A, B) are populated by Apply when it
-// actually produces the evidence — checkEquivocation is just the
-// cheap-path lookup. Apply builds the full TransitionA/B fields
-// separately.
+// When equivocation is detected, the full EquivocationEvidence
+// (including TransitionA and TransitionB) is stored on the state's
+// evidence list so peers can gossip it via SubmitEvidence.
+// (Audit H-9 cycle 99, cycle 51.)
 func (s *State) checkEquivocationLocked(
 	signingSteward types.PublicKey,
 	priorState types.Hash,
 	hlcBytes []byte,
 	txHash types.Hash,
+	conflictingTransition *Transition,
 ) bool {
 	if s.equivocation == nil {
 		s.equivocation = newEquivocationLog()
 	}
 	ev, _ := s.equivocation.check(signingSteward, priorState, hlcBytes, txHash)
-	return ev != nil
+	if ev == nil {
+		return false
+	}
+	// Populate the full evidence with both transitions.
+	// TransitionA is the previously-seen transition (the one already
+	// in the log). TransitionB is the conflicting one (just rejected).
+	// We find TransitionA by walking the log for a transition from
+	// the same (steward, prior_state) pair.
+	var transitionA *Transition
+	for i := len(s.log) - 1; i >= 0; i-- {
+		t := s.log[i]
+		prior := types.Hash{}
+		copy(prior[:], t.Proto.GetPriorState().GetHash())
+		if prior == priorState {
+			signing := t.findSigningSteward(s.stewardsAtLocked(t.Proto.GetPriorState()))
+			if signing == signingSteward {
+				transitionA = t
+				break
+			}
+		}
+	}
+	ev.TransitionA = transitionA
+	ev.TransitionB = conflictingTransition
+	s.equivocationEvidence = append(s.equivocationEvidence, ev)
+	return true
 }
 
 // EquivocationEvidenceFor returns the evidence log entry for a (steward,
@@ -338,6 +363,32 @@ func (s *State) AllEquivocationEvidence() []*EquivocationEvidence {
 	return out
 }
 
+// StoreEvidence adds externally-observed equivocation evidence (from
+// a peer via SubmitEvidence) to the state's evidence list. This is
+// the gossip path: a peer that saw both transitions sends the evidence
+// to us so we can submit SLASH_STEWARD even if we only saw one.
+//
+// Thread-safe. Does NOT verify the evidence — the caller (the RPC
+// handler) should verify signatures on the transitions before calling.
+//
+// (Audit H-9, cycle 51.)
+func (s *State) StoreEvidence(ev *EquivocationEvidence) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.equivocationEvidence = append(s.equivocationEvidence, ev)
+}
+
+// StoredEvidence returns the evidence list (from both local detection
+// and gossip via SubmitEvidence). This is the list hosts use to submit
+// SLASH_STEWARD transitions and to respond to peer evidence requests.
+//
+// (Audit H-9, cycle 51.)
+func (s *State) StoredEvidence() []*EquivocationEvidence {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*EquivocationEvidence(nil), s.equivocationEvidence...)
+}
+
 // CheckEquivocation is the public, lock-acquiring entry point for the
 // equivocation log. Returns true if (steward, prior, hlc, tx) collides
 // with a previously-applied transition at the same (steward, prior).
@@ -346,6 +397,7 @@ func (s *State) AllEquivocationEvidence() []*EquivocationEvidence {
 //
 // The internal `checkEquivocationLocked` is called from Apply under
 // the state lock; this public version is safe to call from outside.
+// Pass nil for conflictingTransition if you only need the boolean check.
 func (s *State) CheckEquivocation(
 	stewardKey types.PublicKey,
 	priorState types.Hash,
@@ -354,7 +406,7 @@ func (s *State) CheckEquivocation(
 ) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.checkEquivocationLocked(stewardKey, priorState, hlcBytes, txHash)
+	return s.checkEquivocationLocked(stewardKey, priorState, hlcBytes, txHash, nil)
 }
 
 // =============================================================================

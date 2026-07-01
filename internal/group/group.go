@@ -524,7 +524,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 				}
 			}
 			txHash := transitionTxHash(t)
-			isEquiv := s.checkEquivocationLocked(signing, prior, t.Proto.GetHlc(), txHash)
+			isEquiv := s.checkEquivocationLocked(signing, prior, t.Proto.GetHlc(), txHash, t)
 			if isEquiv {
 				return fmt.Errorf("group: equivocation detected — steward %x signed a conflicting transition at prior_state %x", signing[:8], prior[:8])
 			}

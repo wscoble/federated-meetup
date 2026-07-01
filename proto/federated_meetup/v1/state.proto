@@ -541,6 +541,73 @@ message NameBindPayload {
 }
 
 // =============================================================================
+// H-9/H-10: Federation messaging (server-to-server)
+// =============================================================================
+
+// EvidenceEnvelope wraps equivocation evidence for gossip between hosts.
+// A host that observes equivocation publishes this to peers so they can
+// submit a SLASH_STEWARD transition even if they didn't see both
+// transitions themselves.
+//
+// (Audit H-9, cycle 51.)
+message EvidenceEnvelope {
+  // The group this evidence belongs to.
+  PublicKey group_key = 1;
+  // The offending steward's public key.
+  PublicKey steward_key = 2;
+  // The prior_state at which the equivocation occurred.
+  StateRoot prior_state = 3;
+  // The first transition (the one already applied).
+  Transition transition_a = 4;
+  // The second transition (the conflicting one that was rejected).
+  Transition transition_b = 5;
+  // HLC of transition A.
+  bytes hlc_a = 6;
+  // HLC of transition B.
+  bytes hlc_b = 7;
+  // Tx hash of transition A.
+  bytes tx_hash_a = 8;
+  // Tx hash of transition B.
+  bytes tx_hash_b = 9;
+}
+
+// Ack is the universal acknowledgment for federation RPCs.
+message Ack {
+  bool ok = 1;
+  // Human-readable detail (error message if !ok).
+  string detail = 2;
+}
+
+// FederationEnvelope wraps any federation message with a signature,
+// sequence number, and retry ID. This is the outer envelope for all
+// server-to-server traffic over the WireGuard mesh.
+//
+// Design:
+//   - signature: Ed25519 over the canonical bytes of the inner message,
+//     domain-separated by type. Prevents forgery.
+//   - sequence: monotonic per-sender counter. Prevents replay.
+//   - retry_id: unique per logical send. Receivers deduplicate by
+//     (sender, retry_id) so retries are idempotent.
+//   - sender: the sender's peer identity (mesh PeerID or public key).
+//
+// (Audit H-10, cycle 51.)
+message FederationEnvelope {
+  // The sender's identity (public key or PeerID).
+  PublicKey sender = 1;
+  // Monotonic sequence number per sender. Prevents replay.
+  uint64 sequence = 2;
+  // Unique per logical send. Receivers deduplicate by (sender, retry_id).
+  string retry_id = 3;
+  // The sender's Ed25519 signature over the canonical bytes of the
+  // inner message (domain-separated by inner_type).
+  Signature signature = 4;
+  // Discriminator for the inner message.
+  string inner_type = 5;
+  // The serialized inner message (EvidenceEnvelope, Transition, etc.).
+  bytes inner_payload = 6;
+}
+
+// =============================================================================
 // User-signed envelopes (RSVPs, attestations)
 // =============================================================================
 

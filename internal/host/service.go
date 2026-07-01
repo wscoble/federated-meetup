@@ -418,6 +418,68 @@ func (s *Service) GetSnapshot(
 	}), nil
 }
 
+// SubmitEvidence receives equivocation evidence from a peer host.
+// The host stores it for SLASH_STEWARD submission and returns an Ack.
+//
+// v0: stores the evidence in the state's evidence list. Does not
+// auto-submit SLASH_STEWARD — that's a future cycle (requires the
+// host to hold steward keys to sign the slash transition).
+//
+// (Audit H-9, cycle 51.)
+func (s *Service) SubmitEvidence(
+	ctx context.Context,
+	req *connect.Request[pb.EvidenceEnvelope],
+) (*connect.Response[pb.Ack], error) {
+	r := req.Msg
+	if r == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("nil request"))
+	}
+	if r.GroupKey == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_key is nil"))
+	}
+	groupKey := bytesToKey(r.GroupKey.Raw)
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store the evidence. The group package's EquivocationEvidence
+	// is the internal type; we convert from the proto envelope.
+	var stewardKey types.PublicKey
+	copy(stewardKey[:], r.GetStewardKey().GetRaw())
+	var priorState types.Hash
+	copy(priorState[:], r.GetPriorState().GetHash())
+
+	var transA, transB *group.Transition
+	if r.TransitionA != nil {
+		ta, err := group.NewTransition(r.TransitionA, groupKey)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid transition_a: %w", err))
+		}
+		transA = ta
+	}
+	if r.TransitionB != nil {
+		tb, err := group.NewTransition(r.TransitionB, groupKey)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid transition_b: %w", err))
+		}
+		transB = tb
+	}
+
+	state.StoreEvidence(&group.EquivocationEvidence{
+		GroupID:      groupKey,
+		StewardKey:   stewardKey,
+		PriorState:   priorState,
+		TransitionA:  transA,
+		TransitionB:  transB,
+	})
+
+	return connect.NewResponse(&pb.Ack{
+		Ok:     true,
+		Detail: "evidence stored",
+	}), nil
+}
+
 // lookup resolves a group public key to a *group.State. Returns
 // (nil, NotFound) if this host does not serve that group.
 func (s *Service) lookup(gid types.PublicKey) (*group.State, error) {
