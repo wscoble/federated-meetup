@@ -160,6 +160,11 @@ type State struct {
 	log              []*Transition
 	equivocation     *equivocationLog
 
+	// Broadcaster fans out transition events to Subscribe RPC
+	// clients. Lazily initialized — only allocated when the first
+	// subscriber registers. (Audit C-5, cycle 51.)
+	broadcaster *Broadcaster
+
 	// Mesh peer registry (G2). Cross-cutting — shared across all
 	// branches of the group. A mesh peer is a peer of the host,
 	// not a peer of any single branch.
@@ -257,6 +262,35 @@ func (s *State) TransitionCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return uint64(len(s.log))
+}
+
+// Broadcaster returns the state's broadcaster, initializing it if
+// necessary. Callers (typically the Subscribe RPC handler) use this
+// to register a subscriber channel. The broadcaster is lazily
+// allocated so states that never have subscribers pay zero cost.
+//
+// (Audit C-5, cycle 51.)
+func (s *State) Broadcaster() *Broadcaster {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.broadcaster == nil {
+		s.broadcaster = NewBroadcaster()
+	}
+	return s.broadcaster
+}
+
+// broadcastLocked fans out a transition event to all subscribers.
+// Called from Apply under s.mu. Non-blocking: if there are no
+// subscribers, this is a nil check + return.
+func (s *State) broadcastLocked(t *Transition, root types.Hash, index uint64) {
+	if s.broadcaster == nil {
+		return
+	}
+	s.broadcaster.Broadcast(TransitionEvent{
+		Transition: t,
+		NewRoot:    root,
+		Index:      index,
+	})
 }
 
 // Stewards returns the steward set at the current state head.
@@ -994,6 +1028,12 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		drop := len(s.log) - s.MaxLogSize
 		s.log = append([]*Transition{}, s.log[drop:]...)
 	}
+
+	// Fan out to subscribers (audit C-5). Non-blocking — if no
+	// subscribers, this is a nil check + early return. If there are
+	// subscribers, the event is sent to their buffered channels.
+	s.broadcastLocked(t, r, uint64(len(s.log)-1))
+
 	return nil
 }
 

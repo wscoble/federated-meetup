@@ -61,6 +61,8 @@ const (
 	HostServiceSubmitUserActionProcedure = "/federated_meetup.v1.HostService/SubmitUserAction"
 	// HostServiceResolveNameProcedure is the fully-qualified name of the HostService's ResolveName RPC.
 	HostServiceResolveNameProcedure = "/federated_meetup.v1.HostService/ResolveName"
+	// HostServiceSubscribeProcedure is the fully-qualified name of the HostService's Subscribe RPC.
+	HostServiceSubscribeProcedure = "/federated_meetup.v1.HostService/Subscribe"
 )
 
 // HostServiceClient is a client for the federated_meetup.v1.HostService service.
@@ -77,6 +79,11 @@ type HostServiceClient interface {
 	SubmitUserAction(context.Context, *connect.Request[v1.SubmitUserActionRequest]) (*connect.Response[v1.SubmitUserActionResponse], error)
 	// Discovery.
 	ResolveName(context.Context, *connect.Request[v1.ResolveNameRequest]) (*connect.Response[v1.ResolveNameResponse], error)
+	// Streaming. Subscribe delivers live transition events as they are
+	// applied. Clients can resume after disconnect via since_index.
+	// The stream is per-group; clients wanting multiple groups open
+	// one Subscribe per group.
+	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.TransitionEvent], error)
 }
 
 // NewHostServiceClient constructs a client for the federated_meetup.v1.HostService service. By
@@ -132,6 +139,12 @@ func NewHostServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(hostServiceMethods.ByName("ResolveName")),
 			connect.WithClientOptions(opts...),
 		),
+		subscribe: connect.NewClient[v1.SubscribeRequest, v1.TransitionEvent](
+			httpClient,
+			baseURL+HostServiceSubscribeProcedure,
+			connect.WithSchema(hostServiceMethods.ByName("Subscribe")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -144,6 +157,7 @@ type hostServiceClient struct {
 	submitTransition *connect.Client[v1.SubmitTransitionRequest, v1.SubmitTransitionResponse]
 	submitUserAction *connect.Client[v1.SubmitUserActionRequest, v1.SubmitUserActionResponse]
 	resolveName      *connect.Client[v1.ResolveNameRequest, v1.ResolveNameResponse]
+	subscribe        *connect.Client[v1.SubscribeRequest, v1.TransitionEvent]
 }
 
 // GetGroup calls federated_meetup.v1.HostService.GetGroup.
@@ -181,6 +195,11 @@ func (c *hostServiceClient) ResolveName(ctx context.Context, req *connect.Reques
 	return c.resolveName.CallUnary(ctx, req)
 }
 
+// Subscribe calls federated_meetup.v1.HostService.Subscribe.
+func (c *hostServiceClient) Subscribe(ctx context.Context, req *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.TransitionEvent], error) {
+	return c.subscribe.CallServerStream(ctx, req)
+}
+
 // HostServiceHandler is an implementation of the federated_meetup.v1.HostService service.
 type HostServiceHandler interface {
 	// Reads.
@@ -195,6 +214,11 @@ type HostServiceHandler interface {
 	SubmitUserAction(context.Context, *connect.Request[v1.SubmitUserActionRequest]) (*connect.Response[v1.SubmitUserActionResponse], error)
 	// Discovery.
 	ResolveName(context.Context, *connect.Request[v1.ResolveNameRequest]) (*connect.Response[v1.ResolveNameResponse], error)
+	// Streaming. Subscribe delivers live transition events as they are
+	// applied. Clients can resume after disconnect via since_index.
+	// The stream is per-group; clients wanting multiple groups open
+	// one Subscribe per group.
+	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.TransitionEvent]) error
 }
 
 // NewHostServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -246,6 +270,12 @@ func NewHostServiceHandler(svc HostServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(hostServiceMethods.ByName("ResolveName")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostServiceSubscribeHandler := connect.NewServerStreamHandler(
+		HostServiceSubscribeProcedure,
+		svc.Subscribe,
+		connect.WithSchema(hostServiceMethods.ByName("Subscribe")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/federated_meetup.v1.HostService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostServiceGetGroupProcedure:
@@ -262,6 +292,8 @@ func NewHostServiceHandler(svc HostServiceHandler, opts ...connect.HandlerOption
 			hostServiceSubmitUserActionHandler.ServeHTTP(w, r)
 		case HostServiceResolveNameProcedure:
 			hostServiceResolveNameHandler.ServeHTTP(w, r)
+		case HostServiceSubscribeProcedure:
+			hostServiceSubscribeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -297,4 +329,8 @@ func (UnimplementedHostServiceHandler) SubmitUserAction(context.Context, *connec
 
 func (UnimplementedHostServiceHandler) ResolveName(context.Context, *connect.Request[v1.ResolveNameRequest]) (*connect.Response[v1.ResolveNameResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.ResolveName is not implemented"))
+}
+
+func (UnimplementedHostServiceHandler) Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.TransitionEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.Subscribe is not implemented"))
 }

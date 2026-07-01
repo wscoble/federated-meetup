@@ -327,6 +327,87 @@ func (s *Service) lookup(gid types.PublicKey) (*group.State, error) {
 	return st, nil
 }
 
+// Subscribe implements the server-streaming Subscribe RPC. It
+// registers a channel on the group's Broadcaster and forwards
+// events to the ConnectRPC server stream until the client context
+// is cancelled.
+//
+// If since_index is non-zero, transitions already in the log with
+// index > since_index are replayed before live streaming begins.
+//
+// (Audit C-5, cycle 51.)
+func (s *Service) Subscribe(
+	ctx context.Context,
+	req *connect.Request[pb.SubscribeRequest],
+	stream *connect.ServerStream[pb.TransitionEvent],
+) error {
+	r := req.Msg
+	if r == nil {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("nil request"))
+	}
+	if r.GroupKey == nil {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_key is nil"))
+	}
+	groupKey := bytesToKey(r.GroupKey.Raw)
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return err
+	}
+
+	bc := state.Broadcaster()
+	ch, unsub := bc.Subscribe()
+	defer unsub()
+
+	// Replay: if the client passed since_index, walk the log and
+	// send any transitions with index > since_index before going live.
+	// This gives crash-recovery semantics.
+	sinceIndex := r.GetSinceIndex()
+	if sinceIndex > 0 {
+		log := state.Log()
+		currentRoot := state.Root()
+		for i := int(sinceIndex); i < len(log); i++ {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			ev := pb.TransitionEvent{
+				Transition: log[i].Proto,
+				NewStateRoot: &pb.StateRoot{
+					Hash: currentRoot[:],
+				},
+				TransitionIndex: uint64(i),
+				GroupKey:        keyToProto(groupKey),
+			}
+			if err := stream.Send(&ev); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Live streaming: forward events from the broadcaster channel
+	// to the ConnectRPC stream until the client disconnects.
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			pbEv := pb.TransitionEvent{
+				Transition: ev.Transition.Proto,
+				NewStateRoot: &pb.StateRoot{
+					Hash: ev.NewRoot[:],
+				},
+				TransitionIndex: ev.Index,
+				GroupKey:        keyToProto(groupKey),
+			}
+			if err := stream.Send(&pbEv); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 // ----- Type bridges --------------------------------------------------------
 
 // bytesToKey converts a raw byte slice to a types.PublicKey. Returns the

@@ -121,6 +121,30 @@ message ResolveNameResponse {
 }
 
 // =============================================================================
+// Subscribe RPC (server-streaming)
+// =============================================================================
+
+message SubscribeRequest {
+  PublicKey group_key = 1;
+  // If non-zero, only transitions with index > since_index are streamed.
+  // Clients pass the last index they saw (from SubmitTransitionResponse
+  // or a prior Subscribe) to resume after disconnect.
+  uint64 since_index = 2;
+}
+
+message TransitionEvent {
+  // The transition that was applied.
+  Transition transition = 1;
+  // The new state root after applying the transition.
+  StateRoot new_state_root = 2;
+  // The index of this transition in the group's log.
+  uint64 transition_index = 3;
+  // The group's GroupID (so clients multiplexing multiple groups
+  // can route without re-deriving from the transition).
+  PublicKey group_key = 4;
+}
+
+// =============================================================================
 // Service
 // =============================================================================
 
@@ -139,4 +163,10 @@ service HostService {
 
   // Discovery.
   rpc ResolveName(ResolveNameRequest) returns (ResolveNameResponse);
+
+  // Streaming. Subscribe delivers live transition events as they are
+  // applied. Clients can resume after disconnect via since_index.
+  // The stream is per-group; clients wanting multiple groups open
+  // one Subscribe per group.
+  rpc Subscribe(SubscribeRequest) returns (stream TransitionEvent);
 }
