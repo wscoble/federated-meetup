@@ -53,6 +53,10 @@ const (
 	HostServiceListEventsProcedure = "/federated_meetup.v1.HostService/ListEvents"
 	// HostServiceListGroupsProcedure is the fully-qualified name of the HostService's ListGroups RPC.
 	HostServiceListGroupsProcedure = "/federated_meetup.v1.HostService/ListGroups"
+	// HostServiceGetLogProcedure is the fully-qualified name of the HostService's GetLog RPC.
+	HostServiceGetLogProcedure = "/federated_meetup.v1.HostService/GetLog"
+	// HostServiceGetSnapshotProcedure is the fully-qualified name of the HostService's GetSnapshot RPC.
+	HostServiceGetSnapshotProcedure = "/federated_meetup.v1.HostService/GetSnapshot"
 	// HostServiceSubmitTransitionProcedure is the fully-qualified name of the HostService's
 	// SubmitTransition RPC.
 	HostServiceSubmitTransitionProcedure = "/federated_meetup.v1.HostService/SubmitTransition"
@@ -72,6 +76,8 @@ type HostServiceClient interface {
 	GetEvent(context.Context, *connect.Request[v1.GetEventRequest]) (*connect.Response[v1.GetEventResponse], error)
 	ListEvents(context.Context, *connect.Request[v1.ListEventsRequest]) (*connect.Response[v1.ListEventsResponse], error)
 	ListGroups(context.Context, *connect.Request[v1.ListGroupsRequest]) (*connect.Response[v1.ListGroupsResponse], error)
+	GetLog(context.Context, *connect.Request[v1.GetLogRequest]) (*connect.Response[v1.GetLogResponse], error)
+	GetSnapshot(context.Context, *connect.Request[v1.GetSnapshotRequest]) (*connect.Response[v1.GetSnapshotResponse], error)
 	// Writes. SubmitTransition is for steward-signed transitions (CREATE_GROUP,
 	// ADD_STEWARD, FORK, MIGRATE, etc.). SubmitUserAction is for user-signed
 	// actions (RSVP, ATTEST).
@@ -121,6 +127,18 @@ func NewHostServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(hostServiceMethods.ByName("ListGroups")),
 			connect.WithClientOptions(opts...),
 		),
+		getLog: connect.NewClient[v1.GetLogRequest, v1.GetLogResponse](
+			httpClient,
+			baseURL+HostServiceGetLogProcedure,
+			connect.WithSchema(hostServiceMethods.ByName("GetLog")),
+			connect.WithClientOptions(opts...),
+		),
+		getSnapshot: connect.NewClient[v1.GetSnapshotRequest, v1.GetSnapshotResponse](
+			httpClient,
+			baseURL+HostServiceGetSnapshotProcedure,
+			connect.WithSchema(hostServiceMethods.ByName("GetSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
 		submitTransition: connect.NewClient[v1.SubmitTransitionRequest, v1.SubmitTransitionResponse](
 			httpClient,
 			baseURL+HostServiceSubmitTransitionProcedure,
@@ -154,6 +172,8 @@ type hostServiceClient struct {
 	getEvent         *connect.Client[v1.GetEventRequest, v1.GetEventResponse]
 	listEvents       *connect.Client[v1.ListEventsRequest, v1.ListEventsResponse]
 	listGroups       *connect.Client[v1.ListGroupsRequest, v1.ListGroupsResponse]
+	getLog           *connect.Client[v1.GetLogRequest, v1.GetLogResponse]
+	getSnapshot      *connect.Client[v1.GetSnapshotRequest, v1.GetSnapshotResponse]
 	submitTransition *connect.Client[v1.SubmitTransitionRequest, v1.SubmitTransitionResponse]
 	submitUserAction *connect.Client[v1.SubmitUserActionRequest, v1.SubmitUserActionResponse]
 	resolveName      *connect.Client[v1.ResolveNameRequest, v1.ResolveNameResponse]
@@ -178,6 +198,16 @@ func (c *hostServiceClient) ListEvents(ctx context.Context, req *connect.Request
 // ListGroups calls federated_meetup.v1.HostService.ListGroups.
 func (c *hostServiceClient) ListGroups(ctx context.Context, req *connect.Request[v1.ListGroupsRequest]) (*connect.Response[v1.ListGroupsResponse], error) {
 	return c.listGroups.CallUnary(ctx, req)
+}
+
+// GetLog calls federated_meetup.v1.HostService.GetLog.
+func (c *hostServiceClient) GetLog(ctx context.Context, req *connect.Request[v1.GetLogRequest]) (*connect.Response[v1.GetLogResponse], error) {
+	return c.getLog.CallUnary(ctx, req)
+}
+
+// GetSnapshot calls federated_meetup.v1.HostService.GetSnapshot.
+func (c *hostServiceClient) GetSnapshot(ctx context.Context, req *connect.Request[v1.GetSnapshotRequest]) (*connect.Response[v1.GetSnapshotResponse], error) {
+	return c.getSnapshot.CallUnary(ctx, req)
 }
 
 // SubmitTransition calls federated_meetup.v1.HostService.SubmitTransition.
@@ -207,6 +237,8 @@ type HostServiceHandler interface {
 	GetEvent(context.Context, *connect.Request[v1.GetEventRequest]) (*connect.Response[v1.GetEventResponse], error)
 	ListEvents(context.Context, *connect.Request[v1.ListEventsRequest]) (*connect.Response[v1.ListEventsResponse], error)
 	ListGroups(context.Context, *connect.Request[v1.ListGroupsRequest]) (*connect.Response[v1.ListGroupsResponse], error)
+	GetLog(context.Context, *connect.Request[v1.GetLogRequest]) (*connect.Response[v1.GetLogResponse], error)
+	GetSnapshot(context.Context, *connect.Request[v1.GetSnapshotRequest]) (*connect.Response[v1.GetSnapshotResponse], error)
 	// Writes. SubmitTransition is for steward-signed transitions (CREATE_GROUP,
 	// ADD_STEWARD, FORK, MIGRATE, etc.). SubmitUserAction is for user-signed
 	// actions (RSVP, ATTEST).
@@ -252,6 +284,18 @@ func NewHostServiceHandler(svc HostServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(hostServiceMethods.ByName("ListGroups")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostServiceGetLogHandler := connect.NewUnaryHandler(
+		HostServiceGetLogProcedure,
+		svc.GetLog,
+		connect.WithSchema(hostServiceMethods.ByName("GetLog")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostServiceGetSnapshotHandler := connect.NewUnaryHandler(
+		HostServiceGetSnapshotProcedure,
+		svc.GetSnapshot,
+		connect.WithSchema(hostServiceMethods.ByName("GetSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
 	hostServiceSubmitTransitionHandler := connect.NewUnaryHandler(
 		HostServiceSubmitTransitionProcedure,
 		svc.SubmitTransition,
@@ -286,6 +330,10 @@ func NewHostServiceHandler(svc HostServiceHandler, opts ...connect.HandlerOption
 			hostServiceListEventsHandler.ServeHTTP(w, r)
 		case HostServiceListGroupsProcedure:
 			hostServiceListGroupsHandler.ServeHTTP(w, r)
+		case HostServiceGetLogProcedure:
+			hostServiceGetLogHandler.ServeHTTP(w, r)
+		case HostServiceGetSnapshotProcedure:
+			hostServiceGetSnapshotHandler.ServeHTTP(w, r)
 		case HostServiceSubmitTransitionProcedure:
 			hostServiceSubmitTransitionHandler.ServeHTTP(w, r)
 		case HostServiceSubmitUserActionProcedure:
@@ -317,6 +365,14 @@ func (UnimplementedHostServiceHandler) ListEvents(context.Context, *connect.Requ
 
 func (UnimplementedHostServiceHandler) ListGroups(context.Context, *connect.Request[v1.ListGroupsRequest]) (*connect.Response[v1.ListGroupsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.ListGroups is not implemented"))
+}
+
+func (UnimplementedHostServiceHandler) GetLog(context.Context, *connect.Request[v1.GetLogRequest]) (*connect.Response[v1.GetLogResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.GetLog is not implemented"))
+}
+
+func (UnimplementedHostServiceHandler) GetSnapshot(context.Context, *connect.Request[v1.GetSnapshotRequest]) (*connect.Response[v1.GetSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("federated_meetup.v1.HostService.GetSnapshot is not implemented"))
 }
 
 func (UnimplementedHostServiceHandler) SubmitTransition(context.Context, *connect.Request[v1.SubmitTransitionRequest]) (*connect.Response[v1.SubmitTransitionResponse], error) {

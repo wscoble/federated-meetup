@@ -121,6 +121,39 @@ message ResolveNameResponse {
 }
 
 // =============================================================================
+// Log + Snapshot RPCs (audit H-7, H-8 — cycle 51)
+// =============================================================================
+
+message GetLogRequest {
+  PublicKey group_key = 1;
+  // Return transitions with index > since_cursor. 0 = from the beginning.
+  uint64 since_cursor = 2;
+  // Max transitions to return (server may cap). Default 100.
+  uint32 limit = 3;
+}
+
+message GetLogResponse {
+  repeated Transition transitions = 1;
+  // Index of the next transition after this batch. Use as since_cursor
+  // for the next page. 0 if no more.
+  uint64 next_cursor = 2;
+  // Total transitions in the group's log (at response time).
+  uint64 total = 3;
+}
+
+message GetSnapshotRequest {
+  PublicKey group_key = 1;
+  // If set, return the snapshot at this root. If nil, return current head.
+  StateRoot root = 2;
+}
+
+message GetSnapshotResponse {
+  StateSnapshot snapshot = 1;
+  // The transition index at which this snapshot was taken.
+  uint64 transition_index = 2;
+}
+
+// =============================================================================
 // Subscribe RPC (server-streaming)
 // =============================================================================
 
@@ -154,6 +187,8 @@ service HostService {
   rpc GetEvent(GetEventRequest) returns (GetEventResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
   rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
+  rpc GetLog(GetLogRequest) returns (GetLogResponse);
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
 
   // Writes. SubmitTransition is for steward-signed transitions (CREATE_GROUP,
   // ADD_STEWARD, FORK, MIGRATE, etc.). SubmitUserAction is for user-signed

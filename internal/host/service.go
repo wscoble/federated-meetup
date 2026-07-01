@@ -317,6 +317,107 @@ func (s *Service) ResolveName(
 
 // ----- Internal helpers ----------------------------------------------------
 
+// GetLog returns a paginated slice of the group's transition log.
+// Mirrors bootstrap from history by walking the log from since_cursor.
+//
+// (Audit H-7, cycle 51.)
+func (s *Service) GetLog(
+	ctx context.Context,
+	req *connect.Request[pb.GetLogRequest],
+) (*connect.Response[pb.GetLogResponse], error) {
+	r := req.Msg
+	if r == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("nil request"))
+	}
+	if r.GroupKey == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_key is nil"))
+	}
+	groupKey := bytesToKey(r.GroupKey.Raw)
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return nil, err
+	}
+
+	log := state.Log()
+	total := uint64(len(log))
+	since := r.GetSinceCursor()
+	limit := r.GetLimit()
+	if limit == 0 {
+		limit = 100
+	}
+	// Server-side cap to avoid huge responses.
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	start := since
+	if start > total {
+		start = total
+	}
+	end := start + uint64(limit)
+	if end > total {
+		end = total
+	}
+
+	var transitions []*pb.Transition
+	if start < end {
+		for i := start; i < end; i++ {
+			transitions = append(transitions, log[i].Proto)
+		}
+	}
+
+	nextCursor := uint64(0)
+	if end < total {
+		nextCursor = end
+	}
+
+	return connect.NewResponse(&pb.GetLogResponse{
+		Transitions: transitions,
+		NextCursor:  nextCursor,
+		Total:       total,
+	}), nil
+}
+
+// GetSnapshot returns the current state snapshot (or a snapshot at a
+// specific root if requested). Mirrors use this to bootstrap their
+// local copy without replaying the entire log.
+//
+// (Audit H-8, cycle 51.)
+func (s *Service) GetSnapshot(
+	ctx context.Context,
+	req *connect.Request[pb.GetSnapshotRequest],
+) (*connect.Response[pb.GetSnapshotResponse], error) {
+	r := req.Msg
+	if r == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("nil request"))
+	}
+	if r.GroupKey == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_key is nil"))
+	}
+	groupKey := bytesToKey(r.GroupKey.Raw)
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// v0: only current-head snapshots. Root-keyed lookups are a future
+	// cycle (requires a root → snapshot index, which is the snapshot store
+	// from the branch registry). If root is specified, return Unimplemented.
+	if r.Root != nil {
+		return nil, connect.NewError(connect.CodeUnimplemented,
+			fmt.Errorf("snapshot-by-root not implemented in v0 (use nil root for current head)"))
+	}
+
+	snap := state.Snapshot()
+	root := state.Root()
+	count := state.TransitionCount()
+
+	return connect.NewResponse(&pb.GetSnapshotResponse{
+		Snapshot:         stateSnapshotToProto(snap, root),
+		TransitionIndex:  count,
+	}), nil
+}
+
 // lookup resolves a group public key to a *group.State. Returns
 // (nil, NotFound) if this host does not serve that group.
 func (s *Service) lookup(gid types.PublicKey) (*group.State, error) {
