@@ -21,6 +21,7 @@
 package group
 
 import (
+	"log"
 	"sync"
 
 	"github.com/sscoble/federated-meetup/internal/types"
@@ -60,6 +61,12 @@ type equivocationLog struct {
 	mu sync.Mutex
 
 	maxEntries int
+
+	// evictions counts how many entries have been dropped by FIFO
+	// eviction. Exposed via State.EquivocationEvictions() so operators
+	// and honest peers can observe that the detection window has
+	// shrunk. (Audit C-3, cycle 51.)
+	evictions uint64
 
 	// seen[key] = first HLC observed for that key. Eviction removes
 	// the oldest insertion (we don't track access time — the threat
@@ -153,6 +160,10 @@ type hlcSeen struct {
 // evictOldest removes the oldest insertion. Called when the log
 // grows past maxEntries. No-op if the log is empty or if maxEntries
 // is 0 (unbounded).
+//
+// Each eviction increments the evictions counter and logs a structured
+// warning so operators can observe the detection window shrinking.
+// (Audit C-3, cycle 51.)
 func (e *equivocationLog) evictOldestLocked() {
 	if e.maxEntries <= 0 || len(e.insertionOrder) == 0 {
 		return
@@ -164,7 +175,18 @@ func (e *equivocationLog) evictOldestLocked() {
 		oldest := e.insertionOrder[0]
 		e.insertionOrder = e.insertionOrder[1:]
 		delete(e.seen, oldest)
+		e.evictions++
+		log.Printf("WARN: equivocation-log evicted entry steward=%x prior=%x evictions=%d window=%d",
+			oldest.StewardKey[:8], oldest.PriorState[:8], e.evictions, len(e.seen))
 	}
+}
+
+// Evictions returns the number of entries dropped by FIFO eviction
+// since the log was created. Test + observability accessor.
+func (e *equivocationLog) Evictions() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.evictions
 }
 
 // check looks up the (steward, prior_state) pair. Returns:
@@ -272,6 +294,23 @@ func (s *State) EquivocationEvidenceFor(
 		StewardKey: stewardKey,
 		PriorState: priorState,
 	}
+}
+
+// EquivocationEvictions returns the number of equivocation-log
+// entries that have been silently dropped by FIFO eviction. A non-zero
+// value means the detection window has shrunk: equivocation for
+// evicted (steward, prior_state) pairs is no longer detectable by
+// this host. Operators and honest peers can use this to decide
+// whether to request a fresh evidence sync or increase the cap.
+//
+// (Audit C-3, cycle 51.)
+func (s *State) EquivocationEvictions() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.equivocation == nil {
+		return 0
+	}
+	return s.equivocation.Evictions()
 }
 
 // AllEquivocationEvidence returns every recorded piece of equivocation
