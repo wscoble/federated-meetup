@@ -124,6 +124,13 @@ func Sign(kp KeyPair, groupKey types.PublicKey, kind MessageKind, payload []byte
 // against pubkey.
 func Verify(pub types.PublicKey, sig types.Signature, groupKey types.PublicKey, kind MessageKind, payload []byte) error {
 	msg := CanonicalSignBytes(groupKey, kind, payload)
+	return VerifyWithMessage(pub, sig, msg)
+}
+
+// VerifyWithMessage is the same as Verify but accepts a pre-computed
+// canonical sign-bytes message, avoiding redundant recomputation when
+// verifying many signatures over the same payload (H-4 optimization).
+func VerifyWithMessage(pub types.PublicKey, sig types.Signature, msg []byte) error {
 	if !ed25519.Verify(ed25519.PublicKey(pub[:]), msg, sig[:]) {
 		return errors.New("crypto: signature verification failed")
 	}
@@ -136,26 +143,32 @@ func Verify(pub types.PublicKey, sig types.Signature, groupKey types.PublicKey, 
 // We require distinct stewards — duplicate-key signatures don't count twice.
 // This prevents a single steward from "filling up" the threshold by signing
 // the same transition multiple times.
+//
+// H-4 optimization: the canonical sign bytes (the message being verified) is
+// the SAME for all (steward, sig) pairs. We pre-compute it once outside the
+// loop instead of recomputing it for every verification attempt.
 func VerifyMultisig(stewards []types.PublicKey, threshold uint32, sigs []types.Signature, groupKey types.PublicKey, kind MessageKind, payload []byte) error {
 	if uint32(len(sigs)) < threshold {
 		return fmt.Errorf("crypto: %d signatures, need threshold %d", len(sigs), threshold)
 	}
+	// Pre-compute the canonical message ONCE — it's identical for all
+	// (steward, sig) pairs. (Audit H-4.)
+	msg := CanonicalSignBytes(groupKey, kind, payload)
+
 	stewardSet := make(map[types.PublicKey]bool, len(stewards))
 	for _, s := range stewards {
 		stewardSet[s] = true
 	}
 	verified := make(map[types.PublicKey]bool, len(sigs))
 	for _, sig := range sigs {
-		// Recover the signer pubkey... no, Ed25519 doesn't allow that. We
-		// have to try each steward pubkey and see which verifies.
-		//
-		// v1 shortcut: iterate stewards, check each. For large steward sets
-		// this is O(n*threshold); if that becomes a problem, switch to FROST.
+		// Ed25519 does not allow key recovery; we must try each steward.
+		// But we use the pre-computed message so CanonicalSignBytes is
+		// only called once total, not once per (steward, sig) pair.
 		for _, s := range stewards {
 			if verified[s] {
 				continue
 			}
-			if err := Verify(s, sig, groupKey, kind, payload); err == nil {
+			if err := VerifyWithMessage(s, sig, msg); err == nil {
 				verified[s] = true
 				break
 			}
