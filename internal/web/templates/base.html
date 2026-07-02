@@ -1,0 +1,21 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>{{block "title" .}}Federated Meetup{{end}}</title>
+	<script src="/static/htmx.min.js"></script>
+	{{block "head" .}}{{end}}
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen flex flex-col">
+	<nav class="bg-white border-b border-gray-200 px-4 py-3">
+		<a href="/" class="text-xl font-bold text-indigo-600">Federated Meetup</a>
+	</nav>
+	<main class="flex-1 max-w-3xl mx-auto w-full px-4 py-6">
+		{{block "content" .}}{{end}}
+	</main>
+	<footer class="border-t border-gray-200 py-4 text-center text-sm text-gray-500">
+		Federated Meetup — open protocol, federated events
+	</footer>
+</body>
+</html>{{end}}

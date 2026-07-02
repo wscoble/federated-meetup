@@ -1,0 +1,22 @@
+{{template "base" .}}
+{{define "title"}}{{.Group.DisplayName}} — Group{{end}}
+{{define "content"}}
+<h1 class="text-3xl font-bold mb-2">{{.Group.DisplayName}}</h1>
+<p class="text-gray-500 text-sm mb-4">@{{.Group.CanonicalName}}</p>
+{{if .Group.Description}}<p class="text-gray-700 mb-6">{{.Group.Description}}</p>{{end}}
+
+{{if .Events}}
+<h2 class="text-xl font-semibold mb-3">Upcoming Events</h2>
+<ul class="space-y-3">
+	{{range .Events}}
+	<li class="bg-white rounded-lg shadow p-4">
+		<a href="/events/{{$.Group.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
+		<p class="text-gray-600 text-sm mt-1">{{formatTime .StartsAt}}</p>
+		{{if .Location}}<p class="text-gray-500 text-sm">{{.Location}}</p>{{end}}
+	</li>
+	{{end}}
+</ul>
+{{else}}
+<p class="text-gray-500">No upcoming events.</p>
+{{end}}
+{{end}}

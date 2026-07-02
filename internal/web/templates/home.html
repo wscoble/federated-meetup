@@ -1,0 +1,32 @@
+{{template "base" .}}
+{{define "title"}}Federated Meetup — Home{{end}}
+{{define "content"}}
+<h1 class="text-3xl font-bold mb-6">Welcome to Federated Meetup</h1>
+
+{{if .Groups}}
+<h2 class="text-xl font-semibold mb-3">Groups on this host</h2>
+<ul class="space-y-3">
+	{{range .Groups}}
+	<li class="bg-white rounded-lg shadow p-4">
+		<a href="/groups/{{.CanonicalName}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.DisplayName}}</a>
+		<p class="text-gray-600 text-sm mt-1">{{.Description}}</p>
+	</li>
+	{{end}}
+</ul>
+{{else}}
+<p class="text-gray-500">No groups hosted here yet.</p>
+{{end}}
+
+{{if .Events}}
+<h2 class="text-xl font-semibold mb-3 mt-8">Upcoming Events</h2>
+<ul class="space-y-3">
+	{{range .Events}}
+	<li class="bg-white rounded-lg shadow p-4">
+		<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
+		<p class="text-gray-600 text-sm mt-1">{{formatTime .StartsAt}}</p>
+		{{if .Location}}<p class="text-gray-500 text-sm">{{.Location}}</p>{{end}}
+	</li>
+	{{end}}
+</ul>
+{{end}}
+{{end}}

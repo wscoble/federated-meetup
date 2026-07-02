@@ -37,6 +37,10 @@ func NewService(store *Store, pay payment.Provider) *Service {
 	return &Service{store: store, pay: pay}
 }
 
+// Store returns the underlying in-memory store. Used by the web layer
+// to access events, groups, tickets, orders, RSVPs, and organizer tokens.
+func (s *Service) Store() *Store { return s.store }
+
 // newID generates a random 16-char hex ID using crypto/rand.
 func newID() string {
 	b := make([]byte, 8) // 8 bytes = 16 hex chars

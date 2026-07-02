@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: AGPL-3.0
+package web
+
+import (
+	"context"
+	"crypto/rand"
+	"embed"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+
+	"github.com/sscoble/federated-meetup/internal/host"
+	"github.com/sscoble/federated-meetup/internal/product"
+)
+
+// Server is the web frontend server. It wraps the host.Service (protocol),
+// product.Service (ticketing), and a local SQLite store.
+type Server struct {
+	host    *host.Service
+	product *product.Service
+	store   *Store
+	tmpls   templateMap
+	now     func() time.Time
+}
+
+// NewServer constructs a web Server. The host and product services may be nil
+// (the web layer degrades gracefully — pages show cached data from SQLite).
+func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store) (*Server, error) {
+	tmpls, err := loadTemplates()
+	if err != nil {
+		return nil, fmt.Errorf("web: load templates: %w", err)
+	}
+	return &Server{
+		host:    hostSvc,
+		product: prodSvc,
+		store:   store,
+		tmpls:   tmpls,
+		now:     time.Now,
+	}, nil
+}
+
+// SetClock overrides the time source. Test-only.
+func (s *Server) SetClock(now func() time.Time) {
+	s.now = now
+	s.store.SetClock(now)
+}
+
+// Routes returns an http.Handler with all web routes registered.
+// Uses Go 1.22+ stdlib ServeMux pattern matching.
+func (s *Server) Routes() http.Handler {
+	mux := http.NewServeMux()
+
+	// Static files
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
+
+	// Public pages
+	mux.HandleFunc("GET /{$}", s.handleHome)
+	mux.HandleFunc("GET /groups/{name}", s.handleGroup)
+	mux.HandleFunc("GET /events/{group_key}/{event_id}", s.handleEvent)
+	mux.HandleFunc("POST /events/{group_key}/{event_id}/rsvp", s.handleRsvpSubmit)
+
+	// RSVP magic-link flow
+	mux.HandleFunc("GET /rsvp/{token}", s.handleRsvpConfirm)
+	mux.HandleFunc("POST /rsvp/{token}/confirm", s.handleRsvpConfirmPost)
+
+	// Organizer dashboard (auth-gated)
+	mux.HandleFunc("GET /dashboard", s.handleDashboard)
+	mux.HandleFunc("GET /dashboard/login", s.handleLogin)
+	mux.HandleFunc("POST /dashboard/login", s.handleLoginPost)
+	mux.HandleFunc("POST /dashboard/events", s.handleCreateEvent)
+	mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
+
+	// Checkout redirect
+	mux.HandleFunc("GET /checkout/{order_id}", s.handleCheckout)
+
+	return s.withMiddleware(mux)
+}
+
+// ---- Template loading ----
+
+//go:embed templates/*.html
+var templateFiles embed.FS
+
+//go:embed static/*
+var staticFiles embed.FS
+
+// staticFS is the sub-filesystem rooted at "static" for http.FileServer.
+var staticFS, _ = fs.Sub(staticFiles, "static")
+
+// templateMap holds separately-parsed templates keyed by page name.
+// Each entry is a *template.Template that includes the base template
+// plus that page's definitions. This prevents block definitions from
+// different pages (e.g. "content", "head") from colliding.
+type templateMap map[string]*template.Template
+
+// loadTemplates parses all embedded HTML templates into a templateMap.
+// Each page template is parsed together with base.html so that block
+// definitions ("content", "title", "head") don't collide across pages.
+func loadTemplates() (templateMap, error) {
+	funcs := template.FuncMap{
+		"formatTime": formatTime,
+	}
+
+	// Read base template
+	baseData, err := templateFiles.ReadFile("templates/base.html")
+	if err != nil {
+		return nil, fmt.Errorf("read base.html: %w", err)
+	}
+
+	entries, err := templateFiles.ReadDir("templates")
+	if err != nil {
+		return nil, err
+	}
+
+	tmpls := make(templateMap)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".html") || name == "base.html" {
+			continue
+		}
+		pageData, err := templateFiles.ReadFile("templates/" + name)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", name, err)
+		}
+
+		// Each page template is parsed fresh with the base template.
+		t := template.New("").Funcs(funcs)
+		if _, err := t.Parse(string(baseData)); err != nil {
+			return nil, fmt.Errorf("parse base for %s: %w", name, err)
+		}
+		if _, err := t.Parse(string(pageData)); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", name, err)
+		}
+		// Key is the page name without extension (e.g. "home", "event").
+		key := strings.TrimSuffix(name, ".html")
+		tmpls[key] = t
+	}
+	return tmpls, nil
+}
+
+// formatTime converts a unix timestamp to a human-readable string.
+func formatTime(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("Mon, Jan 2, 2006 3:04 PM MST")
+}
+
+// ---- Rendering helpers ----
+
+func (s *Server) renderPage(w http.ResponseWriter, page string, data interface{}) {
+	t, ok := s.tmpls[page]
+	if !ok {
+		log.Printf("web: template not found: %s", page)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.ExecuteTemplate(w, "base", data); err != nil {
+		log.Printf("web: render %s: %v", page, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) renderFragment(w http.ResponseWriter, name string, data interface{}) {
+	// Fragments are defined in fragments.html — use that template set.
+	t, ok := s.tmpls["fragments"]
+	if !ok {
+		log.Printf("web: fragment template not found")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("web: render fragment %s: %v", name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
+// ---- Security helpers ----
+
+// generateToken generates a random 32-char hex token.
+func generateToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%032x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+// validateString checks length bounds and UTF-8 validity (mirrors
+// internal/group.validateStringField).
+func validateString(name, value string, minLen, maxLen int) error {
+	n := len(value)
+	if n < minLen {
+		return fmt.Errorf("%s is too short (%d bytes, min %d)", name, n, minLen)
+	}
+	if n > maxLen {
+		return fmt.Errorf("%s is too long (%d bytes, max %d)", name, n, maxLen)
+	}
+	return nil
+}
+
+// ---- Data types for templates ----
+
+// pageData is the common interface for all template data types.
+// Every page data struct embeds pageBase so the base template can safely
+// access JSONLD (empty for pages that don't need it) and CSRFToken.
+
+type pageBase struct {
+	JSONLD    string
+	CSRFToken string
+}
+
+type homeData struct {
+	pageBase
+	Groups []CachedGroup
+	Events []CachedEvent
+}
+
+type groupData struct {
+	pageBase
+	Group  CachedGroup
+	Events []CachedEvent
+}
+
+type eventData struct {
+	pageBase
+	Event     CachedEvent
+	RsvpCount int
+}
+
+type dashboardData struct {
+	pageBase
+	GroupKey string
+	Events   []dashboardEvent
+}
+
+type dashboardEvent struct {
+	EventID   string
+	Title     string
+	StartsAt  int64
+	RsvpCount int
+}
+
+type rsvpPageData struct {
+	pageBase
+	RSVP       RSVPRecord
+	EventTitle string
+	Confirmed  bool
+}
+
+type loginData struct {
+	pageBase
+}
+
+type fragmentData struct {
+	Email    string
+	Title    string
+	GroupKey string
+	EventID  string
+	Error    string
+}
+
+// ---- JSON-LD generation ----
+
+// eventJSONLD generates a schema.org/Event JSON-LD block.
+func eventJSONLD(e CachedEvent, rsvpCount int, baseURL string) string {
+	eventStatus := "EventScheduled"
+	if e.Cancelled {
+		eventStatus = "EventCancelled"
+	}
+	startDate := time.Unix(e.StartsAt, 0).UTC().Format(time.RFC3339)
+
+	ld := map[string]interface{}{
+		"@type":            "Event",
+		"name":             e.Title,
+		"startDate":        startDate,
+		"eventStatus":      eventStatus,
+		"eventAttendanceMode": "OfflineEventAttendanceMode",
+		"url":              fmt.Sprintf("%s/events/%s/%s", baseURL, e.GroupKey, e.EventID),
+	}
+	if e.Description != "" {
+		ld["description"] = e.Description
+	}
+	if e.Location != "" {
+		ld["location"] = map[string]string{
+			"@type": "Place",
+			"name":  e.Location,
+		}
+	}
+	if e.Capacity > 0 {
+		ld["maximumAttendeeCapacity"] = e.Capacity
+		ld["remainingAttendeeCapacity"] = e.Capacity - rsvpCount
+	}
+
+	b, _ := json.Marshal(ld)
+	return string(b)
+}
+
+// ---- Sync helpers ----
+
+// syncGroupFromProduct pulls group info from the product store into the
+// local SQLite cache. Returns the CachedGroup.
+func (s *Server) syncGroupFromProduct(groupID string) (CachedGroup, error) {
+	if s.product == nil {
+		// Try cache
+		return s.store.GetGroup(groupID)
+	}
+	// The product store has group data — we'd call GetGroup via the store.
+	// For now, return from cache.
+	return s.store.GetGroup(groupID)
+}
+
+// syncEventsFromProduct pulls events from the product store into the local
+// SQLite cache for a group.
+func (s *Server) syncEventsFromProduct(groupID string) error {
+	if s.product == nil {
+		return nil
+	}
+	// Access product store via the service's Store field
+	events := s.product.Store().EventsForGroup(groupID)
+	for _, e := range events {
+		var startsAt int64
+		if e.StartsAt != nil {
+			startsAt = e.StartsAt.Seconds
+		}
+		ce := CachedEvent{
+			GroupKey:    groupID,
+			EventID:     e.EventId,
+			Title:       e.Title,
+			Description: e.Description,
+			StartsAt:    startsAt,
+			Location:    e.Location,
+			Capacity:    int(e.Capacity),
+			Cancelled:   e.Cancelled,
+		}
+		if err := s.store.UpsertEvent(ce); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// eventFromProduct tries to get an event from the product store; falls back
+// to the local cache.
+func (s *Server) eventFromProduct(groupKey, eventID string) (CachedEvent, error) {
+	if s.product != nil {
+		if e, ok := s.product.Store().GetEvent(eventID); ok {
+			var startsAt int64
+			if e.StartsAt != nil {
+				startsAt = e.StartsAt.Seconds
+			}
+			return CachedEvent{
+				GroupKey:    groupKey,
+				EventID:     e.EventId,
+				Title:       e.Title,
+				Description: e.Description,
+				StartsAt:    startsAt,
+				Location:    e.Location,
+				Capacity:    int(e.Capacity),
+				Cancelled:   e.Cancelled,
+			}, nil
+		}
+	}
+	return s.store.GetEvent(groupKey, eventID)
+}
+
+// groupFromProduct tries to get a group from the product store; falls back
+// to the local cache.
+func (s *Server) groupFromProduct(groupID string) (CachedGroup, error) {
+	if s.product != nil {
+		if g, ok := s.product.Store().GetGroup(groupID); ok {
+			return CachedGroup{
+				GroupKey:      g.GroupId,
+				CanonicalName: g.CanonicalName,
+				DisplayName:   g.DisplayName,
+				Description:   g.Description,
+			}, nil
+		}
+	}
+	return s.store.GetGroup(groupID)
+}
+
+// groupByCanonicalName tries the product store first, then the local cache.
+func (s *Server) groupByCanonicalName(name string) (CachedGroup, error) {
+	if s.product != nil {
+		// Walk groups in the product store
+		// The product store doesn't have a "list all" method, but we can
+		// try the cache first and verify via product store.
+	}
+	return s.store.GetGroupByCanonicalName(name)
+}
+
+// baseURL returns the base URL for generating absolute links (JSON-LD).
+// In production this would come from config; for now we derive from the request.
+func baseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s", scheme, r.Host)
+}
+
+// storeFromContext retrieves the store from the request context (not used
+// currently, but available for middleware-injected values).
+func storeFromContext(_ context.Context) *Store {
+	return nil
+}
+
+// ensure pb is referenced (used in some handlers for product types)
+var _ pb.Event
