@@ -777,12 +777,20 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if p == nil {
 			return errors.New("group: CANCEL_EVENT missing payload")
 		}
+		// H-6: validate event_id length + UTF-8.
+		if err := validateStringField("event_id", p.GetEventId(), 1, 256); err != nil {
+			return err
+		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_cancelled/"+p.GetEventId(), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_RSVP:
 		p := t.Proto.GetRsvp()
 		if p == nil {
 			return errors.New("group: RSVP missing payload")
+		}
+		// H-6: validate event_id length + UTF-8.
+		if err := validateStringField("event_id", p.GetEventId(), 1, 256); err != nil {
+			return err
 		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
@@ -792,6 +800,10 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		p := t.Proto.GetCancelRsvp()
 		if p == nil {
 			return errors.New("group: CANCEL_RSVP missing payload")
+		}
+		// H-6: validate event_id length + UTF-8.
+		if err := validateStringField("event_id", p.GetEventId(), 1, 256); err != nil {
+			return err
 		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
@@ -828,6 +840,10 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		p := t.Proto.GetMigrate()
 		if p == nil {
 			return errors.New("group: MIGRATE missing payload")
+		}
+		// H-6: validate new_host length + UTF-8.
+		if err := validateStringField("new_host", p.GetNewHost(), 1, 256); err != nil {
+			return err
 		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
