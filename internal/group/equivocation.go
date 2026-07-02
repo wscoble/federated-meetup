@@ -292,6 +292,8 @@ func (s *State) checkEquivocationLocked(
 	ev.TransitionA = transitionA
 	ev.TransitionB = conflictingTransition
 	s.equivocationEvidence = append(s.equivocationEvidence, ev)
+	// H-2: cap the evidence slice (FIFO eviction).
+	s.capEvidenceLocked()
 	return true
 }
 
@@ -376,6 +378,20 @@ func (s *State) StoreEvidence(ev *EquivocationEvidence) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.equivocationEvidence = append(s.equivocationEvidence, ev)
+	// H-2: cap the evidence slice (FIFO eviction).
+	s.capEvidenceLocked()
+}
+
+// capEvidenceLocked drops the oldest evidence entries until the
+// slice fits within MaxEvidenceEntries. Called under s.mu.
+// (Audit H-2, cycle 51.)
+func (s *State) capEvidenceLocked() {
+	if s.MaxEvidenceEntries <= 0 {
+		return
+	}
+	for len(s.equivocationEvidence) > s.MaxEvidenceEntries {
+		s.equivocationEvidence = s.equivocationEvidence[1:]
+	}
 }
 
 // StoredEvidence returns the evidence list (from both local detection

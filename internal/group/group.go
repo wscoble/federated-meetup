@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 
@@ -191,11 +192,25 @@ type State struct {
 	// peers; downstream consumers (SLASH_STEWARD generator) read it.
 	equivocationEvidence []*EquivocationEvidence
 
+	// MaxEvidenceEntries caps the equivocationEvidence slice size.
+	// Default 10000. When exceeded, oldest entries are dropped (FIFO).
+	// (Audit H-2.)
+	MaxEvidenceEntries int
+
 	// MaxLogSize caps per-branch transition log size. Default 100000.
 	MaxLogSize int
 
-	// MaxKVSize caps per-branch state KV size. Default 100000.
+	// MaxKVSize caps per-branch state KV size (entry count). Default 100000.
+	// Kept for backward compatibility; equivalent to MaxKVEntries.
 	MaxKVSize int
+
+	// MaxKVEntries caps per-branch state KV entry count. Default 100000.
+	// (Audit H-1: MaxKVSize only capped entry count, not byte size.)
+	MaxKVEntries int
+
+	// MaxKVBytes caps per-branch state KV total byte size. Default
+	// 100_000_000 (100 MB). (Audit H-1.)
+	MaxKVBytes int
 
 	// MaxBranches caps the number of branches per group. Default
 	// 1000. Past this, BRANCH_CREATE is rejected.
@@ -226,7 +241,10 @@ func NewState(gid GroupID) *State {
 		MaxMeshPeers:     100,
 		MaxLogSize:       100000,
 		MaxKVSize:        100000,
+		MaxKVEntries:     100000,
+		MaxKVBytes:       100_000_000,
 		MaxBranches:      1000,
+		MaxEvidenceEntries: 10000,
 	}
 }
 
@@ -585,9 +603,15 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 	switch t.Proto.GetType() {
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_GROUP:
 		p := t.Proto.GetCreateGroup()
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "name", []byte(p.GetCanonicalName()), s.MaxKVSize)
+		if err := validateStringField("canonical_name", p.GetCanonicalName(), 1, 256); err != nil {
+			return err
+		}
+		if err := validateStringField("display_name", p.GetDisplayName(), 1, 256); err != nil {
+			return err
+		}
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "name", []byte(p.GetCanonicalName()), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "display_name", []byte(p.GetDisplayName()), s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "display_name", []byte(p.GetDisplayName()), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 		// Initial stewards are written into the Merkle KV so that the
 		// snapshot root commits to the steward set. Without this,
@@ -599,7 +623,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		// set. Now both ADD_STEWARD and REMOVE_STEWARD operate on
 		// entries that are always present.
 		for _, k := range p.GetInitialStewards() {
-			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", k.GetRaw()), []byte{1}, s.MaxKVSize)
+			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", k.GetRaw()), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 			if !kvAllowed { return ErrKVSizeExceeded }
 		}
 		// Bootstrap seed: initial mesh peers declared at group
@@ -624,7 +648,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 			if err := s.addMeshPeerLocked(peer); err != nil {
 				return fmt.Errorf("group: CREATE_GROUP initial_mesh_peers: %w", err)
 			}
-			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", mp.GetHostWgKey()), mp.GetMeshIp(), s.MaxKVSize)
+			newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", mp.GetHostWgKey()), mp.GetMeshIp(), s.MaxKVSize, s.MaxKVBytes)
 			if !kvAllowed { return ErrKVSizeExceeded }
 		}
 		// Steward history at the NEW root records the initial set.
@@ -644,7 +668,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if s.MaxStewards > 0 && len(prospective) > s.MaxStewards {
 			return fmt.Errorf("group: ADD_STEWARD rejected — steward set would grow to %d, MaxStewards=%d", len(prospective), s.MaxStewards)
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), []byte{1}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_STEWARD:
 		p := t.Proto.GetRemoveSteward()
@@ -653,7 +677,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		}
 		var key types.PublicKey
 		copy(key[:], p.GetSteward().GetRaw())
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), nil, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", key[:]), nil, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CHANGE_THRESHOLD:
 		p := t.Proto.GetChangeThreshold()
@@ -673,7 +697,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if newThr > uint32(len(currentStewards)) {
 			return fmt.Errorf("group: CHANGE_THRESHOLD rejected — newThreshold=%d exceeds current steward count %d (would dead-lock the group)", newThr, len(currentStewards))
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "threshold", binaryUint32(newThr), s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "threshold", binaryUint32(newThr), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ADD_MEMBER:
 		p := t.Proto.GetAddMember()
@@ -682,7 +706,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{1}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_MEMBER:
 		p := t.Proto.GetRemoveMember()
@@ -698,12 +722,21 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		// the equivocation log entry for the initial stewards' CREATE
 		// signatures and makes a legitimate re-add indistinguishable
 		// from equivocation.
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{0}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("member/%x", user[:]), []byte{0}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT:
 		p := t.Proto.GetCreateEvent()
 		if p == nil {
 			return errors.New("group: CREATE_EVENT missing payload")
+		}
+		if err := validateStringField("event_id", p.GetEventId(), 1, 256); err != nil {
+			return err
+		}
+		if err := validateStringField("title", p.GetTitle(), 1, 1024); err != nil {
+			return err
+		}
+		if err := validateStringField("location", p.GetLocation(), 0, 1024); err != nil {
+			return err
 		}
 		// Store the event payload as protobuf bytes keyed by event_id.
 		// Use deterministic marshaling so all hosts produce the same
@@ -713,7 +746,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err != nil {
 			return fmt.Errorf("group: marshal event: %w", err)
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "event/"+p.GetEventId(), ep, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "event/"+p.GetEventId(), ep, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_UPDATE_EVENT:
 		// PATCH semantics: store the patch keyed by event_id under
@@ -729,18 +762,22 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if p == nil {
 			return errors.New("group: UPDATE_EVENT missing payload")
 		}
+		// H-6: validate event_id length + UTF-8.
+		if err := validateStringField("event_id", p.GetEventId(), 1, 256); err != nil {
+			return err
+		}
 		pp, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("group: marshal event patch: %w", err)
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_patch/"+p.GetEventId(), pp, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_patch/"+p.GetEventId(), pp, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_EVENT:
 		p := t.Proto.GetCancelEvent()
 		if p == nil {
 			return errors.New("group: CANCEL_EVENT missing payload")
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_cancelled/"+p.GetEventId(), []byte{1}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "event_cancelled/"+p.GetEventId(), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_RSVP:
 		p := t.Proto.GetRsvp()
@@ -749,7 +786,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		}
 		var user types.PublicKey
 		copy(user[:], p.GetUser().GetRaw())
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{1}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_CANCEL_RSVP:
 		p := t.Proto.GetCancelRsvp()
@@ -764,7 +801,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		// root equals a prior where stewards are already recorded in
 		// the equivocation log, producing spurious equivocation on a
 		// legitimate re-RSVP.
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{0}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("rsvp/%s/%x", p.GetEventId(), user[:]), []byte{0}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_ATTEST:
 		p := t.Proto.GetAttest()
@@ -776,7 +813,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err != nil {
 			return fmt.Errorf("group: marshal attest: %w", err)
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, attestKey, attestBytes, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, attestKey, attestBytes, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_FORK:
 		// Fork creates a NEW group; the parent group's state machine just
@@ -785,16 +822,16 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if p == nil {
 			return errors.New("group: FORK missing payload")
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "fork_lineage", []byte(p.GetNewGroupKey().GetRaw()), s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "fork_lineage", []byte(p.GetNewGroupKey().GetRaw()), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 	case pb.TransitionType_TRANSITION_TYPE_MIGRATE:
 		p := t.Proto.GetMigrate()
 		if p == nil {
 			return errors.New("group: MIGRATE missing payload")
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()), s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
-		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_after", binaryUint64(uint64(p.GetDeadline().GetSeconds())), s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_after", binaryUint64(uint64(p.GetDeadline().GetSeconds())), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	// =====================================================================
@@ -816,7 +853,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err != nil {
 			return fmt.Errorf("group: marshal issue_host_cert: %w", err)
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertStorageKey(p), certBytes, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertStorageKey(p), certBytes, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	case pb.TransitionType_TRANSITION_TYPE_REVOKE_HOST_CERT:
@@ -830,11 +867,11 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err != nil {
 			return fmt.Errorf("group: marshal revoke_host_cert: %w", err)
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertRevocationKey(p), revBytes, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertRevocationKey(p), revBytes, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 		// Also tombstone the cert entry itself — clients seeing both
 		// can correlate.
-		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertStorageKeyFromRevoke(p), nil, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, hostCertStorageKeyFromRevoke(p), nil, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	// =====================================================================
@@ -870,7 +907,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err := s.addMeshPeerLocked(newPeer); err != nil {
 			return err
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), p.GetMeshIp(), s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), p.GetMeshIp(), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	case pb.TransitionType_TRANSITION_TYPE_REMOVE_HOST_PEER:
@@ -893,7 +930,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		// ADD'd peer — a subsequent re-ADD then collides with the
 		// CREATE_GROUP signatures in the equivocation log and is
 		// spuriously rejected as equivocation.
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), []byte{}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("mesh_peer/%x", p.GetHostWgKey().GetRaw()), []byte{}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	// =====================================================================
@@ -912,7 +949,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 			Steward: p.Steward,
 			Tier:    p.GetTier(),
 		})
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("custody/%x", p.GetSteward().GetRaw()), []byte{byte(p.GetTier())}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("custody/%x", p.GetSteward().GetRaw()), []byte{byte(p.GetTier())}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	// =====================================================================
@@ -943,9 +980,9 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		}
 		copy(ev.PriorState[:], p.GetPriorState().GetHash())
 		s.equivocationEvidence = append(s.equivocationEvidence, ev)
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", slashedKey[:]), nil, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("steward/%x", slashedKey[:]), nil, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
-		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("slashed/%x", slashedKey[:]), []byte{1}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, fmt.Sprintf("slashed/%x", slashedKey[:]), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 		// SLASH_STEWARD also mutates the steward set (removes the
 		// slashed key), so we mark it for the post-Apply steward-set
@@ -980,7 +1017,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		newEntries, kvAllowed = appendOrUpdate(newEntries,
 			fmt.Sprintf("branch/%d/parent", newBranch.id),
 			[]byte(fmt.Sprintf("%d", branchID)),
-			s.MaxKVSize,
+			s.MaxKVSize, s.MaxKVBytes,
 		)
 		if !kvAllowed {
 			return ErrKVSizeExceeded
@@ -988,7 +1025,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		newEntries, kvAllowed = appendOrUpdate(newEntries,
 			fmt.Sprintf("branch/%d/reason", newBranch.id),
 			[]byte(p.GetReason()),
-			s.MaxKVSize,
+			s.MaxKVSize, s.MaxKVBytes,
 		)
 		if !kvAllowed {
 			return ErrKVSizeExceeded
@@ -1007,7 +1044,7 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err := verifyNameBindPayload(s, p); err != nil {
 			return err
 		}
-		newEntries, kvAllowed = appendOrUpdate(newEntries, nameBindStorageKey(p), []byte{1}, s.MaxKVSize)
+		newEntries, kvAllowed = appendOrUpdate(newEntries, nameBindStorageKey(p), []byte{1}, s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 
 	default:
@@ -1130,19 +1167,60 @@ func (s *State) Log() []*Transition {
 // is rejected and no state changes occur.
 var ErrKVSizeExceeded = &groupError{Kind: "kv_size_exceeded", Msg: "state KV would exceed MaxKVSize"}
 
+// MaxKVValueSize is the maximum size of a single KV value. Default 1MB.
+// An attacker who can write arbitrarily large values can exhaust memory
+// even when the entry count and total byte caps are respected. (Audit H-1.)
+const MaxKVValueSize = 1024 * 1024
+
 // appendOrUpdate replaces the entry for `key` (incrementing its seq), or
 // appends a new one if `key` doesn't exist. If value is nil, the key is
 // removed. Returns the new entries slice and a flag indicating whether
 // the append was allowed.
 //
-// G7 memory bound: when the entries slice exceeds `maxSize`, the call
+// G7 memory bound: when the entries slice exceeds `maxEntries`, the call
 // returns the unchanged entries with allowed=false. Callers should
 // reject the transition with ErrKVSizeExceeded.
 //
+// H-1: additionally checks per-value size (MaxKVValueSize) and total
+// bytes (maxBytes). A value exceeding MaxKVValueSize is rejected. When
+// the total bytes of all entries would exceed maxBytes, the call returns
+// allowed=false (unless updating an existing key — same semantics as
+// the entry count cap).
+//
 // We return a flag rather than an error to keep appendOrUpdate
 // allocation-free; the caller (Apply) maps the flag to an error.
-func appendOrUpdate(entries []types.StateEntry, key string, value []byte, maxSize int) ([]types.StateEntry, bool) {
-	if maxSize > 0 && value != nil && len(entries) >= maxSize {
+func appendOrUpdate(entries []types.StateEntry, key string, value []byte, maxEntries int, maxBytes int) ([]types.StateEntry, bool) {
+	// H-1: per-value size cap. Reject any single value > MaxKVValueSize.
+	if value != nil && len(value) > MaxKVValueSize {
+		return entries, false
+	}
+
+	// H-1: total byte cap. Compute the current total bytes and check
+	// whether adding/updating this entry would exceed maxBytes.
+	if maxBytes > 0 && value != nil {
+		currentBytes := 0
+		for _, e := range entries {
+			currentBytes += len(e.Key) + len(e.Value)
+		}
+		// Account for the new value. If updating an existing key,
+		// subtract the old value's bytes and add the new ones.
+		oldBytes := 0
+		found := false
+		for _, e := range entries {
+			if e.Key == key {
+				oldBytes = len(e.Key) + len(e.Value)
+				found = true
+				break
+			}
+		}
+		newBytes := len(key) + len(value)
+		projected := currentBytes - oldBytes + newBytes
+		if !found && projected > maxBytes {
+			return entries, false
+		}
+	}
+
+	if maxEntries > 0 && value != nil && len(entries) >= maxEntries {
 		found := false
 		for _, e := range entries {
 			if e.Key == key {
@@ -1269,4 +1347,23 @@ func binaryUint64(v uint64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, v)
 	return b
+}
+
+// validateStringField checks that a string field meets length bounds and
+// is valid UTF-8. Returns nil if valid, an error otherwise. (Audit H-6.)
+//
+// minLen is inclusive (value must be >= minLen bytes). maxLen is inclusive
+// (value must be <= maxLen bytes). Set minLen to 0 to allow empty strings.
+func validateStringField(name, value string, minLen, maxLen int) error {
+	n := len(value)
+	if n < minLen {
+		return fmt.Errorf("group: %s is too short (%d bytes, min %d)", name, n, minLen)
+	}
+	if n > maxLen {
+		return fmt.Errorf("group: %s is too long (%d bytes, max %d)", name, n, maxLen)
+	}
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("group: %s contains invalid UTF-8", name)
+	}
+	return nil
 }

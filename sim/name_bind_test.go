@@ -132,8 +132,8 @@ func TestNameBind_DirectoryBinding(t *testing.T) {
 	h0 := w.Hosts()[0]
 	if _, err := h0.SubmitTransition(gkp.Public, trProto); err == nil {
 		t.Fatal("empty-name NAME_BIND should have been rejected")
-	} else if !strings.Contains(err.Error(), "name is empty") {
-		t.Fatalf("expected 'name is empty' error, got: %v", err)
+	} else if !strings.Contains(err.Error(), "too short") {
+		t.Fatalf("expected 'too short' error, got: %v", err)
 	} else {
 		t.Logf("empty-name bind correctly rejected: %v", err)
 	}

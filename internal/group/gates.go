@@ -139,8 +139,8 @@ func verifySlashStewardPayload(s *State, p *pb.SlashStewardPayload, t *Transitio
 // the gate here is structural: the name must be non-empty and
 // not_after must be set.
 func verifyNameBindPayload(s *State, p *pb.NameBindPayload) error {
-	if p.GetName() == "" {
-		return errors.New("group: NAME_BIND rejected — name is empty")
+	if err := validateStringField("name", p.GetName(), 1, 256); err != nil {
+		return err
 	}
 	if p.GetNotAfter() == nil {
 		return errors.New("group: NAME_BIND rejected — not_after is required")
