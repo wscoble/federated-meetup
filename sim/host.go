@@ -132,13 +132,16 @@ func (h *Host) SubmitTransition(g types.GroupID, t *group.Transition) (*group.St
 	h.hlcCursor = next
 	hlcBytes := next.Clone()
 
+	// Stamp the HLC onto the proto BEFORE Apply so that M-6 HLC
+	// validation in Apply() sees a valid 18-byte HLC on non-CREATE_GROUP
+	// transitions. (Previously this was stamped after Apply, which
+	// broke when Apply started validating HLC length.)
+	t.Proto.Hlc = hlcBytes
+
 	if err := st.Apply(t, h.world.Now()); err != nil {
 		h.mu.Unlock()
 		return nil, err
 	}
-	// Stamp the HLC onto the proto before broadcast so receivers can
-	// Observe() against it.
-	t.Proto.Hlc = hlcBytes
 	h.outbound = append(h.outbound, t)
 	msg := group.EncodeTransition(t)
 	h.mu.Unlock()

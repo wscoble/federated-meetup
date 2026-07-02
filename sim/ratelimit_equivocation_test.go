@@ -27,6 +27,7 @@ import (
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
 	"github.com/sscoble/federated-meetup/internal/group"
+	"github.com/sscoble/federated-meetup/internal/hlc"
 	"github.com/sscoble/federated-meetup/internal/ratelimit"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 	"github.com/sscoble/federated-meetup/sim"
@@ -77,6 +78,7 @@ func TestRateLimit_DoesNotPolluteEquivocationLog(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		tr.Proto.Hlc = hlc.New(w.Now())
 		return st.Apply(tr, w.Now())
 	}
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
+	"github.com/sscoble/federated-meetup/internal/hlc"
 	"github.com/sscoble/federated-meetup/internal/types"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 )
@@ -63,7 +64,7 @@ func TestBranch_CreateAllocatesNewBranch(t *testing.T) {
 				Reason: "steward dispute over event location policy",
 			},
 		},
-		Hlc: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24},
+		Hlc: hlc.New(time.Now()),
 	}
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
@@ -123,7 +124,7 @@ func TestBranch_BranchCapEnforced(t *testing.T) {
 		Payload: &pb.Transition_BranchCreate{
 			BranchCreate: &pb.BranchCreatePayload{Reason: "first branch"},
 		},
-		Hlc: []byte{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		Hlc: hlc.New(time.Now()),
 	}
 	tr1.PriorState = stateRootFromHead(st)
 	signTransition(tr1, stewards[:2], gid)
@@ -137,7 +138,7 @@ func TestBranch_BranchCapEnforced(t *testing.T) {
 		Payload: &pb.Transition_BranchCreate{
 			BranchCreate: &pb.BranchCreatePayload{Reason: "second branch"},
 		},
-		Hlc: []byte{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		Hlc: hlc.New(time.Now()),
 	}
 	tr2.PriorState = stateRootFromHead(st)
 	signTransition(tr2, stewards[:2], gid)
@@ -163,7 +164,7 @@ func TestBranch_TransitionMustReferenceExistingBranch(t *testing.T) {
 			},
 		},
 		BranchId: 42,
-		Hlc:      []byte{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		Hlc:      hlc.New(time.Now()),
 	}
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
@@ -179,7 +180,7 @@ func TestBranch_GenesisHLCRecorded(t *testing.T) {
 	stewards := []crypto.KeyPair{genKey(1), genKey(2), genKey(3)}
 	st := createGroupWith(t, gid, stewards, 2)
 
-	hlcBytes := []byte{99, 98, 97, 96, 95, 94, 93, 92, 91, 90, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76}
+	hlcBytes := hlc.New(time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
 	tr := &pb.Transition{
 		Type: pb.TransitionType_TRANSITION_TYPE_BRANCH_CREATE,
 		Payload: &pb.Transition_BranchCreate{

@@ -362,6 +362,7 @@ func TestThreat_StewardSetBound(t *testing.T) {
 			Signatures: []*pb.Signature{{Raw: sigA[:]}, {Raw: sigB[:]}},
 		}
 		tr, _ := group.NewTransition(p, gkp.Public)
+		tr.Proto.Hlc = hlc.New(w.Now())
 		return w.Hosts()[0].State(gkp.Public).Apply(tr, w.Now())
 	}
 
@@ -452,6 +453,7 @@ func TestThreat_TransitionFloodingRejected(t *testing.T) {
 			Signatures: []*pb.Signature{{Raw: sigA[:]}, {Raw: sigB[:]}},
 		}
 		tr, _ := group.NewTransition(trProto, gkp.Public)
+		tr.Proto.Hlc = hlc.New(w.Now())
 		return st.Apply(tr, w.Now())
 	}
 

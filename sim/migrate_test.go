@@ -23,6 +23,7 @@ import (
 	"github.com/sscoble/federated-meetup/internal/crypto"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 	"github.com/sscoble/federated-meetup/sim"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TestMigrate_CanonicalHostTransfer walks through:
@@ -65,7 +66,7 @@ func TestMigrate_CanonicalHostTransfer(t *testing.T) {
 		pb.TransitionType_TRANSITION_TYPE_MIGRATE,
 		&pb.MigratePayload{
 			NewHost:  newCanonical,
-			Deadline: nil,
+			Deadline: timestamppb.New(w.Now().Add(24 * time.Hour)),
 		},
 		[]crypto.KeyPair{stewards[0], stewards[1]}) {
 		return

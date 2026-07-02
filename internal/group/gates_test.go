@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
+	"github.com/sscoble/federated-meetup/internal/hlc"
 	"github.com/sscoble/federated-meetup/internal/types"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 )
@@ -110,6 +111,17 @@ func mustTransition(t *testing.T, tr *pb.Transition, gid types.GroupID) *Transit
 	return out
 }
 
+// stampHLC sets a valid 18-byte HLC on the transition proto. Use this
+// on any non-CREATE_GROUP transition before calling st.Apply() so the
+// M-6 HLC length validation passes. Call BEFORE signing or before
+// Apply (the canonical bytes include the HLC, so if you sign first
+// and then add HLC, the signature won't match).
+//
+// For tests that sign and then apply, call stampHLC BEFORE signTransition.
+func stampHLC(tr *pb.Transition) {
+	tr.Hlc = hlc.New(time.Now())
+}
+
 // newCoSignerKey generates a fresh Ed25519 CoSigner key for tests.
 func newCoSignerKey(t *testing.T) crypto.CoSignerKey {
 	t.Helper()
@@ -160,6 +172,7 @@ func TestGate1_IssueHostCertSucceeds(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 
@@ -221,6 +234,7 @@ func TestGate1_RevokeHostCertTombstones(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr1)
 	tr1.PriorState = stateRootFromHead(st)
 	signTransition(tr1, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr1, gid), time.Now()); err != nil {
@@ -238,6 +252,7 @@ func TestGate1_RevokeHostCertTombstones(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr2)
 	tr2.PriorState = stateRootFromHead(st)
 	signTransition(tr2, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr2, gid), time.Now()); err != nil {
@@ -276,6 +291,7 @@ func TestGate2_AddHostPeerRequiresCosigner(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 
@@ -303,6 +319,7 @@ func TestGate2_AddHostPeerHonorsMeshCap(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err != nil {
@@ -321,6 +338,7 @@ func TestGate2_AddHostPeerHonorsMeshCap(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr2)
 	tr2.PriorState = stateRootFromHead(st)
 	signTransition(tr2, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr2, gid), time.Now()); err == nil {
@@ -348,6 +366,7 @@ func TestGate3_DeclareStewardCustodySucceeds(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err != nil {
@@ -377,6 +396,7 @@ func TestGate3_NonStewardCannotDeclare(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err == nil {
@@ -405,6 +425,7 @@ func TestGate6_SlashStewardSucceeds(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err != nil {
@@ -437,6 +458,7 @@ func TestGate6_SlashedStewardCannotCosign(t *testing.T) {
 		},
 	}
 	// Slashed steward (stewards[2]) co-signs alongside stewards[1].
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, []crypto.KeyPair{stewards[1], stewards[2]}, gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err == nil {
@@ -485,8 +507,8 @@ func TestGate7_StateKVSizeCapped(t *testing.T) {
 					Title:   "Event",
 				},
 			},
-			Hlc: []byte{byte(i), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		}
+		stampHLC(tr)
 		tr.PriorState = stateRootFromHead(st)
 		signTransition(tr, stewards[:2], gid)
 		if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err != nil {
@@ -502,8 +524,8 @@ func TestGate7_StateKVSizeCapped(t *testing.T) {
 				Title:   "Event",
 			},
 		},
-		Hlc: []byte{99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err == nil {
@@ -530,6 +552,7 @@ func TestGate8_NameBindSucceeds(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err != nil {
@@ -551,6 +574,7 @@ func TestGate8_NameBindRequiresThreshold(t *testing.T) {
 			},
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:1], gid)
 	if err := st.Apply(mustTransition(t, tr, gid), time.Now()); err == nil {
@@ -699,6 +723,7 @@ func TestGate2_AddHostPeerWithValidCosignature(t *testing.T) {
 			AddHostPeer: addPayload,
 		},
 	}
+	stampHLC(tr)
 	tr.PriorState = stateRootFromHead(st)
 	signTransition(tr, stewards[:2], gid)
 
