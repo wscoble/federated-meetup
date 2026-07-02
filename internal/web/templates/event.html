@@ -71,7 +71,7 @@
 				<span class="text-lg font-bold text-gray-900">{{formatMoney .Price}}</span>
 				<form method="POST" action="/events/{{$.Event.GroupKey}}/{{$.Event.EventID}}/purchase">
 					<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-					<input type="hidden" name="ticket_id" value="{{.TicketId}}">
+					<input type="hidden" name="ticket_id" value="{{.TicketID}}">
 					<div class="flex items-center gap-2">
 						<input type="email" name="email" placeholder="your@email.com" required
 							class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm w-48 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">

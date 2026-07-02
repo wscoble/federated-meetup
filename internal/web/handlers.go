@@ -4,6 +4,7 @@ package web
 import (
 	"encoding/hex"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"strconv"
@@ -139,7 +140,7 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 
 	s.renderPage(w, "event", eventData{
 		pageBase: pageBase{
-			JSONLD:    jsonld,
+			JSONLD:    template.JS(jsonld),
 			CSRFToken: csrfTokenFromRequest(r),
 		},
 		Event:     event,

@@ -238,7 +238,7 @@ func validateString(name, value string, minLen, maxLen int) error {
 // access JSONLD (empty for pages that don't need it) and CSRFToken.
 
 type pageBase struct {
-	JSONLD    string
+	JSONLD   template.JS
 	CSRFToken string
 }
 
