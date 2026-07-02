@@ -2,7 +2,7 @@
 {{define "title"}}{{.Group.DisplayName}} — Group{{end}}
 {{define "content"}}
 <div class="mb-6">
-	<h1 class="text-3xl font-bold mb-1">{{.Group.DisplayName}}</h1>
+	<h1 class="text-2xl sm:text-3xl font-bold mb-1">{{.Group.DisplayName}}</h1>
 	<p class="text-gray-500 text-sm">@{{.Group.CanonicalName}}</p>
 </div>
 {{if .Group.Description}}<p class="text-gray-700 mb-6">{{.Group.Description}}</p>{{end}}

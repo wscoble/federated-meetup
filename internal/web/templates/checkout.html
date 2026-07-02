@@ -2,36 +2,36 @@
 {{define "title"}}Checkout — Order {{.Order.OrderID}}{{end}}
 {{define "content"}}
 <div class="max-w-2xl mx-auto">
-	<h1 class="text-3xl font-bold mb-6">Checkout</h1>
+	<h1 class="text-2xl sm:text-3xl font-bold mb-6">Checkout</h1>
 
-	<div class="bg-white rounded-xl shadow-sm p-6 border border-gray-100 mb-6">
+	<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100 mb-6">
 		<h2 class="text-xl font-semibold mb-4">Order Details</h2>
 		<dl class="space-y-3">
-			<div class="flex justify-between">
-				<dt class="text-gray-600">Order ID</dt>
-				<dd class="font-mono text-sm text-gray-900">{{.Order.OrderID}}</dd>
+			<div class="flex justify-between gap-4">
+				<dt class="text-gray-600 flex-shrink-0">Order ID</dt>
+				<dd class="font-mono text-sm text-gray-900 text-right break-all">{{.Order.OrderID}}</dd>
 			</div>
-			<div class="flex justify-between">
-				<dt class="text-gray-600">Event</dt>
-				<dd class="text-gray-900">{{.EventTitle}}</dd>
+			<div class="flex justify-between gap-4">
+				<dt class="text-gray-600 flex-shrink-0">Event</dt>
+				<dd class="text-gray-900 text-right">{{.EventTitle}}</dd>
 			</div>
-			<div class="flex justify-between">
-				<dt class="text-gray-600">Email</dt>
-				<dd class="text-gray-900">{{.Order.Email}}</dd>
+			<div class="flex justify-between gap-4">
+				<dt class="text-gray-600 flex-shrink-0">Email</dt>
+				<dd class="text-gray-900 text-right break-all">{{.Order.Email}}</dd>
 			</div>
-			<div class="flex justify-between">
-				<dt class="text-gray-600">Amount</dt>
+			<div class="flex justify-between gap-4">
+				<dt class="text-gray-600 flex-shrink-0">Amount</dt>
 				<dd class="font-bold text-gray-900">{{formatCents .Order.AmountCents}}</dd>
 			</div>
-			<div class="flex justify-between">
-				<dt class="text-gray-600">Status</dt>
+			<div class="flex justify-between gap-4">
+				<dt class="text-gray-600 flex-shrink-0">Status</dt>
 				<dd><span class="inline-block {{if eq .Order.Status "COMPLETED"}}bg-green-100 text-green-700{{else if eq .Order.Status "PENDING"}}bg-yellow-100 text-yellow-700{{else}}bg-gray-100 text-gray-700{{end}} text-xs font-medium px-2.5 py-1 rounded-full">{{.Order.Status}}</span></dd>
 			</div>
 		</dl>
 	</div>
 
 	{{if eq .Order.Status "PENDING"}}
-	<div class="bg-white rounded-xl shadow-sm p-6 border border-gray-100 text-center">
+	<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100 text-center">
 		<p class="text-gray-700 mb-4">You'll be redirected to Stripe to complete your payment.</p>
 		{{if .CheckoutURL}}
 		<a href="{{.CheckoutURL}}" class="inline-block bg-indigo-600 text-white rounded-lg px-6 py-3 text-sm font-medium hover:bg-indigo-700 transition-colors">
@@ -39,7 +39,6 @@
 		</a>
 		{{else}}
 		<p class="text-gray-500 text-sm">Payment processing is not configured. This is a mock checkout.</p>
-		<!-- TODO: integrate real Stripe checkout when configured -->
 		{{end}}
 	</div>
 	{{else if eq .Order.Status "COMPLETED"}}

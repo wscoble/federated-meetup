@@ -1,14 +1,14 @@
 {{template "base" .}}
 {{define "title"}}Federated Meetup — Home{{end}}
 {{define "content"}}
-<div class="mb-8">
-	<h1 class="text-3xl font-bold mb-2">Welcome to Federated Meetup</h1>
-	<p class="text-gray-600">Discover and join tech meetups in your area.</p>
+<div class="mb-6 sm:mb-8">
+	<h1 class="text-2xl sm:text-3xl font-bold mb-2">Welcome to Federated Meetup</h1>
+	<p class="text-gray-600 text-sm sm:text-base">Discover and join tech meetups in your area.</p>
 </div>
 
 <!-- Search bar -->
-<div class="mb-8">
-	<form method="GET" action="/" class="flex gap-2">
+<div class="mb-6 sm:mb-8">
+	<form method="GET" action="/" class="flex flex-col sm:flex-row gap-2">
 		<input type="text" name="q" placeholder="Search groups and events..." value="{{.Query}}"
 			class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
 		<button type="submit" class="bg-indigo-600 text-white rounded-lg px-6 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors">
@@ -48,7 +48,7 @@
 		</div>
 		<p class="text-gray-500 text-sm mb-3">{{formatTime .StartsAt}}</p>
 		{{if .Location}}<p class="text-gray-400 text-sm mb-3 flex items-center gap-1">
-			<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+			<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
 			{{.Location}}
 		</p>{{end}}
 		{{if .Cancelled}}

@@ -2,12 +2,12 @@
 {{define "title"}}My RSVPs{{end}}
 {{define "content"}}
 <div class="mb-6">
-	<h1 class="text-3xl font-bold mb-2">My RSVPs</h1>
+	<h1 class="text-2xl sm:text-3xl font-bold mb-2">My RSVPs</h1>
 	<p class="text-gray-600 text-sm">Enter your email to see all your RSVPs across events.</p>
 </div>
 
 {{if not .Email}}
-<div class="bg-white rounded-xl shadow-sm p-6 border border-gray-100 max-w-md">
+<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100 max-w-md">
 	<form method="GET" action="/my-rsvps" class="space-y-4">
 		<div>
 			<label for="email" class="block text-sm font-medium text-gray-700">Email</label>
@@ -19,7 +19,7 @@
 	</form>
 </div>
 {{else}}
-<div class="flex items-center justify-between mb-4">
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
 	<p class="text-gray-600 text-sm">Showing RSVPs for <span class="font-medium text-gray-900">{{.Email}}</span></p>
 	<a href="/my-rsvps" class="text-sm text-indigo-600 hover:underline">← Check different email</a>
 </div>
@@ -28,12 +28,12 @@
 <div class="space-y-4">
 	{{range .Rsvps}}
 	<div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-		<div class="flex items-start justify-between">
+		<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
 			<div>
 				<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.EventTitle}}</a>
 				<p class="text-sm text-gray-500 mt-1">{{formatTime .StartsAt}}</p>
 			</div>
-			<span class="inline-block {{if .Confirmed}}bg-green-100 text-green-700{{else}}bg-yellow-100 text-yellow-700{{end}} text-xs font-medium px-2.5 py-1 rounded-full">
+			<span class="inline-block {{if .Confirmed}}bg-green-100 text-green-700{{else}}bg-yellow-100 text-yellow-700{{end}} text-xs font-medium px-2.5 py-1 rounded-full self-start">
 				{{if .Confirmed}}Confirmed{{else}}Pending{{end}}
 			</span>
 		</div>
