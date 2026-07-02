@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
+	"github.com/sscoble/federated-meetup/internal/hlc"
 	"github.com/sscoble/federated-meetup/internal/ratelimit"
 	"github.com/sscoble/federated-meetup/internal/types"
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
@@ -508,6 +509,16 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 	}
 	defer func() { restoreGenesis(applyErr) }()
 
+	// M-6: validate HLC field on non-CREATE_GROUP transitions.
+	// CREATE_GROUP is the genesis transition and may have an empty HLC
+	// (it gets stamped by the host). All other transitions must carry
+	// a well-formed 18-byte HLC.
+	if t.Proto.GetType() != pb.TransitionType_TRANSITION_TYPE_CREATE_GROUP {
+		if hlcLen := len(t.Proto.GetHlc()); hlcLen != hlc.Size {
+			return fmt.Errorf("group: invalid HLC size %d (want %d)", hlcLen, hlc.Size)
+		}
+	}
+
 	// Verify the prior_state matches our current head.
 	currentRoot := s.snapshot.Root()
 	if t.Proto.GetPriorState() != nil && len(t.Proto.GetPriorState().GetHash()) > 0 {
@@ -563,6 +574,10 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		}
 		// For CREATE_GROUP, signatures must come from at least `threshold`
 		// of the initial_stewards.
+		// M-1: reject threshold=0 — it disables authentication.
+		if p.GetThreshold() == 0 {
+			return errors.New("group: CREATE_GROUP rejected — threshold must be > 0")
+		}
 		initStewards := make([]types.PublicKey, len(p.GetInitialStewards()))
 		for i, k := range p.GetInitialStewards() {
 			copy(initStewards[i][:], k.GetRaw())
@@ -845,6 +860,13 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		if err := validateStringField("new_host", p.GetNewHost(), 1, 256); err != nil {
 			return err
 		}
+		// M-5: validate deadline is set and in the future.
+		if p.GetDeadline() == nil || p.GetDeadline().GetSeconds() == 0 {
+			return errors.New("group: MIGRATE rejected — deadline is required")
+		}
+		if p.GetDeadline().AsTime().Before(now) {
+			return fmt.Errorf("group: MIGRATE rejected — deadline %v is in the past", p.GetDeadline().AsTime())
+		}
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_host", []byte(p.GetNewHost()), s.MaxKVSize, s.MaxKVBytes)
 		if !kvAllowed { return ErrKVSizeExceeded }
 		newEntries, kvAllowed = appendOrUpdate(newEntries, "canonical_after", binaryUint64(uint64(p.GetDeadline().GetSeconds())), s.MaxKVSize, s.MaxKVBytes)
@@ -900,6 +922,10 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 		p := t.Proto.GetAddHostPeer()
 		if p == nil {
 			return errors.New("group: ADD_HOST_PEER missing payload")
+		}
+		// M-4: validate mesh IP length (4 bytes for IPv4 or 16 for IPv6).
+		if ipLen := len(p.GetMeshIp()); ipLen != 4 && ipLen != 16 {
+			return fmt.Errorf("group: ADD_HOST_PEER rejected — mesh_ip must be 4 or 16 bytes, got %d", ipLen)
 		}
 		if err := verifyAddHostPeerPayload(s, p); err != nil {
 			return err

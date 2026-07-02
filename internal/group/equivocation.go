@@ -429,10 +429,12 @@ func (s *State) CheckEquivocation(
 // Helpers — kept here so the main group.go file doesn't bloat.
 // =============================================================================
 
-// findSigningSteward returns the FIRST verifying steward from the
-// transition's multisig envelope. This is a v1 simplification; a
-// production implementation would check all signers and report
-// equivocation per-signer.
+// findSigningSteward returns the first verifying steward from the
+// transition's multisig envelope. Each steward is matched at most once
+// (M-7 fix: previously, if two signatures both verified against the
+// same steward key, the first signature would match the first steward
+// and the second signature would also match the same steward, causing
+// incorrect attribution. Now we skip already-matched stewards.)
 //
 // Returns the zero PublicKey if no signers verified (caller should
 // already have rejected the transition before reaching here).
@@ -441,11 +443,17 @@ func (t *Transition) findSigningSteward(stewards []Steward) types.PublicKey {
 	if multisig == nil {
 		return types.PublicKey{}
 	}
+	// M-7: track which stewards have already been matched to a signature.
+	matched := make(map[types.PublicKey]bool, len(stewards))
 	for _, sig := range multisig.GetSignatures() {
 		var raw types.Signature
 		copy(raw[:], sig.GetRaw())
 		for _, s := range stewards {
+			if matched[s.Key] {
+				continue // skip already-mapped stewards
+			}
 			if err := verifySingle(s.Key, raw, t.groupID, t.canonical); err == nil {
+				matched[s.Key] = true
 				return s.Key
 			}
 		}

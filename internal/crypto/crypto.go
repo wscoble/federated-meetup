@@ -148,6 +148,10 @@ func VerifyWithMessage(pub types.PublicKey, sig types.Signature, msg []byte) err
 // the SAME for all (steward, sig) pairs. We pre-compute it once outside the
 // loop instead of recomputing it for every verification attempt.
 func VerifyMultisig(stewards []types.PublicKey, threshold uint32, sigs []types.Signature, groupKey types.PublicKey, kind MessageKind, payload []byte) error {
+	// M-1: reject threshold=0 — it would disable authentication entirely.
+	if threshold == 0 {
+		return errors.New("crypto: threshold must be > 0")
+	}
 	if uint32(len(sigs)) < threshold {
 		return fmt.Errorf("crypto: %d signatures, need threshold %d", len(sigs), threshold)
 	}

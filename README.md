@@ -108,9 +108,10 @@ protobuf standard + ConnectRPC surface defined. DDIL profiles defined.
 Server-to-server WireGuard mesh (real `golang.zx2c4.com/wireguard` userspace)
 is the next milestone.
 
-See `docs/02-PROTOCOL.md` for the protocol spec. See `docs/01-PROBLEM.md`,
-`03-PRODUCT.md`, `04-TARIFF.md`, `05-LAUNCH.md`, `06-OPEN-QUESTIONS.md` for
-the rest of the strategy.
+See `docs/02-PROTOCOL.md` for the protocol spec. See `docs/08-DISCOVERY.md`
+for the SEO/AIEO/MCP discovery layer (the commercial moat). See
+`docs/01-PROBLEM.md`, `03-PRODUCT.md`, `04-TARIFF.md`, `05-LAUNCH.md`,
+`06-OPEN-QUESTIONS.md` for the rest of the strategy.
 
 ## Companion repos
 

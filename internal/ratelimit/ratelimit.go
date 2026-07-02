@@ -136,15 +136,19 @@ func NewLimiter(rate float64, burst float64, clock func() time.Time) *Limiter {
 // Allow checks whether the given steward is allowed to submit a
 // transition for the given group. Returns nil if permitted, or an
 // ErrRateLimited describing the wait time if not.
+//
+// M-2: the entire lazy-create-and-allow sequence is under l.mu so
+// that two concurrent calls for the same (group, steward) key cannot
+// each create their own bucket and bypass the rate limit.
 func (l *Limiter) Allow(group types.GroupID, steward types.PublicKey) error {
 	k := bucketKey{group: group, steward: steward}
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	b, ok := l.buckets[k]
 	if !ok {
 		b = NewBucket(l.rate, l.burst, l.clock)
 		l.buckets[k] = b
 	}
-	l.mu.Unlock()
 	if b.Allow() {
 		return nil
 	}
