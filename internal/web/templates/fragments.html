@@ -1,26 +1,32 @@
 {{define "rsvp_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-md p-4">
+<div class="bg-green-50 border border-green-200 rounded-lg p-4">
 	<p class="text-green-700 font-medium">RSVP created! Check your email for a confirmation link.</p>
 	<p class="text-sm text-gray-500 mt-2">We sent a magic link to {{.Email}}. Click the link to confirm your RSVP.</p>
 </div>
 {{end}}
 
 {{define "rsvp_confirmed_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-md p-4">
+<div class="bg-green-50 border border-green-200 rounded-lg p-4">
 	<p class="text-green-700 font-medium">RSVP confirmed! See you there.</p>
 </div>
 {{end}}
 
 {{define "event_created_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-md p-4">
+<div class="bg-green-50 border border-green-200 rounded-lg p-4">
 	<p class="text-green-700 font-medium">Event created!</p>
 	<p class="text-sm text-gray-600 mt-1">{{.Title}}</p>
 	<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-indigo-600 text-sm hover:underline mt-2 inline-block">View event →</a>
 </div>
 {{end}}
 
+{{define "ticket_created_fragment"}}
+<div class="bg-green-50 border border-green-200 rounded-lg p-4">
+	<p class="text-green-700 font-medium">Ticket type created!</p>
+</div>
+{{end}}
+
 {{define "error_fragment"}}
-<div class="bg-red-50 border border-red-200 rounded-md p-4">
+<div class="bg-red-50 border border-red-200 rounded-lg p-4">
 	<p class="text-red-700 font-medium">{{.Error}}</p>
 </div>
 {{end}}

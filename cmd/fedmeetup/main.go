@@ -129,6 +129,9 @@ func main() {
 		log.Fatalf("web server: %v", err)
 	}
 
+	// Seed demo data if the product store is empty (idempotent).
+	webSrv.SeedData()
+
 	// ---- MCP discovery layer ----
 	mcpCfg := mcp.HostConfig{
 		Name:           cfg.name,

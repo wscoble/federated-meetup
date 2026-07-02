@@ -1,22 +1,31 @@
 {{template "base" .}}
 {{define "title"}}{{.Group.DisplayName}} — Group{{end}}
 {{define "content"}}
-<h1 class="text-3xl font-bold mb-2">{{.Group.DisplayName}}</h1>
-<p class="text-gray-500 text-sm mb-4">@{{.Group.CanonicalName}}</p>
+<div class="mb-6">
+	<h1 class="text-3xl font-bold mb-1">{{.Group.DisplayName}}</h1>
+	<p class="text-gray-500 text-sm">@{{.Group.CanonicalName}}</p>
+</div>
 {{if .Group.Description}}<p class="text-gray-700 mb-6">{{.Group.Description}}</p>{{end}}
 
 {{if .Events}}
-<h2 class="text-xl font-semibold mb-3">Upcoming Events</h2>
-<ul class="space-y-3">
+<h2 class="text-xl font-semibold mb-4">Upcoming Events</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 	{{range .Events}}
-	<li class="bg-white rounded-lg shadow p-4">
+	<div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 border border-gray-100 flex flex-col">
 		<a href="/events/{{$.Group.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
-		<p class="text-gray-600 text-sm mt-1">{{formatTime .StartsAt}}</p>
-		{{if .Location}}<p class="text-gray-500 text-sm">{{.Location}}</p>{{end}}
-	</li>
+		<p class="text-gray-500 text-sm mt-2">{{formatTime .StartsAt}}</p>
+		{{if .Location}}<p class="text-gray-400 text-sm mt-1">{{.Location}}</p>{{end}}
+		{{if .Cancelled}}
+		<span class="inline-block bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full mt-2">Cancelled</span>
+		{{else}}
+		<span class="inline-block bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full mt-2">Upcoming</span>
+		{{end}}
+	</div>
 	{{end}}
-</ul>
+</div>
 {{else}}
-<p class="text-gray-500">No upcoming events.</p>
+<div class="bg-white rounded-xl shadow-sm p-8 text-center border border-gray-100">
+	<p class="text-gray-500">No upcoming events.</p>
+</div>
 {{end}}
 {{end}}

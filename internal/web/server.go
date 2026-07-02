@@ -66,19 +66,26 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /groups/{name}", s.handleGroup)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}", s.handleEvent)
 	mux.HandleFunc("POST /events/{group_key}/{event_id}/rsvp", s.handleRsvpSubmit)
+	mux.HandleFunc("POST /events/{group_key}/{event_id}/purchase", s.handlePurchaseTicket)
 
 	// RSVP magic-link flow
 	mux.HandleFunc("GET /rsvp/{token}", s.handleRsvpConfirm)
 	mux.HandleFunc("POST /rsvp/{token}/confirm", s.handleRsvpConfirmPost)
+
+	// My RSVPs
+	mux.HandleFunc("GET /my-rsvps", s.handleMyRsvps)
+	mux.HandleFunc("POST /my-rsvps/cancel", s.handleCancelRsvp)
 
 	// Organizer dashboard (auth-gated)
 	mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	mux.HandleFunc("GET /dashboard/login", s.handleLogin)
 	mux.HandleFunc("POST /dashboard/login", s.handleLoginPost)
 	mux.HandleFunc("POST /dashboard/events", s.handleCreateEvent)
+	mux.HandleFunc("POST /dashboard/events/{event_id}/tickets", s.handleCreateTicket)
+	mux.HandleFunc("POST /dashboard/events/{group_key}/checkin", s.handleCheckIn)
 	mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
 
-	// Checkout redirect
+	// Checkout
 	mux.HandleFunc("GET /checkout/{order_id}", s.handleCheckout)
 
 	return s.withMiddleware(mux)
@@ -106,7 +113,9 @@ type templateMap map[string]*template.Template
 // definitions ("content", "title", "head") don't collide across pages.
 func loadTemplates() (templateMap, error) {
 	funcs := template.FuncMap{
-		"formatTime": formatTime,
+		"formatTime":  formatTime,
+		"formatMoney": formatMoney,
+		"formatCents": formatCents,
 	}
 
 	// Read base template
@@ -149,6 +158,22 @@ func loadTemplates() (templateMap, error) {
 // formatTime converts a unix timestamp to a human-readable string.
 func formatTime(unix int64) string {
 	return time.Unix(unix, 0).UTC().Format("Mon, Jan 2, 2006 3:04 PM MST")
+}
+
+// formatMoney formats a pb.Money proto as a human-readable price string.
+func formatMoney(m *pb.Money) string {
+	if m == nil {
+		return "Free"
+	}
+	if m.Amount == 0 {
+		return "Free"
+	}
+	return formatCents(m.Amount)
+}
+
+// formatCents converts a cents amount to a dollar string.
+func formatCents(cents uint64) string {
+	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
 }
 
 // ---- Rendering helpers ----
@@ -221,6 +246,7 @@ type homeData struct {
 	pageBase
 	Groups []CachedGroup
 	Events []CachedEvent
+	Query  string
 }
 
 type groupData struct {
@@ -229,23 +255,44 @@ type groupData struct {
 	Events []CachedEvent
 }
 
+type ticketView struct {
+	TicketID string
+	Name      string
+	Price     *pb.Money
+	Capacity  uint64
+	Sold      uint64
+}
+
 type eventData struct {
 	pageBase
 	Event     CachedEvent
+	Group     CachedGroup
 	RsvpCount int
+	Tickets   []ticketView
+}
+
+type attendeeView struct {
+	Email    string
+	Name     string
+	Attended bool
+}
+
+type dashboardEvent struct {
+	EventID      string
+	Title        string
+	StartsAt     int64
+	RsvpCount    int
+	TicketSold   int
+	EventRevenue *pb.Money
+	Attendees    []attendeeView
 }
 
 type dashboardData struct {
 	pageBase
-	GroupKey string
-	Events   []dashboardEvent
-}
-
-type dashboardEvent struct {
-	EventID   string
-	Title     string
-	StartsAt  int64
-	RsvpCount int
+	GroupKey      string
+	Events        []dashboardEvent
+	TotalRevenue  *pb.Money
+	TotalRsvps    int
 }
 
 type rsvpPageData struct {
@@ -257,6 +304,28 @@ type rsvpPageData struct {
 
 type loginData struct {
 	pageBase
+}
+
+type checkoutData struct {
+	pageBase
+	Order       OrderRecord
+	EventTitle  string
+	CheckoutURL string
+}
+
+type myRsvpsData struct {
+	pageBase
+	Email string
+	Rsvps []myRsvpView
+}
+
+type myRsvpView struct {
+	GroupKey  string
+	EventID   string
+	EventTitle string
+	StartsAt  int64
+	Confirmed bool
+	Token     string
 }
 
 type fragmentData struct {
@@ -278,12 +347,12 @@ func eventJSONLD(e CachedEvent, rsvpCount int, baseURL string) string {
 	startDate := time.Unix(e.StartsAt, 0).UTC().Format(time.RFC3339)
 
 	ld := map[string]interface{}{
-		"@type":            "Event",
-		"name":             e.Title,
-		"startDate":        startDate,
-		"eventStatus":      eventStatus,
-		"eventAttendanceMode": "OfflineEventAttendanceMode",
-		"url":              fmt.Sprintf("%s/events/%s/%s", baseURL, e.GroupKey, e.EventID),
+		"@type":                "Event",
+		"name":                 e.Title,
+		"startDate":            startDate,
+		"eventStatus":          eventStatus,
+		"eventAttendanceMode":  "OfflineEventAttendanceMode",
+		"url":                  fmt.Sprintf("%s/events/%s/%s", baseURL, e.GroupKey, e.EventID),
 	}
 	if e.Description != "" {
 		ld["description"] = e.Description

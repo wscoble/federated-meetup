@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -17,6 +18,7 @@ import (
 // ---- Public pages ----
 
 // handleHome renders the home page: list of groups + upcoming events.
+// Supports ?q= search query to filter groups and events by name.
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	groups, _ := s.store.ListGroups()
 	events, _ := s.store.ListUpcomingEvents("", 10)
@@ -37,7 +39,28 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.renderPage(w, "home", homeData{Groups: groups, Events: events})
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query != "" {
+		// Filter groups by display name (case-insensitive)
+		var filteredGroups []CachedGroup
+		for _, g := range groups {
+			if strings.Contains(strings.ToLower(g.DisplayName), strings.ToLower(query)) {
+				filteredGroups = append(filteredGroups, g)
+			}
+		}
+		groups = filteredGroups
+
+		// Filter events by title (case-insensitive)
+		var filteredEvents []CachedEvent
+		for _, e := range events {
+			if strings.Contains(strings.ToLower(e.Title), strings.ToLower(query)) {
+				filteredEvents = append(filteredEvents, e)
+			}
+		}
+		events = filteredEvents
+	}
+
+	s.renderPage(w, "home", homeData{Groups: groups, Events: events, Query: query})
 }
 
 // handleGroup renders a group profile page with upcoming events.
@@ -91,6 +114,27 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 
 	rsvpCount, _ := s.store.RsvpCount(groupKey, eventID)
 
+	// Get group info for organizer display
+	group, err := s.groupFromProduct(groupKey)
+	if err != nil {
+		group = CachedGroup{GroupKey: groupKey, DisplayName: groupKey}
+	}
+
+	// Fetch tickets from product store
+	var tickets []ticketView
+	if s.product != nil {
+		ptickets := s.product.Store().TicketsForEvent(eventID)
+		for _, t := range ptickets {
+			tickets = append(tickets, ticketView{
+				TicketID: t.TicketId,
+				Name:      t.Name,
+				Price:     t.Price,
+				Capacity:  t.Capacity,
+				Sold:      t.Sold,
+			})
+		}
+	}
+
 	jsonld := eventJSONLD(event, rsvpCount, baseURL(r))
 
 	s.renderPage(w, "event", eventData{
@@ -99,7 +143,9 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 			CSRFToken: csrfTokenFromRequest(r),
 		},
 		Event:     event,
+		Group:     group,
 		RsvpCount: rsvpCount,
+		Tickets:   tickets,
 	})
 }
 
@@ -151,6 +197,141 @@ func (s *Server) handleRsvpSubmit(w http.ResponseWriter, r *http.Request) {
 	log.Printf("web: RSVP magic link for %s: %s (event %s/%s)", email, magicLink, groupKey, eventID)
 
 	s.renderFragment(w, "rsvp_fragment", fragmentData{Email: email})
+}
+
+// ---- Ticket purchase flow ----
+
+// handlePurchaseTicket creates an order via product.Service.PurchaseTicket
+// and redirects to the checkout page.
+func (s *Server) handlePurchaseTicket(w http.ResponseWriter, r *http.Request) {
+	groupKey := r.PathValue("group_key")
+	eventID := r.PathValue("event_id")
+	if groupKey == "" || eventID == "" {
+		http.Error(w, "missing event identifier", http.StatusBadRequest)
+		return
+	}
+
+	ticketID := r.FormValue("ticket_id")
+	email := r.FormValue("email")
+
+	if ticketID == "" {
+		http.Error(w, "ticket_id required", http.StatusBadRequest)
+		return
+	}
+	if err := validateString("email", email, 3, 256); err != nil {
+		http.Error(w, "valid email required", http.StatusBadRequest)
+		return
+	}
+
+	if s.product == nil {
+		http.Error(w, "ticketing not configured", http.StatusInternalServerError)
+		return
+	}
+
+	// Use the product store's atomic purchase directly
+	ps := s.product.Store()
+	ticket, ok := ps.GetTicket(ticketID)
+	if !ok {
+		http.Error(w, "ticket not found", http.StatusNotFound)
+		return
+	}
+
+	// Compute amount
+	var amount uint64
+	currency := "USD"
+	if ticket.Price != nil {
+		amount = ticket.Price.Amount
+		if ticket.Price.Currency != "" {
+			currency = ticket.Price.Currency
+		}
+	}
+
+	// Create order via AtomicPurchaseTicket
+	orderID := generateToken()[:16]
+	sessionID := fmt.Sprintf("mock_sess_%s", orderID)
+
+	order, found, soldOut := ps.AtomicPurchaseTicket(ticketID, email, orderID, sessionID, 1, amount, currency)
+	if !found {
+		http.Error(w, "ticket not found", http.StatusNotFound)
+		return
+	}
+	if soldOut {
+		http.Error(w, "ticket is sold out", http.StatusConflict)
+		return
+	}
+
+	// Store order in SQLite for the checkout page
+	var amountInt int
+	if order.AmountPaid != nil {
+		amountInt = int(order.AmountPaid.Amount)
+	}
+	_ = s.store.CreateOrder(OrderRecord{
+		OrderID:         order.OrderId,
+		GroupKey:        groupKey,
+		EventID:         eventID,
+		Email:           email,
+		AmountCents:     amountInt,
+		Status:          order.Status.String(),
+		StripeSessionID: order.StripeSessionId,
+	})
+
+	log.Printf("web: ticket purchased — order %s for event %s/%s by %s", order.OrderId, groupKey, eventID, email)
+	http.Redirect(w, r, "/checkout/"+order.OrderId, http.StatusSeeOther)
+}
+
+// ---- My RSVPs ----
+
+// handleMyRsvps shows all RSVPs for the current user (by email query param).
+func (s *Server) handleMyRsvps(w http.ResponseWriter, r *http.Request) {
+	email := strings.TrimSpace(r.URL.Query().Get("email"))
+
+	var rsvps []myRsvpView
+	if email != "" {
+		// Get RSVPs from SQLite store
+		records, err := s.store.ListRsvpsByEmail(email)
+		if err == nil {
+			for _, rec := range records {
+				eventTitle := "Unknown event"
+				if event, err := s.eventFromProduct(rec.GroupKey, rec.EventID); err == nil {
+					eventTitle = event.Title
+				}
+				rsvps = append(rsvps, myRsvpView{
+					GroupKey:   rec.GroupKey,
+					EventID:    rec.EventID,
+					EventTitle: eventTitle,
+					StartsAt:   0,
+					Confirmed:  rec.Confirmed,
+					Token:      rec.Token,
+				})
+			}
+		}
+	}
+
+	s.renderPage(w, "my_rsvps", myRsvpsData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+		},
+		Email: email,
+		Rsvps: rsvps,
+	})
+}
+
+// handleCancelRsvp cancels (deletes) a confirmed RSVP.
+func (s *Server) handleCancelRsvp(w http.ResponseWriter, r *http.Request) {
+	email := r.FormValue("email")
+	groupKey := r.FormValue("group_key")
+	eventID := r.FormValue("event_id")
+
+	if email == "" || groupKey == "" || eventID == "" {
+		http.Error(w, "email, group_key, and event_id required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.CancelRsvp(groupKey, eventID, email); err != nil {
+		log.Printf("web: cancel RSVP error: %v", err)
+	}
+
+	http.Redirect(w, r, "/my-rsvps?email="+email, http.StatusSeeOther)
 }
 
 // ---- RSVP magic-link flow ----
@@ -221,13 +402,56 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	events, _ := s.store.ListEventsByGroup(groupKey)
 
 	var dashEvents []dashboardEvent
+	totalRsvps := 0
+	var totalRevenueAmount uint64
+	totalRevenueCurrency := "USD"
+
 	for _, e := range events {
 		count, _ := s.store.RsvpCount(e.GroupKey, e.EventID)
+		totalRsvps += count
+
+		// Get attendees from SQLite
+		rsvpRecords, _ := s.store.ListRsvpsForEvent(e.GroupKey, e.EventID)
+		var attendees []attendeeView
+		for _, rec := range rsvpRecords {
+			attendees = append(attendees, attendeeView{
+				Email:    rec.UserEmail,
+				Name:     rec.UserName,
+				Attended: rec.Attended,
+			})
+		}
+
+		// Get ticket sales and revenue from product store
+		ticketSold := 0
+		var eventRevenueAmount uint64
+		eventRevenueCurrency := "USD"
+		if s.product != nil {
+			orders := s.product.Store().OrdersForEvent(e.EventID)
+			for _, o := range orders {
+				if o.Status == pb.OrderStatus_ORDER_STATUS_COMPLETED || o.Status == pb.OrderStatus_ORDER_STATUS_PENDING {
+					ticketSold++
+					if o.AmountPaid != nil && o.Status == pb.OrderStatus_ORDER_STATUS_COMPLETED {
+						eventRevenueAmount += o.AmountPaid.Amount
+						if o.AmountPaid.Currency != "" {
+							eventRevenueCurrency = o.AmountPaid.Currency
+						}
+						totalRevenueAmount += o.AmountPaid.Amount
+						if o.AmountPaid.Currency != "" {
+							totalRevenueCurrency = o.AmountPaid.Currency
+						}
+					}
+				}
+			}
+		}
+
 		dashEvents = append(dashEvents, dashboardEvent{
-			EventID:   e.EventID,
-			Title:     e.Title,
-			StartsAt:  e.StartsAt,
-			RsvpCount: count,
+			EventID:      e.EventID,
+			Title:        e.Title,
+			StartsAt:     e.StartsAt,
+			RsvpCount:    count,
+			TicketSold:   ticketSold,
+			EventRevenue: &pb.Money{Amount: eventRevenueAmount, Currency: eventRevenueCurrency},
+			Attendees:    attendees,
 		})
 	}
 
@@ -235,8 +459,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		pageBase: pageBase{
 			CSRFToken: csrfTokenFromRequest(r),
 		},
-		GroupKey: groupKey,
-		Events:   dashEvents,
+		GroupKey:     groupKey,
+		Events:       dashEvents,
+		TotalRevenue: &pb.Money{Amount: totalRevenueAmount, Currency: totalRevenueCurrency},
+		TotalRsvps:   totalRsvps,
 	})
 }
 
@@ -376,9 +602,92 @@ func (s *Server) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleCreateTicket creates a new ticket type for an event.
+func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
+	groupKey, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	eventID := r.PathValue("event_id")
+	if eventID == "" {
+		http.Error(w, "event_id required", http.StatusBadRequest)
+		return
+	}
+
+	ticketName := r.FormValue("ticket_name")
+	priceStr := r.FormValue("price_cents")
+	capacityStr := r.FormValue("ticket_capacity")
+
+	if err := validateString("ticket_name", ticketName, 1, 256); err != nil {
+		s.renderFragment(w, "error_fragment", fragmentData{Error: err.Error()})
+		return
+	}
+
+	price, err := strconv.ParseUint(priceStr, 10, 64)
+	if err != nil {
+		price = 0
+	}
+	capacity, err := strconv.ParseUint(capacityStr, 10, 64)
+	if err != nil {
+		capacity = 0
+	}
+
+	ticketID := "tick-" + generateToken()[:12]
+
+	ticket := &pb.Ticket{
+		TicketId: ticketID,
+		Name:     ticketName,
+		Price:    &pb.Money{Amount: price, Currency: "USD"},
+		Capacity: capacity,
+		Sold:     0,
+	}
+
+	if s.product != nil {
+		s.product.Store().PutTicket(eventID, ticket)
+	}
+
+	log.Printf("web: ticket created: %s for event %s (group %s)", ticketID, eventID, groupKey)
+	// Redirect back to dashboard
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// handleCheckIn marks an attendee as checked in for an event.
+func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	// The route pattern uses {group_key} but we need event_id from the form
+	eventID := r.FormValue("event_id")
+	email := r.FormValue("email")
+
+	if eventID == "" || email == "" {
+		http.Error(w, "event_id and email required", http.StatusBadRequest)
+		return
+	}
+
+	// Update check-in status in the product store
+	if s.product != nil {
+		if rsvp, ok := s.product.Store().GetRsvp(eventID, email); ok {
+			rsvp.Attended = true
+			s.product.Store().UpdateRsvp(rsvp)
+		}
+	}
+
+	// Also update in SQLite
+	_ = s.store.MarkRsvpAttended(eventID, email)
+
+	log.Printf("web: attendee checked in: %s for event %s", email, eventID)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
 // ---- Checkout ----
 
-// handleCheckout redirects to the Stripe checkout URL for an order.
+// handleCheckout shows the order details and redirects to Stripe (or mock checkout).
 func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	orderID := r.PathValue("order_id")
 	if orderID == "" {
@@ -388,39 +697,54 @@ func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
 
 	// Try local store first
 	order, err := s.store.GetOrder(orderID)
-	if err == nil && order.StripeSessionID != "" {
-		// Redirect to Stripe checkout URL
-		checkoutURL := fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", order.StripeSessionID)
-		http.Redirect(w, r, checkoutURL, http.StatusSeeOther)
-		return
-	}
 
-	// Try product store
-	if s.product != nil {
+	// Try product store if not found locally
+	if err != nil && s.product != nil {
 		if prodOrder, ok := s.product.Store().GetOrder(orderID); ok {
-			if prodOrder.StripeSessionId != "" {
-				// Store locally for future reference
-				var amount int
-				if prodOrder.AmountPaid != nil {
-					amount = int(prodOrder.AmountPaid.Amount)
-				}
-				_ = s.store.CreateOrder(OrderRecord{
-					OrderID:         prodOrder.OrderId,
-					GroupKey:        "",
-					EventID:         "",
-					Email:           prodOrder.AttendeeEmail,
-					AmountCents:     amount,
-					Status:          prodOrder.Status.String(),
-					StripeSessionID: prodOrder.StripeSessionId,
-				})
-				checkoutURL := fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", prodOrder.StripeSessionId)
-				http.Redirect(w, r, checkoutURL, http.StatusSeeOther)
-				return
+			var amount int
+			if prodOrder.AmountPaid != nil {
+				amount = int(prodOrder.AmountPaid.Amount)
 			}
+			order = OrderRecord{
+				OrderID:         prodOrder.OrderId,
+				GroupKey:        "",
+				EventID:         "",
+				Email:           prodOrder.AttendeeEmail,
+				AmountCents:     amount,
+				Status:          prodOrder.Status.String(),
+				StripeSessionID: prodOrder.StripeSessionId,
+			}
+			_ = s.store.CreateOrder(order)
 		}
 	}
 
-	http.NotFound(w, r)
+	if order.OrderID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Get event title
+	eventTitle := "Event"
+	if order.EventID != "" {
+		if event, err := s.eventFromProduct(order.GroupKey, order.EventID); err == nil {
+			eventTitle = event.Title
+		}
+	}
+
+	// Build checkout URL
+	var checkoutURL string
+	if order.StripeSessionID != "" {
+		checkoutURL = fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", order.StripeSessionID)
+	}
+
+	s.renderPage(w, "checkout", checkoutData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+		},
+		Order:       order,
+		EventTitle:  eventTitle,
+		CheckoutURL: checkoutURL,
+	})
 }
 
 // ---- Utility ----

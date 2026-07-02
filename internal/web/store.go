@@ -87,6 +87,7 @@ func (s *Store) migrate() error {
 			user_name  TEXT NOT NULL DEFAULT '',
 			token      TEXT NOT NULL DEFAULT '',
 			confirmed  INTEGER NOT NULL DEFAULT 0,
+			attended   INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (group_key, event_id, user_email)
 		)`,
@@ -330,6 +331,7 @@ type RSVPRecord struct {
 	UserName  string
 	Token     string
 	Confirmed bool
+	Attended  bool
 	CreatedAt int64
 }
 
@@ -340,17 +342,22 @@ func (s *Store) CreateRsvp(r RSVPRecord) error {
 	if r.Confirmed {
 		confirmed = 1
 	}
+	attended := 0
+	if r.Attended {
+		attended = 1
+	}
 	if r.CreatedAt == 0 {
 		r.CreatedAt = s.now().Unix()
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO rsvps (group_key, event_id, user_email, user_name, token, confirmed, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rsvps (group_key, event_id, user_email, user_name, token, confirmed, attended, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(group_key, event_id, user_email) DO UPDATE SET
 		   user_name=excluded.user_name,
 		   token=excluded.token,
-		   confirmed=excluded.confirmed`,
-		r.GroupKey, r.EventID, r.UserEmail, r.UserName, r.Token, confirmed, r.CreatedAt,
+		   confirmed=excluded.confirmed,
+		   attended=excluded.attended`,
+		r.GroupKey, r.EventID, r.UserEmail, r.UserName, r.Token, confirmed, attended, r.CreatedAt,
 	)
 	return err
 }
@@ -360,14 +367,16 @@ func (s *Store) CreateRsvp(r RSVPRecord) error {
 func (s *Store) ConfirmRsvp(token string) (RSVPRecord, error) {
 	var r RSVPRecord
 	var confirmed int
+	var attended int
 	err := s.db.QueryRow(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, created_at FROM rsvps WHERE token = ?`,
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps WHERE token = ?`,
 		token,
-	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &r.CreatedAt)
+	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt)
 	if err != nil {
 		return RSVPRecord{}, err
 	}
 	r.Confirmed = confirmed != 0
+	r.Attended = attended != 0
 	if r.Confirmed {
 		return r, nil // already confirmed — idempotent
 	}
@@ -383,14 +392,16 @@ func (s *Store) ConfirmRsvp(token string) (RSVPRecord, error) {
 func (s *Store) GetRsvpByToken(token string) (RSVPRecord, error) {
 	var r RSVPRecord
 	var confirmed int
+	var attended int
 	err := s.db.QueryRow(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, created_at FROM rsvps WHERE token = ?`,
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps WHERE token = ?`,
 		token,
-	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &r.CreatedAt)
+	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt)
 	if err != nil {
 		return RSVPRecord{}, err
 	}
 	r.Confirmed = confirmed != 0
+	r.Attended = attended != 0
 	return r, nil
 }
 
@@ -407,7 +418,7 @@ func (s *Store) RsvpCount(groupKey, eventID string) (int, error) {
 // ListRsvpsForEvent returns all confirmed RSVPs for an event.
 func (s *Store) ListRsvpsForEvent(groupKey, eventID string) ([]RSVPRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, created_at FROM rsvps
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps
 		 WHERE group_key = ? AND event_id = ? AND confirmed = 1 ORDER BY created_at ASC`,
 		groupKey, eventID,
 	)
@@ -419,13 +430,59 @@ func (s *Store) ListRsvpsForEvent(groupKey, eventID string) ([]RSVPRecord, error
 	for rows.Next() {
 		var r RSVPRecord
 		var confirmed int
-		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &r.CreatedAt); err != nil {
+		var attended int
+		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Confirmed = confirmed != 0
+		r.Attended = attended != 0
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ListRsvpsByEmail returns all RSVPs (confirmed and unconfirmed) for a given email.
+func (s *Store) ListRsvpsByEmail(email string) ([]RSVPRecord, error) {
+	rows, err := s.db.Query(
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps
+		 WHERE user_email = ? ORDER BY created_at DESC`,
+		email,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RSVPRecord
+	for rows.Next() {
+		var r RSVPRecord
+		var confirmed int
+		var attended int
+		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.Confirmed = confirmed != 0
+		r.Attended = attended != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CancelRsvp sets the RSVP status to unconfirmed (effectively canceling it).
+func (s *Store) CancelRsvp(groupKey, eventID, email string) error {
+	_, err := s.db.Exec(
+		`UPDATE rsvps SET confirmed = 0 WHERE group_key = ? AND event_id = ? AND user_email = ?`,
+		groupKey, eventID, email,
+	)
+	return err
+}
+
+// MarkRsvpAttended marks an RSVP as attended.
+func (s *Store) MarkRsvpAttended(eventID, email string) error {
+	_, err := s.db.Exec(
+		`UPDATE rsvps SET attended = 1 WHERE event_id = ? AND user_email = ?`,
+		eventID, email,
+	)
+	return err
 }
 
 // ---- Organizer sessions ----

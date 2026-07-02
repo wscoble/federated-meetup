@@ -4,14 +4,22 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>{{block "title" .}}Federated Meetup{{end}}</title>
+	<link rel="stylesheet" href="/static/tailwind.min.css">
 	<script src="/static/htmx.min.js"></script>
 	{{block "head" .}}{{end}}
 </head>
 <body class="bg-gray-50 text-gray-900 min-h-screen flex flex-col">
-	<nav class="bg-white border-b border-gray-200 px-4 py-3">
-		<a href="/" class="text-xl font-bold text-indigo-600">Federated Meetup</a>
+	<nav class="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-10">
+		<div class="max-w-5xl mx-auto flex items-center justify-between">
+			<a href="/" class="text-xl font-bold text-indigo-600">Federated Meetup</a>
+			<div class="flex items-center space-x-4 text-sm">
+				<a href="/" class="text-gray-600 hover:text-indigo-600 font-medium">Home</a>
+				<a href="/my-rsvps" class="text-gray-600 hover:text-indigo-600 font-medium">My RSVPs</a>
+				{{block "nav_extra" .}}{{end}}
+			</div>
+		</div>
 	</nav>
-	<main class="flex-1 max-w-3xl mx-auto w-full px-4 py-6">
+	<main class="flex-1 max-w-5xl mx-auto w-full px-4 py-8">
 		{{block "content" .}}{{end}}
 	</main>
 	<footer class="border-t border-gray-200 py-4 text-center text-sm text-gray-500">
