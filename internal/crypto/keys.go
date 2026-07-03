@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Three independent key domains, per docs/02-PROTOCOL.md §5.1.
 //

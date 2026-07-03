@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Cancel-event scenario: stewards cancel an existing event,
 // recording the cancellation in the Merkle KV without deleting

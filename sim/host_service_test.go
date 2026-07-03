@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Tests for internal/host/service.go. The Service type satisfies the
 // GENERATED HostServiceHandler interface (federatedmeetupv1connect),

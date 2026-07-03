@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Branch-local state machine (protocol §3, post-2026-06-27).
 //

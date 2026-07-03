@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Package crypto wraps signing/verification with the protocol's canonical
 // message format and the multisig envelope.

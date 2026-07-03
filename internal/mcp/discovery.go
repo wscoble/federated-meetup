@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Discovery endpoints for the federated-meetup host: /.well-known/federation,
 // /llms.txt, /openapi.json, /robots.txt. These are served alongside the

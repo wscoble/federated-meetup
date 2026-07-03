@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Audit H-7/H-8 (cycle 51): GetLog + GetSnapshot RPC tests.
 //

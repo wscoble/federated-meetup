@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // BRANCH_CREATE scenario: a steward group creates a new branch
 // within itself (the "cheap fork" — same group, divergent evolution

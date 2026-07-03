@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // HTTP wiring helpers for the MCP server and discovery endpoints.
 // This file provides a convenience function to register all discovery

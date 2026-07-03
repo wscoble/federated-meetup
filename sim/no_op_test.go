@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // No-op transition characterization. ADD_STEWARD against a key that's
 // already in the steward set does NOT change the *value* the KV stores

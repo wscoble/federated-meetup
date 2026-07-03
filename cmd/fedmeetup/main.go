@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // fedmeetup is the federated-meetup host daemon. It serves the open
 // ConnectRPC API, MCP discovery endpoints, and the server-rendered web

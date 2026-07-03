@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Member lifecycle scenario: a user can be added to a group, and
 // re-adding an existing member produces a new state root (the

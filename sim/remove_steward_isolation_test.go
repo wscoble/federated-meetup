@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // REMOVE_STEWARD isolation test: apply REMOVE_STEWARD on a fresh 3-steward
 // group (threshold 2), check whether the state advances. Cuts down to the

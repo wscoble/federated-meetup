@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // RSVP lifecycle: a user can RSVP to an event, cancel, then RSVP
 // again. Like member-lifecycle (cycle 25), this exercises a

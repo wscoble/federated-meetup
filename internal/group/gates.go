@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Verifier helpers for the new transition types (G1, G2, G3, G6, G8).
 // Each function is called from State.Apply after the multisig envelope

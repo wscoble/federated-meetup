@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Composite scenario: a realistic Vegas Programmers lifecycle that
 // chains together transitions we covered individually in earlier

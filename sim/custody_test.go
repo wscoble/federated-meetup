@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Custody scenario: stewards declare the operational reality of
 // how their keys are stored (HSM, hardware wallet, encrypted disk,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Package mcp implements the MCP (Model Context Protocol) server for the
 // federated-meetup host. It wraps the host's existing read RPCs (implemented

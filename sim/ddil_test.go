@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // DDIL recovery test: under packet loss, latency, and partition, hosts
 // converge on the same state root after enough simulated time.

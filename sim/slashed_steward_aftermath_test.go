@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Slashed-steward-aftermath scenario: after a steward is slashed
 // via SLASH_STEWARD, they MUST NOT be able to co-sign future

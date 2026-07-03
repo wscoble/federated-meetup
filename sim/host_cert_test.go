@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Host certificate scenario: a steward group issues a TLS cert
 // for a host to serve under a specific hostname, then revokes

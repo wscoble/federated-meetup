@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Fork inheritance semantics. FORK (internal/group/group.go:618)
 // declares a new sovereign group; the parent's state machine just

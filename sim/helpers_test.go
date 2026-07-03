@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Test helpers shared by sim_test.go and ddil_test.go. In a real _test.go
 // file in the sim package, helpers used across tests live here.

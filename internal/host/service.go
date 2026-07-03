@@ -14,7 +14,7 @@
 //   - Run `scripts/proto.sh` (buf generate).
 //   - Update the method body here to match the new request/response shape.
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 package host
 
 import (

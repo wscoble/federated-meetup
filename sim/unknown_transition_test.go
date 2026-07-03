@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Defensive rejection of unknown transition types. The apply
 // switch in internal/group/group.go has a default branch that

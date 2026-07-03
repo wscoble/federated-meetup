@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Remove-mesh-peer scenario: REMOVE_HOST_PEER depends on the
 // target peer being a current mesh member. Combined with the

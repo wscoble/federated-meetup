@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Package types provides the Go-native types for the federated-meetup
 // protocol. The protobuf definitions in proto/federated_meetup/v1 are the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Racing transitions: two transitions submitted at the same
 // prior_state. Only one can apply (the state root advances

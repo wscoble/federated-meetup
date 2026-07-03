@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Steward churn scenario: the steward set can shrink via
 // REMOVE_STEWARD and SLASH_STEWARD. After enough churn, the

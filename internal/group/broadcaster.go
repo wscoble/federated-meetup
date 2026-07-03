@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Broadcaster — fan-out for the Subscribe RPC (audit C-5, cycle 51).
 //

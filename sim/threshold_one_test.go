@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Threshold-1 minimum-trust boundary. A 1-of-N group is the
 // minimum-viable trust configuration: any single active steward

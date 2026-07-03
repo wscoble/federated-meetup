@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Unit tests for the rate-limit primitive. Verifies token-bucket
 // semantics in isolation before the integration test in sim/threat_test.go

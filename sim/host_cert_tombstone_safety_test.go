@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Cycle 37: REVOKE_HOST_CERT tombstone safety.
 //

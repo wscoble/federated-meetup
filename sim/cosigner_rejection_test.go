@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Cycle 56 — Negative test for ADD_HOST_PEER cosignature rejection.
 //

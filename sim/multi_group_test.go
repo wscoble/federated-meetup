@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Multi-group scenario: two distinct groups (Vegas Programmers
 // and Tucson Designers) running on the same set of 4 hosts.

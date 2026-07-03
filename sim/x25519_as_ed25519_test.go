@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Cycle 51 — Characterization test for the X25519-as-Ed25519
 // cosignature convention (gates.go:202-208).

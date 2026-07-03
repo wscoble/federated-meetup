@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Tiny helpers used by the threat-model tests. Kept in their own file
 // to keep threat_test.go readable.

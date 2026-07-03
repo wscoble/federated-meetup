@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Bootstrap resolution scenario: CREATE_GROUP declares an initial
 // mesh peer, which closes the chicken-and-egg gap where ADD_HOST_PEER

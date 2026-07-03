@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Name-bind scenario: a steward group binds a directory name
 // ("vegas-programmers") to itself, so a directory host can

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Audit H-9/H-10 (cycle 51): SubmitEvidence RPC + TransitionA/B
 // population + FederationEnvelope.

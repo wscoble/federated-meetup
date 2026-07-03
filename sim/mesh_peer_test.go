@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // ADD_HOST_PEER scenario: documenting the bootstrap gap.
 //

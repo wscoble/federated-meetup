@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Threat-model regression tests. These verify that the hardening in
 // §5.4 of the protocol spec actually catches the attacks it claims to:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Update-event scenario: stewards patch an existing event after
 // the initial creation. The patch is stored as a separate KV

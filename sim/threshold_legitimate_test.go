@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Positive CHANGE_THRESHOLD path. After the G8 gate (cycle 31)
 // is added, legitimate threshold changes must still work:

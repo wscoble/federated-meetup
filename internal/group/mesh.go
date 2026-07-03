@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // WireGuard mesh peer registry (protocol §5.4.7 / G2).
 //

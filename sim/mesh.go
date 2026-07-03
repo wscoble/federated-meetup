@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Package sim: virtual mesh. Models the WireGuard overlay between hosts.
 //

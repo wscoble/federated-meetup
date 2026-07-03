@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Branch-local mutation scenario (C-6 fix). The apply path now
 // supports branch-local mutations on non-genesis branches via a

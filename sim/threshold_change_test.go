@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // CHANGE_THRESHOLD boundary tests. The apply switch for
 // CHANGE_THRESHOLD (internal/group/group.go line 522) does NOT

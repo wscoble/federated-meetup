@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Multiple host certs scenario: a single hostname can have multiple
 // valid certs at different times (key rotation). The unique cert

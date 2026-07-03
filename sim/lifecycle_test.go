@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Lifecycle scenario: drive a group through the full happy-path state machine
 // across 4 hosts in the sim. Exercises CREATE_GROUP + ADD_STEWARD +

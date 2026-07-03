@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Package group is the in-memory group state machine. A group is identified
 // by its keypair. Its state is a Merkle KV store. Transitions are signed by

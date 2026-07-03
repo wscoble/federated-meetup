@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Audit C-3 (cycle 51): equivocation-log eviction observability.
 //

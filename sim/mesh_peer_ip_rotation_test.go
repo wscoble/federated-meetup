@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Mesh peer IP rotation. The meshPeerRegistry.add (internal/group/mesh.go:73)
 // rejects a new peer if either:

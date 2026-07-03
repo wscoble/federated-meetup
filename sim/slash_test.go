@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Slash scenario: equivocation evidence against a steward is
 // surfaced as a SLASH_STEWARD transition signed by the threshold

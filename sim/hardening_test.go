@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Dedicated tests for the audit hardening items H-1, H-2, and H-6.
 //

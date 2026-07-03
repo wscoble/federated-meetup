@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Branch inheritance semantics. BRANCH_CREATE (internal/group/group.go:793)
 // captures the parent's current stewards and threshold AT THE MOMENT OF

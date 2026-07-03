@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Attest scenario: a steward group issues an attestation from one
 // identity to another, recording the attestation in the Merkle KV.

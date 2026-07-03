@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Cancel-RSVP scenario: a steward-signed CANCEL_RSVP removes a
 // previously-recorded RSVP entry from the Merkle KV.

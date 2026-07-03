@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Package hlc implements Hybrid Logical Clocks (HLC) for the federation.
 //

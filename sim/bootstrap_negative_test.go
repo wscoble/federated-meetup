@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Bootstrap negative cases: CREATE_GROUP with malformed
 // initial_mesh_peers should be rejected cleanly. The state machine

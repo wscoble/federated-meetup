@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0
 //
 // Migration scenario: a group moves its canonical host from h0 to
 // h2 after a deadline. Mirrors (h1, h3) continue serving read
