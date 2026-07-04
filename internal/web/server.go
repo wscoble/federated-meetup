@@ -84,6 +84,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /groups/new", s.handleNewGroup)
 	mux.HandleFunc("POST /groups/new", s.handleCreateGroup)
 	mux.HandleFunc("GET /groups/{name}", s.handleGroup)
+	mux.HandleFunc("GET /groups/{name}/calendar.ics", s.handleGroupICS)
+	mux.HandleFunc("GET /groups/{name}/feed.xml", s.handleGroupRSS)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}", s.handleEvent)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}/calendar.ics", s.handleEventICS)
 	mux.HandleFunc("POST /events/{group_key}/{event_id}/rsvp", s.handleRsvpSubmit)
@@ -106,6 +108,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /dashboard/events/{event_id}/cancel", s.handleCancelEvent)
 	mux.HandleFunc("POST /dashboard/events/{group_key}/checkin", s.handleCheckIn)
 	mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
+	mux.HandleFunc("GET /dashboard/events/{event_id}/attendees.csv", s.handleAttendeesCSV)
 
 	// Checkout
 	mux.HandleFunc("GET /checkout/{order_id}", s.handleCheckout)
@@ -149,6 +152,11 @@ func loadTemplates() (templateMap, error) {
 		"monthShort":     monthShort,
 		"timeOnly":       timeOnly,
 		"formatDuration": formatDuration,
+		"formatPercent":  formatPercent,
+		"percentInt":     percentInt,
+		"div":            divInt,
+		"fillClass":      fillClass,
+		"toInt":          toInt,
 	}
 
 	// Read base template
@@ -343,6 +351,77 @@ func pluralS(n int) string {
 	return "s"
 }
 
+// percentInt returns the integer percentage of n/d (0-100), without the % sign.
+func percentInt(n, d int) int {
+	if d <= 0 {
+		return 0
+	}
+	pct := (n * 100) / d
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
+}
+
+// formatPercent returns a percentage string like "75%" or "0%".
+func formatPercent(n, d int) string {
+	if d <= 0 {
+		return "0%"
+	}
+	pct := (n * 100) / d
+	if pct > 100 {
+		pct = 100
+	}
+	return fmt.Sprintf("%d%%", pct)
+}
+
+// toInt converts a numeric value (int, int64, uint64, float64) to int.
+func toInt(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case uint64:
+		return int(n)
+	case int32:
+		return int(n)
+	case uint32:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+// fillClass returns a CSS class for progress bar fill based on the ratio n/d:
+// "fill-high" for >80%, "fill-warning" for 50-80%, "" otherwise.
+func fillClass(n, d int) string {
+	if d <= 0 {
+		return ""
+	}
+	pct := (n * 100) / d
+	if pct > 100 {
+		pct = 100
+	}
+	if pct >= 80 {
+		return "fill-high"
+	}
+	if pct >= 50 {
+		return "fill-warning"
+	}
+	return ""
+}
+
+// divInt performs integer division: n / d. Returns 0 if d is 0.
+func divInt(n, d int) int {
+	if d == 0 {
+		return 0
+	}
+	return n / d
+}
+
 // ---- Rendering helpers ----
 
 func (s *Server) renderPage(w http.ResponseWriter, page string, data interface{}) {
@@ -417,11 +496,14 @@ type homeData struct {
 	WeekEvents   []CachedEvent
 	LaterEvents  []CachedEvent
 	Query        string
+	DateFilter   string
+	TotalEvents  int
 }
 
 type groupData struct {
 	pageBase
 	Group          CachedGroup
+	GroupKey       string
 	UpcomingEvents []CachedEvent
 	PastEvents     []CachedEvent
 	PastEventCount int
@@ -450,13 +532,15 @@ type attendeeView struct {
 }
 
 type dashboardEvent struct {
-	EventID      string
-	Title        string
-	StartsAt     int64
-	RsvpCount    int
-	TicketSold   int
-	EventRevenue *pb.Money
-	Attendees    []attendeeView
+	EventID       string
+	Title         string
+	StartsAt      int64
+	RsvpCount     int
+	TicketSold    int
+	EventRevenue  *pb.Money
+	Attendees     []attendeeView
+	Capacity      int
+	CheckedIn     int
 }
 
 type dashboardData struct {

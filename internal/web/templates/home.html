@@ -20,6 +20,16 @@
 	<button type="submit" class="btn btn-primary">Search</button>
 </form>
 
+<!-- Date filter pills (hidden during search) -->
+{{if not .Query}}
+<nav class="filter-pills" aria-label="Filter events by date">
+	<a href="/?when=all" class="filter-pill"{{if eq .DateFilter "all"}} aria-current="true"{{end}}>All Events</a>
+	<a href="/?when=today" class="filter-pill"{{if eq .DateFilter "today"}} aria-current="true"{{end}}>Today</a>
+	<a href="/?when=week" class="filter-pill"{{if eq .DateFilter "week"}} aria-current="true"{{end}}>This Week</a>
+</nav>
+<p class="text-muted text-sm" style="margin-bottom: 1.5rem;">{{.TotalEvents}} upcoming event{{if ne .TotalEvents 1}}s{{end}}</p>
+{{end}}
+
 {{if .Query}}
 <!-- Search results -->
 {{if .Groups}}
@@ -47,14 +57,17 @@
 {{end}}
 
 {{if not .Groups}}{{if not .Events}}
-<div class="card text-center mb-8">
-	<p class="text-muted mb-2">No results for "{{.Query}}".</p>
-	<a href="/" class="text-sm font-medium" style="color: var(--accent);">Clear search →</a>
+<!-- Empty search results -->
+<div class="empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+	<h3>No results for "{{.Query}}"</h3>
+	<p>Try a different search term, or clear your search to browse all upcoming events.</p>
+	<a href="/" class="btn btn-primary">Clear search</a>
 </div>
 {{end}}{{end}}
 
 {{else}}
-<!-- Default: groups + date-grouped events -->
+<!-- Default: groups + events -->
 
 {{if .Groups}}
 <h2 class="section-header"><span class="dot dot-today" aria-hidden="true"></span>Active groups</h2>
@@ -75,18 +88,10 @@
 	</div>
 	{{end}}
 </div>
-{{else}}
-<div class="card text-center mb-8">
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width: 48px; height: 48px; margin: 0 auto 1rem; color: var(--text-muted);"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-	<p class="text-muted mb-2">No groups hosted here yet.</p>
-	<a href="/groups/new" class="text-sm font-medium" style="color: var(--accent);">Create a group →</a>
-	<span class="text-muted" style="margin: 0 0.5rem;">or</span>
-	<a href="/dashboard/login" class="text-sm font-medium text-muted">Organizer login</a>
-</div>
 {{end}}
 
-{{if .Events}}
-<!-- Group events by time period -->
+{{if eq .DateFilter "all"}}
+<!-- Date-grouped sections (default / "all" filter) -->
 {{if .TodayEvents}}
 <h2 class="section-header"><span class="dot dot-today" aria-hidden="true"></span>Happening Today</h2>
 <div class="grid grid-3 mb-8">
@@ -114,6 +119,49 @@
 </div>
 {{end}}
 
+{{else}}
+<!-- Filtered view: single grid -->
+{{if .Events}}
+<div class="grid grid-3 mb-8">
+	{{range .Events}}
+	{{template "event_card" .}}
+	{{end}}
+</div>
 {{end}}
+{{end}}
+
+<!-- Empty states -->
+{{if not .Events}}
+{{if eq .DateFilter "all"}}
+{{if not .Groups}}
+<!-- No groups and no events at all -->
+<div class="empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+	<h3>No events yet</h3>
+	<p>Be the first to host something in your community. Create a group and publish your first event.</p>
+	<div class="flex gap-2 justify-center">
+		<a href="/groups/new" class="btn btn-primary">Create a Group</a>
+		<a href="/dashboard/login" class="btn btn-secondary">Organizer Login</a>
+	</div>
+</div>
+{{else}}
+<!-- Groups exist but no events -->
+<div class="empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+	<h3>No upcoming events</h3>
+	<p>Check back soon, or browse the active groups above to see if they've got something in the works.</p>
+</div>
+{{end}}
+{{else}}
+<!-- Date filter active but no events match -->
+<div class="empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+	<h3>No events for this filter</h3>
+	<p>There are no events{{if eq .DateFilter "today"}} today{{else if eq .DateFilter "week"}} this week{{end}}. Try a different time filter.</p>
+	<a href="/?when=all" class="btn btn-primary">View all events</a>
+</div>
+{{end}}
+{{end}}
+
 {{end}}
 {{end}}

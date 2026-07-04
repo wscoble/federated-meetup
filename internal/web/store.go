@@ -207,6 +207,7 @@ type CachedEvent struct {
 	Location    string
 	Capacity    int
 	Cancelled   bool
+	RsvpCount   int // populated for display
 }
 
 // UpsertEvent inserts or updates an event in the cache.

@@ -8,6 +8,7 @@
 	<span class="current">{{.Group.DisplayName}}</span>
 </nav>
 
+<!-- Group header -->
 <div class="flex items-start justify-between gap-4 mb-4">
 	<div>
 		<h1 class="mb-0">{{.Group.DisplayName}}</h1>
@@ -37,6 +38,29 @@
 	{{end}}
 </div>
 
+<!-- Subscribe links -->
+<div class="subscribe-links">
+	<a href="/groups/{{.Group.CanonicalName}}/calendar.ics" class="btn btn-outline btn-sm" download>
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+		Add to Calendar
+	</a>
+	<a href="/groups/{{.Group.CanonicalName}}/feed.xml" class="btn btn-outline btn-sm">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c8.284 0 15 6.716 15 15M6 11c4.97 0 9 4.03 9 9M6 17a3 3 0 100 6 3 3 0 000-6z"/></svg>
+		RSS Feed
+	</a>
+</div>
+
+<!-- No events at all — empty state -->
+{{if and (not .UpcomingEvents) (not .PastEvents)}}
+<div class="card empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+	<h3>No events yet</h3>
+	<p>This group hasn't scheduled any events. Subscribe to the calendar or RSS feed to be notified when the first event is posted.</p>
+	<a href="/login" class="btn btn-primary btn-sm">Organizer login</a>
+</div>
+{{else}}
+
+<!-- Upcoming events -->
 {{if .UpcomingEvents}}
 <h2 class="section-header"><span class="dot dot-today" aria-hidden="true"></span>Upcoming Events</h2>
 <div class="grid grid-2 mb-8">
@@ -45,16 +69,19 @@
 	{{end}}
 </div>
 {{else}}
-<div class="card text-center mb-8">
-	<p class="text-muted">No upcoming events scheduled.</p>
+<div class="card empty-state mb-8">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+	<h3>No upcoming events</h3>
+	<p>There are no events scheduled right now. Subscribe via calendar or RSS to get notified when new events are posted.</p>
 	{{if .PastEventCount}}
-	<p class="text-muted text-sm mt-2">Check the past events below or follow for updates.</p>
+	<p class="text-sm text-muted">Or browse {{.PastEventCount}} past events below.</p>
 	{{end}}
 </div>
 {{end}}
 
+<!-- Past events archive -->
 {{if .PastEvents}}
-<h2 class="section-header text-muted"><span class="dot dot-later" aria-hidden="true"></span>Past Events</h2>
+<h2 class="section-header"><span class="dot dot-later" aria-hidden="true"></span>Past Events</h2>
 <div class="grid grid-2">
 	{{range .PastEvents}}
 	<div class="card event-card opacity-90">
@@ -75,5 +102,7 @@
 	</div>
 	{{end}}
 </div>
+{{end}}
+
 {{end}}
 {{end}}
