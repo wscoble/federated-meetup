@@ -8,9 +8,9 @@
 // UI, MCP server, and discovery endpoints are wired in alongside it.
 //
 // v0: in-memory protocol state, SQLite for web cache/RSVPs/sessions.
-//     The group identity comes from env config. No persistence for the
-//     protocol log yet — operators submit CREATE_GROUP via the wire, or
-//     fork the state from a peer over the server-to-server transport.
+//     The group identity comes from env config. Protocol state persistence
+//     is opt-in via HOSTD_PROTOCOL_DB — when set, all transitions are
+//     persisted to a SQLite log and replayed on restart.
 //
 // v0 config (all from env):
 //   HOSTD_ADDR         listen address (default ":8080")
@@ -22,6 +22,7 @@
 //   HOSTD_DB_PATH      SQLite path for web store (default "fedmeetup.db")
 //   HOSTD_DESCRIPTION  host description for discovery endpoints
 //   HOSTD_AREA         geographic area for discovery (e.g. "Las Vegas, NV")
+//   HOSTD_PROTOCOL_DB  SQLite path for protocol transition log (default: empty = in-memory)
 //
 // Federation sync (optional — omit to run standalone):
 //   HOSTD_PEERS        comma-separated peer URLs to sync from (e.g. "http://peer:8080")
@@ -49,6 +50,7 @@ import (
 	"github.com/sscoble/federated-meetup/internal/group"
 	"github.com/sscoble/federated-meetup/internal/host"
 	"github.com/sscoble/federated-meetup/internal/mcp"
+	"github.com/sscoble/federated-meetup/internal/payment"
 	"github.com/sscoble/federated-meetup/internal/product"
 	"github.com/sscoble/federated-meetup/internal/types"
 	"github.com/sscoble/federated-meetup/internal/web"
@@ -68,6 +70,7 @@ type config struct {
 	peers       []string
 	syncBootstrap bool
 	syncLive    bool
+	protocolDB  string
 }
 
 func loadConfig() (*config, error) {
@@ -114,6 +117,11 @@ func loadConfig() (*config, error) {
 		}
 	}
 
+	// Protocol state persistence (opt-in).
+	// If HOSTD_PROTOCOL_DB is set, transitions are persisted to a
+	// SQLite database at that path and replayed on startup.
+	cfg.protocolDB = os.Getenv("HOSTD_PROTOCOL_DB")
+
 	return cfg, nil
 }
 
@@ -131,12 +139,41 @@ func main() {
 	}
 
 	// ---- Protocol layer (ConnectRPC) ----
-	state := group.NewState(cfg.groupKey)
+	// If HOSTD_PROTOCOL_DB is set, create a SQLite persister and
+	// replay all stored transitions on startup. Otherwise, the state
+	// is entirely in-memory (backward compatible).
+	var state *group.State
+	if cfg.protocolDB != "" {
+		persisterDSN := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", cfg.protocolDB)
+		persister, err := group.NewSQLitePersister(persisterDSN, cfg.groupKey)
+		if err != nil {
+			log.Fatalf("protocol persister: %v", err)
+		}
+		defer persister.Close()
+		state, err = group.NewStateWithPersister(cfg.groupKey, persister)
+		if err != nil {
+			log.Fatalf("protocol state (replay): %v", err)
+		}
+		log.Printf("fedmeetup: replayed %d transitions from %s, root=0x%x",
+			state.TransitionCount(), cfg.protocolDB, state.Root())
+	} else {
+		state = group.NewState(cfg.groupKey)
+	}
 	svc := host.NewService(cfg.name, state)
 
 	// ---- Product layer (ticketing, orders, auth) ----
 	prodStore := product.NewStore()
-	prodSvc := product.NewService(prodStore, nil)
+	var paySvc payment.Provider
+	if payment.HasStripeKey() {
+		successURL := cfg.baseURL + "/checkout/success"
+		cancelURL := cfg.baseURL + "/checkout/cancel"
+		paySvc = payment.NewStripeConnectProvider(successURL, cancelURL)
+		log.Printf("fedmeetup: Stripe payments enabled (checkout success=%s)", successURL)
+	} else {
+		paySvc = payment.NewMockProvider()
+		log.Printf("fedmeetup: Stripe not configured (STRIPE_SECRET_KEY unset) — using mock payments")
+	}
+	prodSvc := product.NewService(prodStore, paySvc)
 
 	// ---- Web layer (HTMX + SQLite) ----
 	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", cfg.dbPath)
@@ -174,6 +211,10 @@ func main() {
 
 	// Web UI (all routes: /, /groups/, /events/, /dashboard/, /rsvp/, /checkout/, /static/)
 	mux.Handle("/", webSrv.Routes())
+
+	// Stripe webhook endpoint
+	stripeWebhook := prodStore.WebhookHandler("")
+	mux.Handle("/webhook/stripe", stripeWebhook)
 
 	// Health + identity (protocol ops)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
