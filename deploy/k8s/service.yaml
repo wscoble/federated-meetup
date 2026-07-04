@@ -1,4 +1,5 @@
-# ClusterIP Service — the Cloudflare tunnel connects to this
+# ClusterIP Service — internal access for health checks
+# The pod uses hostPort to bind 8091 on the node for nginx to proxy to.
 apiVersion: v1
 kind: Service
 metadata:
