@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,8 +20,52 @@ jobs:
         with:
           go-version: '1.25'
 
+      - name: Download dependencies
+        run: go mod download
+
       - name: Build
-        run: go build ./...
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Test
         run: go test ./... -race -timeout 120s
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gosec
+        uses: securego/gosec@master
+        with:
+          args: -severity medium,high -no-fail -fmt sarif -out gosec.sarif ./...
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec.sarif
+
+      - name: Check for secrets in code
+        run: |
+          # Check for common secret patterns in committed files
+          if grep -rnE '(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|sk_live_[A-Za-z0-9]{24,}|sk_test_[A-Za-z0-9]{24,}|AKIA[A-Z0-9]{16})' \
+            --include="*.go" --include="*.yaml" --include="*.yml" --include="*.md" --include="*.sh" --include="*.env" \
+            . 2>/dev/null; then
+            echo "ERROR: Potential secrets found in committed files!"
+            exit 1
+          fi
+          echo "No secrets detected in committed files."
+
+      - name: Check for secrets in git history
+        run: |
+          if git log --all -p | grep -qE '(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|sk_live_[A-Za-z0-9]{24,})'; then
+            echo "WARNING: Potential secrets found in git history!"
+            # Don't fail the build, but warn
+          fi
+          echo "Git history scan complete."

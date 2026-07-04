@@ -3,7 +3,7 @@
 package product
 
 import (
-	"github.com/sscoble/federated-meetup/internal/payment"
+	"github.com/wscoble/federated-meetup/internal/payment"
 )
 
 // webhookAdapter wraps Store to satisfy payment.WebhookOrderUpdater.

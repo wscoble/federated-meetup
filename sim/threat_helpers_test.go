@@ -8,7 +8,7 @@ package sim_test
 import (
 	"crypto/sha256"
 
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // sha256SumImpl is the canonical SHA-256 over arbitrary bytes.

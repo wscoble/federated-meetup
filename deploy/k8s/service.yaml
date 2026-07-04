@@ -1,0 +1,18 @@
+# ClusterIP Service — the Cloudflare tunnel connects to this
+apiVersion: v1
+kind: Service
+metadata:
+  name: fedmeetup
+  namespace: fedmeetup
+  labels:
+    app.kubernetes.io/name: federated-meetup
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: federated-meetup
+    app.kubernetes.io/component: host-daemon
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

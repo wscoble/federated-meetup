@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/sim"
+	"github.com/wscoble/federated-meetup/sim"
 )
 
 func TestRoot_DeterministicAcrossHosts(t *testing.T) {

@@ -15,9 +15,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 
-	"github.com/sscoble/federated-meetup/internal/host"
+	"github.com/wscoble/federated-meetup/internal/host"
 )
 
 // FederationDocument is the JSON response for /.well-known/federation.

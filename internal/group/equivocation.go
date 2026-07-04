@@ -24,7 +24,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // EquivocationEvidence is the proof that a single steward signed two

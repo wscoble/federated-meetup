@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/sscoble/federated-meetup/internal/payment"
-	"github.com/sscoble/federated-meetup/internal/product"
-	"github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
+	"github.com/wscoble/federated-meetup/internal/payment"
+	"github.com/wscoble/federated-meetup/internal/product"
+	"github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
 
 	"connectrpc.com/connect"
 )

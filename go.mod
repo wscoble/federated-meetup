@@ -1,4 +1,4 @@
-module github.com/sscoble/federated-meetup
+module github.com/wscoble/federated-meetup
 
 go 1.25.5
 

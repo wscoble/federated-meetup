@@ -1,0 +1,15 @@
+# PersistentVolumeClaim for SQLite databases (protocol log + web store)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fedmeetup-data
+  namespace: fedmeetup
+  labels:
+    app.kubernetes.io/name: federated-meetup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path

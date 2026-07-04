@@ -27,7 +27,7 @@ import (
 
 	"golang.org/x/crypto/curve25519"
 
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // =============================================================================

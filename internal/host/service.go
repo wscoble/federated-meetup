@@ -27,11 +27,11 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
-	"github.com/sscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
 
-	"github.com/sscoble/federated-meetup/internal/group"
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // Service implements federatedmeetupv1connect.HostServiceHandler.

@@ -8,7 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 )
 
 // assertConnectCode checks that err is a *connect.Error with the expected code.

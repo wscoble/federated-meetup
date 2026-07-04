@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
-	"github.com/sscoble/federated-meetup/internal/product"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
+	"github.com/wscoble/federated-meetup/internal/product"
 )
 
 // newTestServer creates a Server with an in-memory SQLite DB and a

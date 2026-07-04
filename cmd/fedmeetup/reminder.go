@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/email"
-	"github.com/sscoble/federated-meetup/internal/web"
+	"github.com/wscoble/federated-meetup/internal/email"
+	"github.com/wscoble/federated-meetup/internal/web"
 )
 
 // startReminderScheduler runs a background loop that every 15 minutes

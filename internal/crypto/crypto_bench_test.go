@@ -10,7 +10,7 @@ package crypto
 import (
 	"testing"
 
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // BenchmarkVerifyMultisig_100x100 measures the cost of verifying a

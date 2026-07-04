@@ -15,10 +15,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 
-	emailpkg "github.com/sscoble/federated-meetup/internal/email"
-	productrecurrence "github.com/sscoble/federated-meetup/internal/product"
+	emailpkg "github.com/wscoble/federated-meetup/internal/email"
+	productrecurrence "github.com/wscoble/federated-meetup/internal/product"
 )
 
 // ---- Public pages ----

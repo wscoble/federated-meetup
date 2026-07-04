@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/hlc"
+	"github.com/wscoble/federated-meetup/internal/hlc"
 )
 
 // TestHLC_Tick_Advances verifies the basic monotonic property: Tick on

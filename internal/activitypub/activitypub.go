@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 )
 
 // ActivityPubService provides ActivityPub endpoints for the web server.

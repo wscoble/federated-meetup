@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/crypto"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
-	"github.com/sscoble/federated-meetup/sim"
+	"github.com/wscoble/federated-meetup/internal/crypto"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/sim"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

@@ -12,10 +12,10 @@ import (
 
 	"connectrpc.com/connect"
 
-	federatedmeetupproductv1connect "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	federatedmeetupproductv1connect "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 
-	"github.com/sscoble/federated-meetup/internal/payment"
+	"github.com/wscoble/federated-meetup/internal/payment"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

@@ -1,0 +1,8 @@
+# Namespace for federated-meetup
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fedmeetup
+  labels:
+    app.kubernetes.io/name: federated-meetup
+    app.kubernetes.io/part-of: federated-meetup

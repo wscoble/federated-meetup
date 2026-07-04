@@ -30,8 +30,8 @@ import (
 
 	"golang.org/x/crypto/curve25519"
 
-	"github.com/sscoble/federated-meetup/sim"
-	"github.com/sscoble/federated-meetup/transport/wg"
+	"github.com/wscoble/federated-meetup/sim"
+	"github.com/wscoble/federated-meetup/transport/wg"
 )
 
 // genWGKey generates a Curve25519 keypair for WireGuard.

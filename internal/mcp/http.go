@@ -8,7 +8,7 @@ package mcp
 import (
 	"net/http"
 
-	"github.com/sscoble/federated-meetup/internal/host"
+	"github.com/wscoble/federated-meetup/internal/host"
 )
 
 // RegisterEndpoints registers all AIEO discovery endpoints and the MCP

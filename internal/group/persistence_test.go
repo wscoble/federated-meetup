@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/crypto"
-	"github.com/sscoble/federated-meetup/internal/types"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/internal/crypto"
+	"github.com/wscoble/federated-meetup/internal/types"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // TestSQLitePersister_SaveLoad verifies that a transition saved to

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 )
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,71 @@
+# Cloudflare Tunnel Deployment
+#
+# Exposes fedmeetup service to the public internet via a Cloudflare Tunnel.
+# No inbound ports required — the tunnel makes an outbound connection to
+# Cloudflare's edge, so fm.scoble.me reaches your k3s cluster without
+# opening any firewall ports or configuring ingress.
+#
+# PREREQUISITES:
+#   1. Create a tunnel in the Cloudflare Zero Trust dashboard:
+#      https://one.dash.cloudflare.com/ → Networks → Tunnels → Create tunnel
+#   2. Name it "fedmeetup" (or whatever you like)
+#   3. Copy the tunnel token
+#   4. Create the Kubernetes secret with the token:
+#      kubectl -n fedmeetup create secret generic cloudflare-tunnel-token \
+#        --from-literal=TOKEN='eyJhZxxxxxxx...'
+#   5. In the Cloudflare dashboard, add a public hostname:
+#        Subdomain: fm
+#        Domain:    scoble.me
+#        Service:   http://fedmeetup.fedmeetup.svc.cluster.local:8080
+#   6. Apply this manifest:
+#        kubectl apply -f deploy/k8s/cloudflare-tunnel.yaml
+#
+# The tunnel will maintain a persistent outbound connection to Cloudflare's
+# edge, and traffic to fm.scoble.me will be proxied to the fedmeetup service.
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare-tunnel
+  namespace: fedmeetup
+  labels:
+    app.kubernetes.io/name: cloudflare-tunnel
+    app.kubernetes.io/part-of: federated-meetup
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflare-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflare-tunnel
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - tunnel
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-tunnel-token
+                  key: TOKEN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      restartPolicy: Always

@@ -15,7 +15,7 @@ import (
 	"encoding/binary"
 
 	"google.golang.org/protobuf/proto"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // Hash is a 32-byte SHA-256 hash.

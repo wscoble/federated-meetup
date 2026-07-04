@@ -17,10 +17,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sscoble/federated-meetup/internal/group"
-	"github.com/sscoble/federated-meetup/internal/host"
-	"github.com/sscoble/federated-meetup/internal/mcp"
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/host"
+	"github.com/wscoble/federated-meetup/internal/mcp"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // testConfig returns a HostConfig suitable for tests.

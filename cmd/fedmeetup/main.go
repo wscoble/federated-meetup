@@ -59,18 +59,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
+	"github.com/wscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
 
-	"github.com/sscoble/federated-meetup/internal/activitypub"
-	"github.com/sscoble/federated-meetup/internal/email"
-	"github.com/sscoble/federated-meetup/internal/federation"
-	"github.com/sscoble/federated-meetup/internal/group"
-	"github.com/sscoble/federated-meetup/internal/host"
-	"github.com/sscoble/federated-meetup/internal/mcp"
-	"github.com/sscoble/federated-meetup/internal/payment"
-	"github.com/sscoble/federated-meetup/internal/product"
-	"github.com/sscoble/federated-meetup/internal/types"
-	"github.com/sscoble/federated-meetup/internal/web"
+	"github.com/wscoble/federated-meetup/internal/activitypub"
+	"github.com/wscoble/federated-meetup/internal/email"
+	"github.com/wscoble/federated-meetup/internal/federation"
+	"github.com/wscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/host"
+	"github.com/wscoble/federated-meetup/internal/mcp"
+	"github.com/wscoble/federated-meetup/internal/payment"
+	"github.com/wscoble/federated-meetup/internal/product"
+	"github.com/wscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/web"
 )
 
 // config holds the runtime configuration of fedmeetup. All values come

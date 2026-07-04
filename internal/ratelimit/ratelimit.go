@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // Bucket is a single token bucket. Tokens refill at Rate per second

@@ -26,7 +26,7 @@ package sim_test
 import (
 	"testing"
 
-	"github.com/sscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/group"
 )
 
 func TestEquivocationLog_EvictionPolicyIsFIFO(t *testing.T) {

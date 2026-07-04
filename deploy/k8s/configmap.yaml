@@ -1,0 +1,22 @@
+# ConfigMap for non-secret configuration
+# Secrets (group key, Stripe key, SMTP creds) go in secret.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fedmeetup-config
+  namespace: fedmeetup
+  labels:
+    app.kubernetes.io/name: federated-meetup
+data:
+  HOSTD_ADDR: ":8080"
+  HOSTD_NAME: "hostd"
+  HOSTD_BASE_URL: "https://fm.scoble.me"
+  HOSTD_DB_PATH: "/data/fedmeetup.db"
+  HOSTD_PROTOCOL_DB: "/data/protocol.db"
+  HOSTD_DESCRIPTION: "Federated Meetup — fm.scoble.me"
+  HOSTD_AREA: "Las Vegas, NV"
+  HOSTD_THRESHOLD: "0"
+  HOSTD_SYNC_BOOTSTRAP: "true"
+  HOSTD_SYNC_LIVE: "true"
+  # Comma-separated peer URLs for federation (edit as needed)
+  HOSTD_PEERS: ""

@@ -3239,7 +3239,7 @@ const file_federated_meetup_v1_state_proto_rawDesc = "" +
 	"\x1cCUSTODY_TIER_HARDWARE_WALLET\x10\x02\x12\x1f\n" +
 	"\x1bCUSTODY_TIER_ENCRYPTED_DISK\x10\x03\x12\x1c\n" +
 	"\x18CUSTODY_TIER_LIVE_SYSTEM\x10\x04\x12\x19\n" +
-	"\x15CUSTODY_TIER_SCRIPTED\x10\x05BQZOgithub.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1b\x06proto3"
+	"\x15CUSTODY_TIER_SCRIPTED\x10\x05BQZOgithub.com/wscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1b\x06proto3"
 
 var (
 	file_federated_meetup_v1_state_proto_rawDescOnce sync.Once

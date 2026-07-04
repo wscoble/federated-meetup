@@ -1547,7 +1547,7 @@ const file_federated_meetup_product_v1_rpc_proto_rawDesc = "" +
 	"\vRefundOrder\x12/.federated_meetup.product.v1.RefundOrderRequest\x1a0.federated_meetup.product.v1.RefundOrderResponse\x12m\n" +
 	"\n" +
 	"ListOrders\x12..federated_meetup.product.v1.ListOrdersRequest\x1a/.federated_meetup.product.v1.ListOrdersResponse\x12|\n" +
-	"\x0fCheckInAttendee\x123.federated_meetup.product.v1.CheckInAttendeeRequest\x1a4.federated_meetup.product.v1.CheckInAttendeeResponseB`Z^github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1b\x06proto3"
+	"\x0fCheckInAttendee\x123.federated_meetup.product.v1.CheckInAttendeeRequest\x1a4.federated_meetup.product.v1.CheckInAttendeeResponseB`Z^github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1b\x06proto3"
 
 var (
 	file_federated_meetup_product_v1_rpc_proto_rawDescOnce sync.Once

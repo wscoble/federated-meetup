@@ -22,9 +22,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/sscoble/federated-meetup/internal/crypto"
-	"github.com/sscoble/federated-meetup/internal/types"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/internal/crypto"
+	"github.com/wscoble/federated-meetup/internal/types"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // verifyAddHostPeerPayload validates the second-factor co-signature

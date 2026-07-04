@@ -19,10 +19,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/sscoble/federated-meetup/internal/crypto"
-	"github.com/sscoble/federated-meetup/internal/hlc"
-	"github.com/sscoble/federated-meetup/internal/types"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/internal/crypto"
+	"github.com/wscoble/federated-meetup/internal/hlc"
+	"github.com/wscoble/federated-meetup/internal/types"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // genKey returns a deterministic KeyPair for test fixtures.

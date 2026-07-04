@@ -45,7 +45,7 @@ Federated Meetup replaces that with:
 ### Build and run
 
 ```bash
-git clone https://github.com/sscoble/federated-meetup.git
+git clone https://github.com/wscoble/federated-meetup.git
 cd federated-meetup
 go build ./...
 

@@ -12,7 +12,7 @@ break. Here's how to get started.
 ## Getting started
 
 ```bash
-git clone https://github.com/sscoble/federated-meetup.git
+git clone https://github.com/wscoble/federated-meetup.git
 cd federated-meetup
 go build ./...
 go test ./... -race -timeout 120s

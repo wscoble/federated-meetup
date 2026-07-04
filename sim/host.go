@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/group"
-	"github.com/sscoble/federated-meetup/internal/hlc"
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/hlc"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // Host is one virtual host on the simulated mesh.

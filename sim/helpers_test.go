@@ -7,11 +7,11 @@ package sim_test
 import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/sscoble/federated-meetup/internal/crypto"
-	"github.com/sscoble/federated-meetup/internal/group"
-	"github.com/sscoble/federated-meetup/internal/types"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
-	"github.com/sscoble/federated-meetup/sim"
+	"github.com/wscoble/federated-meetup/internal/crypto"
+	"github.com/wscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/types"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/sim"
 )
 
 // setupVegasProgrammers creates a 3-steward, threshold-2 group with the

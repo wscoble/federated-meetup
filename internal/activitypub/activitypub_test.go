@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 )
 
 // mockStore implements ProductStoreBackend for testing.

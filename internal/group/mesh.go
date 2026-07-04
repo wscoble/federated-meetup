@@ -25,7 +25,7 @@ package group
 import (
 	"sync"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // MeshPeer is one entry in the mesh peer set: a wg public key + a

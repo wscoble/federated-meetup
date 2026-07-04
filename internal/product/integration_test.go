@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/product"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
-	"github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
+	"github.com/wscoble/federated-meetup/internal/product"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
+	"github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1/federatedmeetupproductv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"connectrpc.com/connect"

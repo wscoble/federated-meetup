@@ -1,0 +1,77 @@
+# Deployment for the federated-meetup host daemon
+# Image is published to GHCR by the docker-publish GHA workflow.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fedmeetup
+  namespace: fedmeetup
+  labels:
+    app.kubernetes.io/name: federated-meetup
+    app.kubernetes.io/component: host-daemon
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # SQLite uses a single writable instance
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: federated-meetup
+      app.kubernetes.io/component: host-daemon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: federated-meetup
+        app.kubernetes.io/component: host-daemon
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: fedmeetup
+          image: ghcr.io/wscoble/federated-meetup:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: fedmeetup-config
+            - secretRef:
+                name: fedmeetup-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: fedmeetup-data

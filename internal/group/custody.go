@@ -21,7 +21,7 @@ package group
 import (
 	"sync"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // CustodyDeclaration records one steward's declared tier at a point

@@ -1,0 +1,19 @@
+# Kustomize — apply all k8s manifests in the right order
+# Usage: kubectl apply -k deploy/k8s/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: fedmeetup
+
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - configmap.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - cloudflare-tunnel.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: federated-meetup
+  app.kubernetes.io/managed-by: kustomize

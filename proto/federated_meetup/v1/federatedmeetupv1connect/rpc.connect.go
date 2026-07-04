@@ -20,7 +20,7 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	v1 "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	v1 "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 	http "net/http"
 	strings "strings"
 )

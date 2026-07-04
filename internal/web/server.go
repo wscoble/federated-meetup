@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 
-	"github.com/sscoble/federated-meetup/internal/activitypub"
-	"github.com/sscoble/federated-meetup/internal/email"
-	"github.com/sscoble/federated-meetup/internal/host"
-	"github.com/sscoble/federated-meetup/internal/product"
+	"github.com/wscoble/federated-meetup/internal/activitypub"
+	"github.com/wscoble/federated-meetup/internal/email"
+	"github.com/wscoble/federated-meetup/internal/host"
+	"github.com/wscoble/federated-meetup/internal/product"
 )
 
 // Server is the web frontend server. It wraps the host.Service (protocol),

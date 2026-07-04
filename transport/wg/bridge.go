@@ -18,7 +18,7 @@
 package wg
 
 import (
-	"github.com/sscoble/federated-meetup/sim"
+	"github.com/wscoble/federated-meetup/sim"
 )
 
 // RunBridge starts the per-peer sender goroutines. The sender goroutines

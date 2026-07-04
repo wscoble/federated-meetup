@@ -28,8 +28,8 @@ package group
 import (
 	"sync"
 
-	"github.com/sscoble/federated-meetup/internal/types"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/internal/types"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // BranchID is the canonical identifier of a branch within a group.

@@ -2647,7 +2647,7 @@ const file_federated_meetup_product_v1_state_proto_rawDesc = "" +
 	")PRODUCT_TRANSITION_TYPE_UPDATE_VISIBILITY\x10\t\x12+\n" +
 	"'PRODUCT_TRANSITION_TYPE_SET_MEMBER_ROLE\x10\n" +
 	"\x12)\n" +
-	"%PRODUCT_TRANSITION_TYPE_MARK_ATTENDED\x10\vB`Z^github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1b\x06proto3"
+	"%PRODUCT_TRANSITION_TYPE_MARK_ATTENDED\x10\vB`Z^github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1;federatedmeetupproductv1b\x06proto3"
 
 var (
 	file_federated_meetup_product_v1_state_proto_rawDescOnce sync.Once

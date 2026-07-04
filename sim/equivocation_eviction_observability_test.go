@@ -19,7 +19,7 @@ package sim_test
 import (
 	"testing"
 
-	"github.com/sscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/group"
 )
 
 // TestC3_EvictionObservabilityContract asserts that two hosts

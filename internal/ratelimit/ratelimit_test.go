@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // clockFn returns a deterministic clock anchored at t. The returned

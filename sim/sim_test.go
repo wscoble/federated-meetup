@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/sim"
+	"github.com/wscoble/federated-meetup/sim"
 )
 
 func TestSimulator_Smoke(t *testing.T) {

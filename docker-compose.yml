@@ -17,7 +17,7 @@ services:
     volumes:
       - fedmeetup-data:/data
     environment:
-      - HOSTD_ADDR=:8091
+      - HOSTD_ADDR=:8080
       - HOSTD_GROUP_KEY=${HOSTD_GROUP_KEY:?HOSTD_GROUP_KEY is required}
       - HOSTD_NAME=${HOSTD_NAME:-hostd}
       - HOSTD_BASE_URL=${HOSTD_BASE_URL:-https://${DOMAIN:-localhost}}
@@ -30,7 +30,7 @@ services:
       - HOSTD_SYNC_BOOTSTRAP=${HOSTD_SYNC_BOOTSTRAP:-true}
       - HOSTD_SYNC_LIVE=${HOSTD_SYNC_LIVE:-true}
     expose:
-      - "8091"
+      - "8080"
     restart: unless-stopped
 
   caddy:

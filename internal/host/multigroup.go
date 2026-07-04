@@ -28,8 +28,8 @@ package host
 import (
 	"sync"
 
-	"github.com/sscoble/federated-meetup/internal/group"
-	"github.com/sscoble/federated-meetup/internal/types"
+	"github.com/wscoble/federated-meetup/internal/group"
+	"github.com/wscoble/federated-meetup/internal/types"
 )
 
 // MultiGroup is a thread-safe map of GroupID → *group.State.

@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sscoble/federated-meetup/internal/hlc"
+	"github.com/wscoble/federated-meetup/internal/hlc"
 )
 
 func TestHLC_CounterOverflow_Tick(t *testing.T) {

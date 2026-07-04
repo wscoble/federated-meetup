@@ -1352,7 +1352,7 @@ const file_federated_meetup_v1_rpc_proto_rawDesc = "" +
 	"\x10SubmitUserAction\x12,.federated_meetup.v1.SubmitUserActionRequest\x1a-.federated_meetup.v1.SubmitUserActionResponse\x12`\n" +
 	"\vResolveName\x12'.federated_meetup.v1.ResolveNameRequest\x1a(.federated_meetup.v1.ResolveNameResponse\x12Z\n" +
 	"\tSubscribe\x12%.federated_meetup.v1.SubscribeRequest\x1a$.federated_meetup.v1.TransitionEvent0\x01\x12Q\n" +
-	"\x0eSubmitEvidence\x12%.federated_meetup.v1.EvidenceEnvelope\x1a\x18.federated_meetup.v1.AckBQZOgithub.com/sscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1b\x06proto3"
+	"\x0eSubmitEvidence\x12%.federated_meetup.v1.EvidenceEnvelope\x1a\x18.federated_meetup.v1.AckBQZOgithub.com/wscoble/federated-meetup/proto/federated_meetup/v1;federatedmeetupv1b\x06proto3"
 
 var (
 	file_federated_meetup_v1_rpc_proto_rawDescOnce sync.Once

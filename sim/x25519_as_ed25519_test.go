@@ -20,8 +20,8 @@ import (
 
 	"golang.org/x/crypto/curve25519"
 
-	"github.com/sscoble/federated-meetup/internal/group"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/internal/group"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // TestX25519AsEd25519_SuccessRate characterizes how often real

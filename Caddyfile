@@ -5,7 +5,7 @@
 # (Let's Encrypt / ZeroSSL) when serving on ports 80+443.
 
 {$DOMAIN:localhost} {
-	reverse_proxy fedmeetup:8091
+	reverse_proxy fedmeetup:8080
 
 	# Compression
 	encode gzip zstd

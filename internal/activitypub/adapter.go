@@ -3,7 +3,7 @@
 package activitypub
 
 import (
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
 )
 
 // ProductStoreAdapter wraps the product store to satisfy the

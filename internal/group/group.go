@@ -26,11 +26,11 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/sscoble/federated-meetup/internal/crypto"
-	"github.com/sscoble/federated-meetup/internal/hlc"
-	"github.com/sscoble/federated-meetup/internal/ratelimit"
-	"github.com/sscoble/federated-meetup/internal/types"
-	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+	"github.com/wscoble/federated-meetup/internal/crypto"
+	"github.com/wscoble/federated-meetup/internal/hlc"
+	"github.com/wscoble/federated-meetup/internal/ratelimit"
+	"github.com/wscoble/federated-meetup/internal/types"
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/v1"
 )
 
 // GroupID re-exported for clarity.
