@@ -14,6 +14,7 @@
 package group
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -216,6 +217,21 @@ type State struct {
 	// MaxBranches caps the number of branches per group. Default
 	// 1000. Past this, BRANCH_CREATE is rejected.
 	MaxBranches int
+
+	// persister is the optional durable transition log. If non-nil,
+	// every successful Apply writes the transition to the persister,
+	// and NewStateWithPersister replays all stored transitions on
+	// construction.
+	//
+	// If nil (the default — plain NewState), State is entirely
+	// in-memory and behavior is unchanged from pre-persistence
+	// versions.
+	persister Persister
+
+	// replaying is true during replay (LoadTransitions + Apply on
+	// startup). When true, Apply skips SaveTransition — the
+	// transitions are already in the log.
+	replaying bool
 }
 
 // Steward is a public key + role attestation. v1 has no roles; the steward
@@ -231,6 +247,9 @@ type Steward struct {
 //
 // MaxStewards defaults to 100 (per protocol hardening). Callers can
 // override by setting the field directly after construction.
+//
+// The state is entirely in-memory. For durable persistence, use
+// NewStateWithPersister.
 func NewState(gid GroupID) *State {
 	return &State{
 		groupID:          gid,
@@ -247,6 +266,47 @@ func NewState(gid GroupID) *State {
 		MaxBranches:      1000,
 		MaxEvidenceEntries: 10000,
 	}
+}
+
+// NewStateWithPersister creates a state for a group with the given ID
+// and an optional Persister for durable transition logging.
+//
+// If persister is non-nil, all stored transitions are replayed via
+// Apply on construction (rebuilding the exact same state root). Each
+// subsequent successful Apply also writes to the persister.
+//
+// If persister is nil, behavior is identical to NewState (in-memory).
+//
+// The replay uses time.Now for each Apply's timestamp. This is safe
+// because the HLC on each transition (not the Apply timestamp) is the
+// canonical ordering clock — the Apply timestamp is only used for
+// MIGRATE deadline validation, which checks "is the deadline in the
+// past relative to now". Replaying with now > original-apply-time is
+// always safe (deadlines only get more stale, which can only reject,
+// never accept).
+func NewStateWithPersister(gid GroupID, persister Persister) (*State, error) {
+	st := NewState(gid)
+	if persister == nil {
+		return st, nil
+	}
+	st.persister = persister
+
+	// Replay all stored transitions.
+	transitions, err := persister.LoadTransitions(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("group: load transitions for replay: %w", err)
+	}
+
+	st.replaying = true
+	for _, t := range transitions {
+		if err := st.Apply(t, time.Now()); err != nil {
+			st.replaying = false
+			return nil, fmt.Errorf("group: replay transition %d: %w", len(st.log), err)
+		}
+	}
+	st.replaying = false
+
+	return st, nil
 }
 
 // GroupID returns the group this state machine is bound to. Exposed so
@@ -1112,6 +1172,20 @@ func (s *State) Apply(t *Transition, now time.Time) (applyErr error) {
 	// subscribers, this is a nil check + early return. If there are
 	// subscribers, the event is sent to their buffered channels.
 	s.broadcastLocked(t, r, uint64(len(s.log)-1))
+
+	// Persist the transition to the durable log (if a persister is
+	// configured and we're not replaying). This is done under s.mu
+	// so the log order matches the in-memory log order.
+	if s.persister != nil && !s.replaying {
+		if err := s.persister.SaveTransition(context.Background(), t); err != nil {
+			// The in-memory state has already advanced. The durable
+			// log is now behind. This is a fatal error — the operator
+			// should treat this as a crash and restart (replaying
+			// from the durable log will recover to the last persisted
+			// transition, losing the un-persisted tail).
+			return fmt.Errorf("group: persist transition: %w", err)
+		}
+	}
 
 	return nil
 }

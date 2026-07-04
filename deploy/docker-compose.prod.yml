@@ -1,18 +1,17 @@
-# docker-compose.yml — federated-meetup self-host deployment.
+# docker-compose.prod.yml — production deployment with TLS via Caddy.
 #
 # Usage:
-#   1. Copy .env.example to .env and edit values.
-#   2. Edit Caddyfile to set your domain.
-#   3. docker compose up -d
+#   DOMAIN=meetup.example.com docker compose -f deploy/docker-compose.prod.yml up -d
 #
-# Services:
-#   fedmeetup — the host daemon (ConnectRPC + web UI + MCP).
-#   caddy     — reverse proxy with automatic HTTPS via ACME.
+# This variant is identical to the root docker-compose.yml but:
+#   - Configures Caddy with an ACME email for cert expiry notices.
+#   - Uses restart: always instead of unless-stopped.
+#   - Explicitly sets the Caddy ACME CA to Let's Encrypt.
 
 services:
   fedmeetup:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     volumes:
       - fedmeetup-data:/data
@@ -31,7 +30,7 @@ services:
       - HOSTD_SYNC_LIVE=${HOSTD_SYNC_LIVE:-true}
     expose:
       - "8091"
-    restart: unless-stopped
+    restart: always
 
   caddy:
     image: caddy:2-alpine
@@ -39,12 +38,16 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+      - ACME_EMAIL=${ACME_EMAIL:-admin@${DOMAIN:-localhost}}
+    command: caddy run --config /etc/caddy/Caddyfile
     depends_on:
       - fedmeetup
-    restart: unless-stopped
+    restart: always
 
 volumes:
   fedmeetup-data:

@@ -61,6 +61,31 @@
 				<input type="number" id="capacity" name="capacity" value="0" min="0" class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
 			</div>
 		</div>
+		<!-- Recurrence -->
+		<div>
+			<label for="recurrence_type" class="block text-sm font-medium text-gray-700">Recurrence</label>
+			<select id="recurrence_type" name="recurrence_type"
+				class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<option value="none">Does not repeat</option>
+				<option value="daily">Daily</option>
+				<option value="weekly">Weekly</option>
+				<option value="monthly">Monthly</option>
+			</select>
+		</div>
+		<div id="recurrence-options" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-4">
+			<div>
+				<label for="recurrence_count" class="block text-sm font-medium text-gray-700">Number of occurrences</label>
+				<input type="number" id="recurrence_count" name="recurrence_count" value="0" min="0" placeholder="0 = unlimited"
+					class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<p class="mt-1 text-xs text-gray-500">Set to 0 to use an end date instead.</p>
+			</div>
+			<div>
+				<label for="recurrence_until" class="block text-sm font-medium text-gray-700">End date (if count = 0)</label>
+				<input type="date" id="recurrence_until" name="recurrence_until"
+					class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+			</div>
+		</div>
+		<script src="/static/recurrence.js"></script>
 		<button type="submit" class="bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors">
 			Create Event
 		</button>

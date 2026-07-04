@@ -18,7 +18,13 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /fedmeetup /usr/local/bin/fedmeetup
 
+# Data directory for SQLite databases (protocol log + web store).
+# Mount a volume here in production.
+RUN mkdir -p /data
+
 ENV HOSTD_ADDR=":8091"
+ENV HOSTD_DB_PATH="/data/fedmeetup.db"
+ENV HOSTD_PROTOCOL_DB="/data/protocol.db"
 EXPOSE 8091
 
 ENTRYPOINT ["fedmeetup"]

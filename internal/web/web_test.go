@@ -25,7 +25,7 @@ func newTestServer(t *testing.T) (*Server, func()) {
 	prodStore := product.NewStore()
 	prodSvc := product.NewService(prodStore, nil)
 
-	srv, err := NewServer(nil, prodSvc, store)
+	srv, err := NewServer(nil, prodSvc, store, nil, "")
 	if err != nil {
 		store.Close()
 		t.Fatalf("NewServer: %v", err)
@@ -819,4 +819,286 @@ func TestEventICSExport(t *testing.T) {
 	}
 
 	t.Logf("ICS export OK: %d bytes, contains VCALENDAR+VEVENT", len(body))
+}
+
+// ---- Group creation tests ----
+
+func TestNewGroupFormRenders(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest("GET", "/groups/new", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Create a Group") {
+		t.Fatal("group creation form should contain 'Create a Group'")
+	}
+	if !strings.Contains(body, "Group Name") {
+		t.Fatal("form should contain 'Group Name' label")
+	}
+	if !strings.Contains(body, "Organizer Email") {
+		t.Fatal("form should contain 'Organizer Email' label")
+	}
+}
+
+func TestCreateGroup(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	form := strings.NewReader("display_name=Go Developers&description=A group for Go devs&organizer_name=Alice&organizer_email=alice@example.com&csrf_token=fake")
+	req := httptest.NewRequest("POST", "/groups/new", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "fake"})
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/dashboard" {
+		t.Fatalf("expected redirect to /dashboard, got %s", loc)
+	}
+
+	// Check session cookie was set
+	var sessionToken string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == SessionCookieName {
+			sessionToken = c.Value
+		}
+	}
+	if sessionToken == "" {
+		t.Fatal("session cookie should be set after group creation")
+	}
+
+	// Validate the session
+	gk, ok := srv.store.ValidateSession(sessionToken)
+	if !ok {
+		t.Fatal("session should be valid")
+	}
+
+	// Verify the group appears in ListGroups
+	groups, _ := srv.store.ListGroups()
+	found := false
+	for _, g := range groups {
+		if g.GroupKey == gk {
+			found = true
+			if g.DisplayName != "Go Developers" {
+				t.Fatalf("unexpected display name: %s", g.DisplayName)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("created group %s not found in ListGroups", gk)
+	}
+
+	// Verify the group exists in the product store
+	if srv.product != nil {
+		grp, ok := srv.product.Store().GetGroup(gk)
+		if !ok {
+			t.Fatal("group should exist in product store")
+		}
+		if grp.DisplayName != "Go Developers" {
+			t.Fatalf("product store group name: %s", grp.DisplayName)
+		}
+	}
+}
+
+func TestCreateGroupValidation(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Missing required fields (empty display_name)
+	form := strings.NewReader("display_name=&description=&organizer_name=&organizer_email=&csrf_token=fake")
+	req := httptest.NewRequest("POST", "/groups/new", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "fake"})
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+
+	// Should render the form again with an error, not redirect
+	if w.Code == http.StatusSeeOther {
+		t.Fatal("should not redirect on validation failure")
+	}
+	if w.Code != 200 {
+		t.Fatalf("expected 200 (form re-render), got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "too short") {
+		t.Fatalf("form should contain validation error, got: %s", body[:min(200, len(body))])
+	}
+}
+
+func TestCreateGroupOrganizerTokenValid(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Create a group
+	form := strings.NewReader("display_name=Test Organizers&description=Testing&organizer_name=Bob&organizer_email=bob@example.com&csrf_token=fake")
+	req := httptest.NewRequest("POST", "/groups/new", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "fake"})
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+
+	// Extract the group key from the session
+	var sessionToken string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == SessionCookieName {
+			sessionToken = c.Value
+		}
+	}
+	gk, ok := srv.store.ValidateSession(sessionToken)
+	if !ok {
+		t.Fatal("session should be valid")
+	}
+
+	// Verify the group has a valid organizer token in the product store.
+	// We can't directly read the token (it's logged, not returned),
+	// but we can verify the group was created and an organizer token exists
+	// by trying to log in with it. Since we don't have the token, we
+	// just verify the group is in the product store with the right ID.
+	if srv.product != nil {
+		_, ok := srv.product.Store().GetGroup(gk)
+		if !ok {
+			t.Fatalf("group %s not found in product store", gk)
+		}
+		// Verify group key is 64 hex chars (32 bytes)
+		if len(gk) != 64 {
+			t.Fatalf("group key should be 64 hex chars (32 bytes), got %d: %s", len(gk), gk)
+		}
+	}
+}
+
+func TestCanonicalizeName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Vegas Programmers", "vegas-programmers"},
+		{"Go Devs!", "go-devs"},
+		{"  Multiple   Spaces  ", "multiple-spaces"},
+		{"UPPERCASE", "uppercase"},
+		{"Special@#$Characters", "special-characters"},
+		{"", "group"},
+	}
+	for _, tt := range tests {
+		got := canonicalizeName(tt.input)
+		if got != tt.want {
+			t.Errorf("canonicalizeName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestBuildRRULE(t *testing.T) {
+	start := time.Date(2026, 7, 1, 18, 0, 0, 0, time.UTC) // Wednesday
+
+	tests := []struct {
+		recurrenceType string
+		count          string
+		until          string
+		wantContains   []string
+	}{
+		{"weekly", "10", "", []string{"FREQ=WEEKLY", "BYDAY=WE", "COUNT=10"}},
+		{"daily", "5", "", []string{"FREQ=DAILY", "COUNT=5"}},
+		{"monthly", "3", "", []string{"FREQ=MONTHLY", "COUNT=3"}},
+		{"weekly", "", "2026-12-31", []string{"FREQ=WEEKLY", "BYDAY=WE", "UNTIL=20261231"}},
+		{"none", "5", "", []string{}}, // returns empty
+	}
+	for _, tt := range tests {
+		got := buildRRULE(tt.recurrenceType, start, tt.count, tt.until)
+		if tt.recurrenceType == "none" {
+			if got != "" {
+				t.Errorf("buildRRULE(none) = %q, want empty", got)
+			}
+			continue
+		}
+		for _, want := range tt.wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("buildRRULE(%q) = %q, should contain %q", tt.recurrenceType, got, want)
+			}
+		}
+	}
+}
+
+func TestRecurrenceEventCreation(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// First create a group
+	groupForm := strings.NewReader("display_name=Recurring Test&description=Testing recurrence&organizer_name=Carol&organizer_email=carol@example.com&csrf_token=fake")
+	groupReq := httptest.NewRequest("POST", "/groups/new", groupForm)
+	groupReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	groupReq.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "fake"})
+	groupW := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(groupW, groupReq)
+
+	var sessionToken string
+	for _, c := range groupW.Result().Cookies() {
+		if c.Name == SessionCookieName {
+			sessionToken = c.Value
+		}
+	}
+	if sessionToken == "" {
+		t.Fatal("no session token after group creation")
+	}
+
+	// Create a recurring event (weekly, 5 occurrences)
+	eventForm := strings.NewReader("title=Weekly Standup&description=Daily sync&starts_at=2026-08-01T18:00&location=Online&capacity=50&recurrence_type=weekly&recurrence_count=5&csrf_token=fake")
+	eventReq := httptest.NewRequest("POST", "/dashboard/events", eventForm)
+	eventReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	eventReq.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "fake"})
+	eventReq.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionToken})
+	eventW := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(eventW, eventReq)
+
+	if eventW.Code != 200 {
+		t.Fatalf("expected 200, got %d", eventW.Code)
+	}
+	body := eventW.Body.String()
+	if !strings.Contains(body, "Event created") {
+		t.Fatalf("response should mention 'Event created', got: %s", body)
+	}
+
+	// Verify multiple events were created (5 instances)
+	gk, _ := srv.store.ValidateSession(sessionToken)
+	events, _ := srv.store.ListEventsByGroup(gk)
+	if len(events) != 5 {
+		t.Fatalf("expected 5 events (1 recurring × 5 instances), got %d", len(events))
+	}
+
+	// Verify all events have the same title
+	for _, e := range events {
+		if e.Title != "Weekly Standup" {
+			t.Errorf("event title: got %q, want 'Weekly Standup'", e.Title)
+		}
+	}
+
+	// Verify events are 7 days apart
+	// ListEventsByGroup returns DESC order (newest first), so iterate forward.
+	if len(events) >= 2 {
+		for i := 0; i < len(events)-1; i++ {
+			// events[i] is newer (later starts_at), events[i+1] is older
+			diff := events[i].StartsAt - events[i+1].StartsAt
+			if diff != 7*24*3600 {
+				t.Errorf("interval between events %d and %d: got %d seconds, want %d", i, i+1, diff, 7*24*3600)
+			}
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

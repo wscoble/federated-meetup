@@ -2,6 +2,8 @@
 package web
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"html/template"
@@ -14,6 +16,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
+
+	emailpkg "github.com/sscoble/federated-meetup/internal/email"
+	productrecurrence "github.com/sscoble/federated-meetup/internal/product"
 )
 
 // ---- Public pages ----
@@ -236,9 +241,37 @@ func (s *Server) handleRsvpSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stub email: log the magic link
-	magicLink := fmt.Sprintf("/rsvp/%s", token)
-	log.Printf("web: RSVP magic link for %s: %s (event %s/%s)", email, magicLink, groupKey, eventID)
+	// Build the absolute magic-link URL using the configured base URL.
+	base := s.absoluteBaseURL(r)
+	magicLink := fmt.Sprintf("%s/rsvp/%s", base, token)
+
+	// Fetch event details for the email.
+	eventTitle := "your event"
+	eventLocation := ""
+	var eventStartsAt int64
+	if event, err := s.eventFromProduct(groupKey, eventID); err == nil {
+		eventTitle = event.Title
+		eventLocation = event.Location
+		eventStartsAt = event.StartsAt
+	}
+	groupName := groupKey
+	if g, err := s.groupFromProduct(groupKey); err == nil && g.DisplayName != "" {
+		groupName = g.DisplayName
+	}
+
+	// Render and send the RSVP confirmation email.
+	subject, body, renderErr := emailpkg.RenderRsvpConfirm(emailpkg.RsvpConfirmData{
+		EventTitle:    eventTitle,
+		EventDate:     emailpkg.FormatEventDate(eventStartsAt),
+		EventLocation: eventLocation,
+		MagicLink:     magicLink,
+		GroupName:     groupName,
+	})
+	if renderErr != nil {
+		log.Printf("web: render rsvp_confirm email: %v", renderErr)
+	} else if err := s.email.Send(r.Context(), email, subject, body); err != nil {
+		log.Printf("web: send rsvp_confirm email to %s: %v", email, err)
+	}
 
 	s.renderFragment(w, "rsvp_fragment", fragmentData{Email: email})
 }
@@ -427,6 +460,39 @@ func (s *Server) handleRsvpConfirmPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("web: RSVP confirmed for %s (event %s/%s)", rsvp.UserEmail, rsvp.GroupKey, rsvp.EventID)
+
+	// Send RSVP-confirmed email to the attendee.
+	eventTitle := "your event"
+	eventLocation := ""
+	var eventStartsAt int64
+	if event, err := s.eventFromProduct(rsvp.GroupKey, rsvp.EventID); err == nil {
+		eventTitle = event.Title
+		eventLocation = event.Location
+		eventStartsAt = event.StartsAt
+	}
+	groupName := rsvp.GroupKey
+	if g, err := s.groupFromProduct(rsvp.GroupKey); err == nil && g.DisplayName != "" {
+		groupName = g.DisplayName
+	}
+
+	cancelURL := fmt.Sprintf("%s/my-rsvps?email=%s", s.baseURL, rsvp.UserEmail)
+	if s.baseURL == "" {
+		cancelURL = fmt.Sprintf("/my-rsvps?email=%s", rsvp.UserEmail)
+	}
+
+	subject, body, renderErr := emailpkg.RenderRsvpConfirmed(emailpkg.RsvpConfirmedData{
+		EventTitle:    eventTitle,
+		EventDate:     emailpkg.FormatEventDate(eventStartsAt),
+		EventLocation: eventLocation,
+		GroupName:     groupName,
+		CancelURL:     cancelURL,
+	})
+	if renderErr != nil {
+		log.Printf("web: render rsvp_confirmed email: %v", renderErr)
+	} else if err := s.email.Send(context.Background(), rsvp.UserEmail, subject, body); err != nil {
+		log.Printf("web: send rsvp_confirmed email to %s: %v", rsvp.UserEmail, err)
+	}
+
 	s.renderFragment(w, "rsvp_confirmed_fragment", fragmentData{})
 }
 
@@ -563,6 +629,217 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// ---- Group creation ----
+
+// newGroupData is the template data for the group creation wizard.
+type newGroupData struct {
+	pageBase
+	PrefillName     string
+	PrefillDesc     string
+	PrefillOrgName  string
+	PrefillOrgEmail string
+	Error           string
+}
+
+// handleNewGroup renders the group creation form.
+func (s *Server) handleNewGroup(w http.ResponseWriter, r *http.Request) {
+	s.renderPage(w, "new_group", newGroupData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+		},
+	})
+}
+
+// handleCreateGroup processes the group creation form.
+// Generates a 32-byte random group key and organizer token, creates the
+// group in both the product store and SQLite cache, then creates an
+// organizer session and redirects to the dashboard.
+func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
+	displayName := strings.TrimSpace(r.FormValue("display_name"))
+	description := strings.TrimSpace(r.FormValue("description"))
+	organizerName := strings.TrimSpace(r.FormValue("organizer_name"))
+	organizerEmail := strings.TrimSpace(r.FormValue("organizer_email"))
+
+	// Validate inputs
+	if err := validateString("group name", displayName, 1, 256); err != nil {
+		s.renderPage(w, "new_group", newGroupData{
+			pageBase:       pageBase{CSRFToken: csrfTokenFromRequest(r)},
+			PrefillName:    displayName, PrefillDesc: description,
+			PrefillOrgName: organizerName, PrefillOrgEmail: organizerEmail,
+			Error: err.Error(),
+		})
+		return
+	}
+	if err := validateString("description", description, 0, 4096); err != nil {
+		s.renderPage(w, "new_group", newGroupData{
+			pageBase:       pageBase{CSRFToken: csrfTokenFromRequest(r)},
+			PrefillName:    displayName, PrefillDesc: description,
+			PrefillOrgName: organizerName, PrefillOrgEmail: organizerEmail,
+			Error: err.Error(),
+		})
+		return
+	}
+	if err := validateString("organizer name", organizerName, 1, 256); err != nil {
+		s.renderPage(w, "new_group", newGroupData{
+			pageBase:       pageBase{CSRFToken: csrfTokenFromRequest(r)},
+			PrefillName:    displayName, PrefillDesc: description,
+			PrefillOrgName: organizerName, PrefillOrgEmail: organizerEmail,
+			Error: err.Error(),
+		})
+		return
+	}
+	if err := validateString("organizer email", organizerEmail, 3, 256); err != nil {
+		s.renderPage(w, "new_group", newGroupData{
+			pageBase:       pageBase{CSRFToken: csrfTokenFromRequest(r)},
+			PrefillName:    displayName, PrefillDesc: description,
+			PrefillOrgName: organizerName, PrefillOrgEmail: organizerEmail,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	// Generate 32-byte random group key (hex-encoded → 64-char hex string).
+	groupKeyBytes := make([]byte, 32)
+	if _, err := rand.Read(groupKeyBytes); err != nil {
+		http.Error(w, "failed to generate group key", http.StatusInternalServerError)
+		return
+	}
+	groupKey := hex.EncodeToString(groupKeyBytes)
+
+	// Generate canonical name from display name (lowercase, hyphenated).
+	canonicalName := canonicalizeName(displayName)
+	// Ensure uniqueness by appending a short suffix of the group key.
+	if len(groupKey) >= 8 {
+		canonicalName = canonicalName + "-" + groupKey[:8]
+	}
+
+	// Generate organizer token (random 32-char hex).
+	organizerToken := generateToken()
+
+	// Create group in product store.
+	if s.product != nil {
+		group := &pb.Group{
+			GroupId:       groupKey,
+			CanonicalName: canonicalName,
+			DisplayName:   displayName,
+			Description:   description,
+		}
+		s.product.Store().PutGroup(group)
+		s.product.Store().PutOrganizerToken(organizerToken, groupKey)
+	}
+
+	// Cache group in SQLite.
+	_ = s.store.UpsertGroup(CachedGroup{
+		GroupKey:      groupKey,
+		CanonicalName: canonicalName,
+		DisplayName:   displayName,
+		Description:   description,
+	})
+
+	// Create organizer session.
+	sessionToken := generateToken()
+	if err := s.store.CreateSession(sessionToken, groupKey, 7*24*time.Hour); err != nil {
+		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		return
+	}
+	setSessionCookie(w, sessionToken)
+
+	log.Printf("web: group created: %s (%s) — organizer: %s <%s>", groupKey, displayName, organizerName, organizerEmail)
+	log.Printf("web: organizer token for %s: %s", groupKey, organizerToken)
+
+	// Redirect to dashboard for the new group.
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// canonicalizeName converts a display name to a URL-safe canonical name.
+// e.g. "Vegas Programmers!" → "vegas-programmers"
+func canonicalizeName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	// Replace spaces and non-alphanumeric chars with hyphens.
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevHyphen = false
+		} else if !prevHyphen {
+			b.WriteByte('-')
+			prevHyphen = true
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		result = "group"
+	}
+	return result
+}
+
+// buildRRULE constructs an RFC 5545 RRULE string from the form parameters.
+// recurrenceType: "daily", "weekly", "monthly"
+// startsAt: the first occurrence start time (used for BYDAY when weekly)
+// countStr: number of occurrences (optional, "0" or empty = no limit)
+// endDate: end date in YYYY-MM-DD format (optional)
+func buildRRULE(recurrenceType string, startsAt time.Time, countStr, endDate string) string {
+	var freq string
+	var byDay string
+
+	switch strings.ToLower(recurrenceType) {
+	case "daily":
+		freq = "DAILY"
+	case "weekly":
+		freq = "WEEKLY"
+		// Include BYDAY for the day of the week of the start time.
+		byDay = weekdayToDayCode(startsAt.Weekday())
+	case "monthly":
+		freq = "MONTHLY"
+	default:
+		return ""
+	}
+
+	var parts []string
+	parts = append(parts, "FREQ="+freq)
+	if byDay != "" {
+		parts = append(parts, "BYDAY="+byDay)
+	}
+
+	// COUNT or UNTIL limits
+	count := 0
+	if countStr != "" {
+		count, _ = strconv.Atoi(countStr)
+	}
+	if count > 0 {
+		parts = append(parts, "COUNT="+strconv.Itoa(count))
+	} else if endDate != "" {
+		// Parse YYYY-MM-DD and format as YYYYMMDD for UNTIL.
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			parts = append(parts, "UNTIL="+t.Format("20060102"))
+		}
+	}
+
+	return strings.Join(parts, ";")
+}
+
+// weekdayToDayCode converts a time.Weekday to the RFC 5545 two-letter code.
+func weekdayToDayCode(wd time.Weekday) string {
+	switch wd {
+	case time.Sunday:
+		return "SU"
+	case time.Monday:
+		return "MO"
+	case time.Tuesday:
+		return "TU"
+	case time.Wednesday:
+		return "WE"
+	case time.Thursday:
+		return "TH"
+	case time.Friday:
+		return "FR"
+	case time.Saturday:
+		return "SA"
+	}
+	return ""
+}
+
 // handleCreateEvent handles the create event form (HTMX fragment response).
 func (s *Server) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 	groupKey, ok := s.isAuthenticated(r)
@@ -576,6 +853,9 @@ func (s *Server) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 	startsAtStr := r.FormValue("starts_at")
 	location := r.FormValue("location")
 	capacityStr := r.FormValue("capacity")
+	recurrenceType := r.FormValue("recurrence_type")
+	recurrenceCountStr := r.FormValue("recurrence_count")
+	recurrenceEndDate := r.FormValue("recurrence_until")
 
 	// Validate
 	if err := validateString("title", title, 1, 1024); err != nil {
@@ -603,46 +883,100 @@ func (s *Server) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 		capacity = 0
 	}
 
-	// Generate event ID
-	eventID := generateToken()[:16]
-
-	// Store in SQLite cache
-	ce := CachedEvent{
-		GroupKey:    groupKey,
-		EventID:     eventID,
-		Title:       title,
-		Description: description,
-		StartsAt:    startsAt.Unix(),
-		Location:    location,
-		Capacity:    capacity,
-		Cancelled:   false,
-	}
-	if err := s.store.UpsertEvent(ce); err != nil {
-		s.renderFragment(w, "error_fragment", fragmentData{Error: "failed to create event"})
-		return
+	// Build RRULE if a recurrence type was selected.
+	var rrule string
+	if recurrenceType != "" && recurrenceType != "none" {
+		rrule = buildRRULE(recurrenceType, startsAt, recurrenceCountStr, recurrenceEndDate)
 	}
 
-	// Also store in product store if available
-	if s.product != nil {
-		event := &pb.Event{
-			EventId:     eventID,
-			GroupId:     groupKey,
+	// Generate recurrence ID if we have a recurrence rule.
+	recurrenceID := ""
+	if rrule != "" {
+		recurrenceID = generateToken()[:16]
+	}
+
+	// Generate the list of start times for recurring events.
+	var startTimes []time.Time
+	if rrule != "" {
+		pattern, err := productrecurrence.ParseRRULE(rrule)
+		if err != nil {
+			s.renderFragment(w, "error_fragment", fragmentData{Error: "invalid recurrence rule: " + err.Error()})
+			return
+		}
+		// Expand up to 2 years out or until the pattern's own limit.
+		until := startsAt.AddDate(2, 0, 0)
+		startTimes = productrecurrence.ExpandInstances(pattern, startsAt, until)
+		if len(startTimes) == 0 {
+			s.renderFragment(w, "error_fragment", fragmentData{Error: "recurrence produced no instances"})
+			return
+		}
+	} else {
+		startTimes = []time.Time{startsAt}
+	}
+
+	// Create events for each instance.
+	var firstEventID string
+	for i, st := range startTimes {
+		eventID := generateToken()[:16]
+		if i == 0 {
+			firstEventID = eventID
+		}
+
+		// Store in SQLite cache
+		ce := CachedEvent{
+			GroupKey:    groupKey,
+			EventID:     eventID,
 			Title:       title,
 			Description: description,
-			StartsAt:    timestamppb.New(startsAt),
+			StartsAt:    st.Unix(),
 			Location:    location,
-			Capacity:    uint64(capacity),
-			Paid:        false,
-			Slug:        eventID,
+			Capacity:    capacity,
+			Cancelled:   false,
 		}
-		s.product.Store().PutEvent(event)
+		if err := s.store.UpsertEvent(ce); err != nil {
+			s.renderFragment(w, "error_fragment", fragmentData{Error: "failed to create event"})
+			return
+		}
+
+		// Also store in product store if available
+		if s.product != nil {
+			event := &pb.Event{
+				EventId:     eventID,
+				GroupId:     groupKey,
+				Title:       title,
+				Description: description,
+				StartsAt:    timestamppb.New(st),
+				Location:    location,
+				Capacity:    uint64(capacity),
+				Paid:        false,
+				Slug:        eventID,
+			}
+			if rrule != "" {
+				event.Recurrence = &pb.RecurrenceRule{
+					Rrule: rrule,
+				}
+			}
+			s.product.Store().PutEvent(event)
+		}
 	}
 
-	log.Printf("web: event created: %s/%s — %s", groupKey, eventID, title)
+	instanceCount := len(startTimes)
+	log.Printf("web: event created: %s/%s — %s (%d instance(s)%s)", groupKey, firstEventID, title, instanceCount, func() string {
+		if recurrenceID != "" {
+			return ", recurrence_id=" + recurrenceID
+		}
+		return ""
+	}())
+
+	msg := fmt.Sprintf("Event created! (%d instances)", instanceCount)
+	if rrule != "" {
+		msg = fmt.Sprintf("Recurring event created! %d instances generated.", instanceCount)
+	}
+	_ = msg
 	s.renderFragment(w, "event_created_fragment", fragmentData{
 		Title:    title,
 		GroupKey: groupKey,
-		EventID:  eventID,
+		EventID:  firstEventID,
 	})
 }
 

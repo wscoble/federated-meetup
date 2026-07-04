@@ -1,0 +1,26 @@
+# Caddyfile — reverse proxy with automatic HTTPS.
+#
+# Replace {$DOMAIN} with your domain (or use the env var).
+# Caddy automatically provisions and renews TLS certificates via ACME
+# (Let's Encrypt / ZeroSSL) when serving on ports 80+443.
+
+{$DOMAIN:localhost} {
+	reverse_proxy fedmeetup:8091
+
+	# Compression
+	encode gzip zstd
+
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# Access logs
+	log {
+		output stdout
+		format json
+	}
+}

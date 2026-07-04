@@ -46,6 +46,8 @@ import (
 
 	"github.com/sscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
 
+	"github.com/sscoble/federated-meetup/internal/activitypub"
+	"github.com/sscoble/federated-meetup/internal/email"
 	"github.com/sscoble/federated-meetup/internal/federation"
 	"github.com/sscoble/federated-meetup/internal/group"
 	"github.com/sscoble/federated-meetup/internal/host"
@@ -71,6 +73,12 @@ type config struct {
 	syncBootstrap bool
 	syncLive    bool
 	protocolDB  string
+	// SMTP / email
+	smtpHost    string
+	smtpPort    string
+	smtpUser    string
+	smtpPass    string
+	smtpFrom    string
 }
 
 func loadConfig() (*config, error) {
@@ -121,6 +129,13 @@ func loadConfig() (*config, error) {
 	// If HOSTD_PROTOCOL_DB is set, transitions are persisted to a
 	// SQLite database at that path and replayed on startup.
 	cfg.protocolDB = os.Getenv("HOSTD_PROTOCOL_DB")
+
+	// SMTP / email config.
+	cfg.smtpHost = os.Getenv("HOSTD_SMTP_HOST")
+	cfg.smtpPort = getEnv("HOSTD_SMTP_PORT", "587")
+	cfg.smtpUser = os.Getenv("HOSTD_SMTP_USER")
+	cfg.smtpPass = os.Getenv("HOSTD_SMTP_PASS")
+	cfg.smtpFrom = os.Getenv("HOSTD_SMTP_FROM")
 
 	return cfg, nil
 }
@@ -183,7 +198,23 @@ func main() {
 	}
 	defer webStore.Close()
 
-	webSrv, err := web.NewServer(svc, prodSvc, webStore)
+	// Email sender: SMTP if configured, log-only for dev.
+	var emailSender email.EmailSender
+	if cfg.smtpHost != "" {
+		emailSender = email.NewSMTPSender(email.SMTPConfig{
+			Host:     cfg.smtpHost,
+			Port:     cfg.smtpPort,
+			Username: cfg.smtpUser,
+			Password: cfg.smtpPass,
+			From:     cfg.smtpFrom,
+		})
+		log.Printf("fedmeetup: SMTP email enabled (host=%s:%s, from=%s)", cfg.smtpHost, cfg.smtpPort, cfg.smtpFrom)
+	} else {
+		emailSender = email.NewLogOnlySender()
+		log.Printf("fedmeetup: email in log-only mode (set HOSTD_SMTP_HOST to enable SMTP)")
+	}
+
+	webSrv, err := web.NewServer(svc, prodSvc, webStore, emailSender, cfg.baseURL)
 	if err != nil {
 		log.Fatalf("web server: %v", err)
 	}
@@ -208,6 +239,12 @@ func main() {
 
 	// MCP + discovery endpoints
 	mcp.RegisterEndpoints(mux, svc, mcpCfg)
+
+	// ActivityPub federation (WebFinger, actor, outbox, inbox)
+	apAdapter := activitypub.NewProductStoreAdapter(prodStore)
+	apSvc := activitypub.NewActivityPubService(cfg.baseURL, apAdapter)
+	apSvc.RegisterRoutes(mux)
+	log.Printf("fedmeetup: ActivityPub endpoints enabled (WebFinger, actor, outbox, inbox)")
 
 	// Web UI (all routes: /, /groups/, /events/, /dashboard/, /rsvp/, /checkout/, /static/)
 	mux.Handle("/", webSrv.Routes())
@@ -293,6 +330,11 @@ func main() {
 		}
 		log.Printf("fedmeetup: federation sync active with %d peer(s)", len(cfg.peers))
 	}
+
+	// ---- Reminder scheduler ----
+	// Every 15 minutes, check for events starting in ~24h and send
+	// reminder emails to confirmed RSVPs.
+	go startReminderScheduler(webStore, emailSender, cfg.baseURL)
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)

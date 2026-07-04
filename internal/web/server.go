@@ -17,6 +17,7 @@ import (
 
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
 
+	"github.com/sscoble/federated-meetup/internal/email"
 	"github.com/sscoble/federated-meetup/internal/host"
 	"github.com/sscoble/federated-meetup/internal/product"
 )
@@ -29,14 +30,21 @@ type Server struct {
 	store   *Store
 	tmpls   templateMap
 	now     func() time.Time
+	email   email.EmailSender
+	baseURL string // configured base URL for absolute links (e.g. magic-link emails)
 }
 
 // NewServer constructs a web Server. The host and product services may be nil
 // (the web layer degrades gracefully — pages show cached data from SQLite).
-func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store) (*Server, error) {
+// emailSender may be nil (degrades to no-op). baseURL is used for absolute
+// links in emails; if empty, request-derived base URL is used.
+func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store, emailSender email.EmailSender, baseURL string) (*Server, error) {
 	tmpls, err := loadTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("web: load templates: %w", err)
+	}
+	if emailSender == nil {
+		emailSender = email.NewNoopSender()
 	}
 	return &Server{
 		host:    hostSvc,
@@ -44,6 +52,8 @@ func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store) (*
 		store:   store,
 		tmpls:   tmpls,
 		now:     time.Now,
+		email:   emailSender,
+		baseURL: baseURL,
 	}, nil
 }
 
@@ -63,6 +73,8 @@ func (s *Server) Routes() http.Handler {
 
 	// Public pages
 	mux.HandleFunc("GET /{$}", s.handleHome)
+	mux.HandleFunc("GET /groups/new", s.handleNewGroup)
+	mux.HandleFunc("POST /groups/new", s.handleCreateGroup)
 	mux.HandleFunc("GET /groups/{name}", s.handleGroup)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}", s.handleEvent)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}/calendar.ics", s.handleEventICS)
@@ -626,6 +638,15 @@ func baseURL(r *http.Request) string {
 		scheme = "https"
 	}
 	return fmt.Sprintf("%s://%s", scheme, r.Host)
+}
+
+// absoluteBaseURL returns the server's configured base URL if set,
+// otherwise falls back to deriving from the request.
+func (s *Server) absoluteBaseURL(r *http.Request) string {
+	if s.baseURL != "" {
+		return s.baseURL
+	}
+	return baseURL(r)
 }
 
 // storeFromContext retrieves the store from the request context (not used
