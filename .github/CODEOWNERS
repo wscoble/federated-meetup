@@ -1,0 +1,37 @@
+# CODEOWNERS — code review ownership
+# https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# These users are automatically requested as reviewers when a PR touches
+# files in their paths. Combined with branch protection's required review,
+# this ensures the owner signs off on changes to critical areas.
+
+# Default owner — all files not matched below
+*           @wscoble
+
+# Security-critical areas
+SECURITY.md                         @wscoble
+.github/workflows/                  @wscoble
+deploy/k8s/                         @wscoble
+deploy/                             @wscoble
+Dockerfile                          @wscoble
+Dockerfile.product                  @wscoble
+docker-compose.yml                  @wscoble
+.env.example                        @wscoble
+Caddyfile                           @wscoble
+
+# Crypto and protocol layer
+internal/crypto/                    @wscoble
+internal/group/                     @wscoble
+internal/host/                      @wscoble
+internal/federation/                @wscoble
+
+# ActivityPub federation
+internal/activitypub/               @wscoble
+
+# Payment processing
+internal/payment/                   @wscoble
+internal/product/                   @wscoble
+
+# Web handlers
+internal/web/                       @wscoble
+cmd/                                @wscoble
