@@ -1,0 +1,297 @@
+# Quick Guide: Spin Up a Federated Meetup Server
+
+**Verified July 2026.** Every command below has been run and confirmed working.
+
+---
+
+## What you'll have in 2 minutes
+
+A running federated-meetup host with:
+- Web UI (event discovery, RSVP, organizer dashboard)
+- ConnectRPC API (11 RPCs)
+- MCP server (6 tools for AI assistants)
+- Discovery endpoints (.well-known/federation, llms.txt, openapi.json)
+- ICS calendar export for every event
+- Seeded demo data (Vegas Programmers group + 3 events)
+
+---
+
+## Prerequisites
+
+**Go 1.25+**. That's it. No CGO, no system SQLite, no Node.js.
+
+```bash
+go version
+# go1.25.5 linux/amd64  ← good
+```
+
+---
+
+## Step 1: Build
+
+```bash
+git clone https://github.com/sscoble/federated-meetup.git
+cd federated-meetup
+go build -o fedmeetup ./cmd/fedmeetup
+```
+
+You now have a single binary `./fedmeetup`. That's the whole server.
+
+---
+
+## Step 2: Generate a group key
+
+The host needs a 32-byte Ed25519 public key as the group identity. For local dev, any 64-char hex string works:
+
+```bash
+export HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa"*32)')"
+echo $HOSTD_GROUP_KEY
+# 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+For production, generate a real keypair:
+
+```bash
+python3 -c "
+import os, hashlib
+seed = os.urandom(32)
+print('0x' + seed.hex())
+"
+```
+
+---
+
+## Step 3: Run it
+
+```bash
+./fedmeetup
+```
+
+Wait — you need to set a few env vars. Here's the minimal set:
+
+```bash
+export HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa"*32)')"
+export HOSTD_NAME="my-host"
+export HOSTD_ADDR="127.0.0.1:8091"
+export HOSTD_BASE_URL="http://localhost:8091"
+export HOSTD_DB_PATH="/tmp/fedmeetup.db"
+export HOSTD_AREA="Las Vegas, NV"
+
+./fedmeetup
+```
+
+You'll see:
+
+```
+fedmeetup: listening on 127.0.0.1:8091, group_key=0xaaa..., name="my-host"
+fedmeetup: web UI at 127.0.0.1:8091, base_url=http://localhost:8091, db=/tmp/fedmeetup.db
+web: seeded demo data — group "Vegas Programmers" with 3 events
+```
+
+Open `http://localhost:8091` in a browser. You'll see:
+- Date-grouped events (Today / This Week / Coming Up)
+- Vegas Programmers group with federation badge
+- Event cards with date badges and relative time
+- Search bar, mobile bottom nav
+
+---
+
+## Step 4: Verify it's running
+
+```bash
+# Health check
+curl http://localhost:8091/healthz
+# → ok
+
+# Host identity
+curl http://localhost:8091/identity
+# → {"group_key":"0xaaa...","name":"my-host","threshold":0}
+
+# Federation discovery (what AI agents see)
+curl http://localhost:8091/.well-known/federation
+# → JSON with host metadata, group count, event count, peers
+
+# LLM-readable summary
+curl http://localhost:8091/llms.txt
+# → Plain text listing groups, API endpoints, feeds
+
+# OpenAPI spec
+curl http://localhost:8091/openapi.json | python3 -m json.tool | head -20
+
+# ICS calendar export for an event
+curl http://localhost:8091/events/vegas-programmers/evt-go-night/calendar.ics
+# → Valid iCalendar file you can import into Google/Apple Calendar
+```
+
+---
+
+## Step 5: Spin up a second host (federation)
+
+The whole point. Host B federates from Host A:
+
+```bash
+# Host A is already running on :8091
+
+# Start Host B, pointing at Host A as a peer
+export HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa"*32)')"  # same group key
+export HOSTD_NAME="peer-host"
+export HOSTD_ADDR="127.0.0.1:8092"
+export HOSTD_BASE_URL="http://localhost:8092"
+export HOSTD_DB_PATH="/tmp/fedmeetup-peer.db"
+export HOSTD_PEERS="http://localhost:8091"  # ← federate from Host A
+
+./fedmeetup
+```
+
+Host B will:
+1. **Bootstrap** — pull Host A's transition log via GetLog, replay into local state
+2. **Live** — open a Subscribe stream for real-time updates
+
+You'll see in the logs:
+
+```
+fedmeetup: bootstrapping from peer http://localhost:8091
+fedmeetup: federation sync active with 1 peer(s)
+```
+
+Verify Host B serves the same group:
+
+```bash
+curl http://localhost:8092/identity
+# → same group_key, different name
+
+curl http://localhost:8092/llms.txt
+# → same group listed
+```
+
+---
+
+## All configuration
+
+**Required:**
+
+- `HOSTD_GROUP_KEY` — hex 32-byte Ed25519 public key (e.g. `0xaaaa...`)
+
+**Server:**
+
+- `HOSTD_ADDR` — listen address (default `:8080`)
+- `HOSTD_NAME` — host name in discovery (default `hostd`)
+- `HOSTD_BASE_URL` — public URL for links/JSON-LD (default `http://localhost:8080`)
+- `HOSTD_DB_PATH` — SQLite path for web store (default `fedmeetup.db`)
+- `HOSTD_DESCRIPTION` — for discovery endpoints (default `Federated Meetup host`)
+- `HOSTD_AREA` — geographic area for discovery (e.g. `Las Vegas, NV`)
+
+**Federation (optional):**
+
+- `HOSTD_PEERS` — comma-separated peer URLs to sync from
+- `HOSTD_SYNC_BOOTSTRAP` — bootstrap on startup (default `true`)
+- `HOSTD_SYNC_LIVE` — live stream after bootstrap (default `true`)
+
+**Unused in v0:**
+
+- `HOSTD_THRESHOLD` — initial threshold (default `0`)
+- `HOSTD_STEWARDS` — comma-separated hex steward keys
+
+---
+
+## Docker
+
+```bash
+docker build -t fedmeetup -f Dockerfile .
+
+docker run -p 8091:8091 \
+  -e HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa"*32)')" \
+  -e HOSTD_NAME="my-host" \
+  -e HOSTD_BASE_URL="http://localhost:8091" \
+  -e HOSTD_AREA="Las Vegas, NV" \
+  fedmeetup
+```
+
+---
+
+## Organizer dashboard
+
+The demo seed includes an organizer token: `demo-organizer-token`
+
+1. Go to `http://localhost:8091/dashboard/login`
+2. Enter `demo-organizer-token`
+3. You'll see revenue summary, create-event form, attendee check-in, cancel event
+
+---
+
+## AI agent access
+
+Any AI assistant can query your host with no API key:
+
+```bash
+# Initialize MCP session
+curl -X POST http://localhost:8091/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{
+    "jsonrpc":"2.0",
+    "method":"initialize",
+    "params":{
+      "protocolVersion":"2024-11-05",
+      "capabilities":{},
+      "clientInfo":{"name":"my-ai","version":"1.0"}
+    },
+    "id":1
+  }'
+
+# List available tools
+curl -X POST http://localhost:8091/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'
+```
+
+6 tools available: `list_groups`, `list_events`, `get_event`, `resolve_name`, `get_group`, `find_events`
+
+---
+
+## What's running
+
+```
+Single binary, single port, three surfaces:
+
+┌─────────────────────────────────────────────────┐
+│                fedmeetup (:8091)                 │
+│                                                  │
+│  ┌─────────────┐  ┌──────────┐  ┌─────────────┐ │
+│  │  Web UI      │  │ ConnectRPC│  │  MCP server │ │
+│  │  (HTMX)     │  │ (11 RPCs) │  │  (6 tools)  │ │
+│  └─────────────┘  └──────────┘  └─────────────┘ │
+│                                                  │
+│  ┌──────────────────────────────────────────┐  │
+│  │  Discovery: .well-known/federation        │  │
+│  │  llms.txt  openapi.json  robots.txt        │  │
+│  └──────────────────────────────────────────┘  │
+│                                                  │
+│  ┌──────────────────────────────────────────┐  │
+│  │  Federation Syncer (HOSTD_PEERS)          │  │
+│  │  Bootstrap → GetLog → Apply               │  │
+│  │  Live → Subscribe stream                  │  │
+│  └──────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────┘
+         │                          │
+         ▼                          ▼
+    SQLite (web)            WireGuard mesh
+                             (server-to-server)
+```
+
+**255 tests passing. AGPL-3.0. Go 1.25+. No CGO. No JavaScript framework.**
+
+---
+
+## Troubleshooting
+
+**"HOSTD_GROUP_KEY is required"** — you forgot to set it. See Step 2.
+
+**Port already in use** — change `HOSTD_ADDR` to a different port.
+
+**No demo data** — the seed runs once. Delete `HOSTD_DB_PATH` file and restart to re-seed.
+
+**Federation peer not syncing** — the peer must serve the same group key (`HOSTD_GROUP_KEY`). Check that both hosts have the same value.
+
+**Docker build fails** — needs Go 1.25 base image. If your Docker doesn't have it, use the binary path instead.

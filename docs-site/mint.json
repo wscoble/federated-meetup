@@ -21,6 +21,7 @@
             "pages": [
               "index",
               "quickstart",
+              "guides/quick-federated-setup",
               "architecture"
             ]
           },
