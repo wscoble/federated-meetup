@@ -4,7 +4,7 @@
 # Build:  docker build -t fedmeetup -f Dockerfile .
 # Run:    docker run -p 8080:8080 -e HOSTD_GROUP_KEY="0x$(openssl rand -hex 32)" fedmeetup
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./

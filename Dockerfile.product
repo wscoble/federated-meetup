@@ -1,7 +1,7 @@
 # Dockerfile.product — self-host federated-meetup product service
 # Multi-stage build: Go builder + minimal runtime image.
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
