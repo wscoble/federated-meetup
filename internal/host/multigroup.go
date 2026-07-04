@@ -16,9 +16,9 @@
 //     "which groups do I host" is a future cycle's bootstrap loader
 //     (config file, gossip-fed peer list, on-disk state). v0 only
 //     supports the constructor + lookup + list.
-//   - Name → GroupID resolution is a placeholder; real name
-//     resolution comes in a later cycle (canonical names live in the
-//     state KV, not in a separate directory at v0).
+//   - Name → GroupID resolution is handled by the in-memory byName map,
+//     populated via RegisterName when groups are created or discovered.
+//     The ResolveName RPC checks this directory first.
 //
 // The ConnectRPC handler (Service) holds a *MultiGroup and resolves
 // the GroupID from the request's GroupKey. If a request names a
