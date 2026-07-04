@@ -22,17 +22,20 @@ spec:
         app.kubernetes.io/name: federated-meetup
         app.kubernetes.io/component: host-daemon
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: cluster-node-1
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         fsGroup: 65532
       containers:
         - name: fedmeetup
-          image: ghcr.io/wscoble/federated-meetup:latest
+          image: 10.43.63.17:5000/fedmeetup:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
+              hostPort: 8091
               protocol: TCP
           envFrom:
             - configMapRef:
