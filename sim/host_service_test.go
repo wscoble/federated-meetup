@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sscoble/federated-meetup/internal/crypto"
@@ -284,7 +285,7 @@ func TestHostService_ResolveName(t *testing.T) {
 	}
 }
 
-func TestHostService_SubmitUserAction_Unimplemented(t *testing.T) {
+func TestHostService_SubmitUserAction_NoPayload(t *testing.T) {
 	svc, _, gkp := freshService(t)
 	req := connect.NewRequest(&pb.SubmitUserActionRequest{
 		GroupKey: &pb.PublicKey{Raw: gkp.Public[:]},
@@ -292,10 +293,118 @@ func TestHostService_SubmitUserAction_Unimplemented(t *testing.T) {
 	})
 	_, err := svc.SubmitUserAction(context.Background(), req)
 	if err == nil {
-		t.Fatal("expected Unimplemented, got nil")
+		t.Fatal("expected InvalidArgument, got nil")
 	}
-	if connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Errorf("code = %v, want Unimplemented", connect.CodeOf(err))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
+
+func TestHostService_SubmitUserAction_InvalidType(t *testing.T) {
+	svc, _, gkp := freshService(t)
+	req := connect.NewRequest(&pb.SubmitUserActionRequest{
+		GroupKey:          &pb.PublicKey{Raw: gkp.Public[:]},
+		Type:              pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT,
+		TransitionPayload: []byte{0x01},
+	})
+	_, err := svc.SubmitUserAction(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
+
+func TestHostService_SubmitUserAction_GroupNotFound(t *testing.T) {
+	svc, _, _ := freshService(t)
+	var wrongKey [32]byte
+	for i := range wrongKey {
+		wrongKey[i] = 0xEE
+	}
+	req := connect.NewRequest(&pb.SubmitUserActionRequest{
+		GroupKey:          &pb.PublicKey{Raw: wrongKey[:]},
+		Type:              pb.TransitionType_TRANSITION_TYPE_RSVP,
+		TransitionPayload: []byte{0x01},
+	})
+	_, err := svc.SubmitUserAction(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected NotFound, got nil")
+	}
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Errorf("code = %v, want NotFound", connect.CodeOf(err))
+	}
+}
+
+// TestHostService_SubmitUserAction_RSVP_BadPayload verifies that a
+// malformed transition_payload (not a valid pb.Transition) is rejected
+// with InvalidArgument.
+func TestHostService_SubmitUserAction_RSVP_BadPayload(t *testing.T) {
+	svc, _, gkp := freshService(t)
+	req := connect.NewRequest(&pb.SubmitUserActionRequest{
+		GroupKey:          &pb.PublicKey{Raw: gkp.Public[:]},
+		Type:              pb.TransitionType_TRANSITION_TYPE_RSVP,
+		TransitionPayload: []byte{0xDE, 0xAD, 0xBE, 0xEF},
+	})
+	_, err := svc.SubmitUserAction(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
+
+// TestHostService_SubmitUserAction_RSVP_UnsignedTransition verifies that
+// a well-formed RSVP transition without steward signatures is rejected
+// with FailedPrecondition (signature verification). This confirms the
+// RPC is wired through to Apply — it no longer returns Unimplemented.
+func TestHostService_SubmitUserAction_RSVP_UnsignedTransition(t *testing.T) {
+	svc, w, gkp := freshService(t)
+	stewards := stewardKPsForTest(w)
+	eve := keyPairFromSeed(w, "eve-rsvp-host")
+
+	// Create an event to RSVP to.
+	createEvt := &pb.CreateEventPayload{
+		EventId:  "evt-user-action-001",
+		Title:    "User Action Test Event",
+		StartsAt: timestamppb.New(w.Now()),
+		Capacity: 50,
+	}
+	if !applyBroadcast(t, w, gkp, "CREATE_EVENT for user-action",
+		pb.TransitionType_TRANSITION_TYPE_CREATE_EVENT,
+		createEvt,
+		[]crypto.KeyPair{stewards[0], stewards[1]}) {
+		t.Fatal("setup CREATE_EVENT failed")
+	}
+
+	// Build an RSVP transition with no steward signatures.
+	rsvpPayload := &pb.RsvpPayload{
+		EventId: "evt-user-action-001",
+		User:    &pb.PublicKey{Raw: eve.Public[:]},
+	}
+	trProto := &pb.Transition{
+		Type:     pb.TransitionType_TRANSITION_TYPE_RSVP,
+		Payload:  &pb.Transition_Rsvp{Rsvp: rsvpPayload},
+		SignedAt: timestamppb.New(w.Now()),
+	}
+	payload, err := proto.Marshal(trProto)
+	if err != nil {
+		t.Fatalf("marshal transition: %v", err)
+	}
+
+	req := connect.NewRequest(&pb.SubmitUserActionRequest{
+		GroupKey:          &pb.PublicKey{Raw: gkp.Public[:]},
+		Type:              pb.TransitionType_TRANSITION_TYPE_RSVP,
+		TransitionPayload: payload,
+		UserEnvelope:      &pb.SignedEnvelope{Message: []byte("test")},
+	})
+	_, err = svc.SubmitUserAction(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected FailedPrecondition, got nil")
+	}
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition", connect.CodeOf(err))
 	}
 }
 

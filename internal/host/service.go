@@ -20,9 +20,12 @@ package host
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"connectrpc.com/connect"
+
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
 	"github.com/sscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
@@ -279,14 +282,81 @@ func (s *Service) SubmitTransition(
 }
 
 // SubmitUserAction applies a user-signed action (RSVP, ATTEST, CANCEL_RSVP).
-//
-// v0: this is a stub that rejects with Unimplemented. Wiring user-signed
-// actions into the apply switch is cycle 80+ work.
+// The user signs the transition with their Ed25519 keypair and submits
+// it via this RPC. The host applies the transition to the group state.
+// Signature verification on the user envelope is deferred (v0) — the
+// protocol-level Apply validates structure.
 func (s *Service) SubmitUserAction(
 	ctx context.Context,
 	req *connect.Request[pb.SubmitUserActionRequest],
 ) (*connect.Response[pb.SubmitUserActionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("SubmitUserAction not wired in v0"))
+	r := req.Msg
+	if r == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("nil request"))
+	}
+	if r.GroupKey == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("group_key is nil"))
+	}
+	if len(r.TransitionPayload) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("transition_payload is empty"))
+	}
+
+	// Validate transition type is a user-action type.
+	switch r.Type {
+	case pb.TransitionType_TRANSITION_TYPE_RSVP,
+		pb.TransitionType_TRANSITION_TYPE_CANCEL_RSVP,
+		pb.TransitionType_TRANSITION_TYPE_ATTEST:
+		// allowed
+	default:
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("type %s is not a valid user action", r.Type))
+	}
+
+	// v0: skip signature verification on the user envelope.
+	if r.UserEnvelope != nil {
+		log.Printf("WARN: SubmitUserAction: user envelope signature verification skipped (v0)")
+	}
+
+	groupKey := bytesToKey(r.GroupKey.Raw)
+	state, err := s.lookup(groupKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal the transition payload.
+	var trProto pb.Transition
+	if err := proto.Unmarshal(r.TransitionPayload, &trProto); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("invalid transition payload: %w", err))
+	}
+
+	// Validate the unmarshaled transition's type matches the request.
+	if trProto.Type != r.Type {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("transition type %s does not match request type %s", trProto.Type, r.Type))
+	}
+
+	// Stamp PriorState with current root if not already set.
+	if trProto.PriorState == nil {
+		root := state.Root()
+		trProto.PriorState = &pb.StateRoot{Hash: root[:]}
+	}
+
+	// Construct the domain Transition and apply.
+	t, err := group.NewTransition(&trProto, groupKey)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("invalid transition: %w", err))
+	}
+
+	if err := state.Apply(t, s.now()); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition,
+			fmt.Errorf("apply: %w", err))
+	}
+
+	return connect.NewResponse(&pb.SubmitUserActionResponse{
+		NewSnapshot: stateSnapshotToProto(state.Snapshot(), state.Root()),
+	}), nil
 }
 
 // ResolveName resolves a canonical name to the group key + hosting URLs.

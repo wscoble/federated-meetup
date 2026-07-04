@@ -17,6 +17,7 @@ import (
 
 	pb "github.com/sscoble/federated-meetup/proto/federated_meetup/product/v1"
 
+	"github.com/sscoble/federated-meetup/internal/activitypub"
 	"github.com/sscoble/federated-meetup/internal/email"
 	"github.com/sscoble/federated-meetup/internal/host"
 	"github.com/sscoble/federated-meetup/internal/product"
@@ -31,7 +32,8 @@ type Server struct {
 	tmpls   templateMap
 	now     func() time.Time
 	email   email.EmailSender
-	baseURL string // configured base URL for absolute links (e.g. magic-link emails)
+	baseURL string                          // configured base URL for absolute links (e.g. magic-link emails)
+	ap      *activitypub.ActivityPubService // optional: ActivityPub delivery
 }
 
 // NewServer constructs a web Server. The host and product services may be nil
@@ -61,6 +63,12 @@ func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store, em
 func (s *Server) SetClock(now func() time.Time) {
 	s.now = now
 	s.store.SetClock(now)
+}
+
+// SetActivityPubService sets the ActivityPub service used for federated
+// delivery. When set, newly created events are delivered to remote followers.
+func (s *Server) SetActivityPubService(ap *activitypub.ActivityPubService) {
+	s.ap = ap
 }
 
 // Routes returns an http.Handler with all web routes registered.

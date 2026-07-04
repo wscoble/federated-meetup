@@ -973,6 +973,37 @@ func (s *Server) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 		msg = fmt.Sprintf("Recurring event created! %d instances generated.", instanceCount)
 	}
 	_ = msg
+
+	// Deliver the first event via ActivityPub if configured.
+	if s.ap != nil {
+		group, gok := s.product.Store().GetGroup(groupKey)
+		groupName := groupKey
+		if gok && group.CanonicalName != "" {
+			groupName = group.CanonicalName
+		}
+		// Deliver the first instance via ActivityPub.
+		// For recurring events, each instance has a unique ID generated
+		// in the loop above, but we only have firstEventID for the first.
+		// v0: deliver only the first instance.
+		if len(startTimes) > 0 {
+			event := &pb.Event{
+				EventId:     firstEventID,
+				GroupId:     groupKey,
+				Title:       title,
+				Description: description,
+				StartsAt:    timestamppb.New(startTimes[0]),
+				Location:    location,
+				Capacity:    uint64(capacity),
+			}
+			report, err := s.ap.DeliverNewEvent(event, groupName)
+			if err != nil {
+				log.Printf("web: AP delivery for event %s failed: %v", firstEventID, err)
+			} else if report != nil {
+				log.Printf("web: AP delivery for event %s: %d success, %d fail", firstEventID, report.Successes, report.Failures)
+			}
+		}
+	}
+
 	s.renderFragment(w, "event_created_fragment", fragmentData{
 		Title:    title,
 		GroupKey: groupKey,
