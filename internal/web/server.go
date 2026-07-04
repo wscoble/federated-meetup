@@ -65,6 +65,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /groups/{name}", s.handleGroup)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}", s.handleEvent)
+	mux.HandleFunc("GET /events/{group_key}/{event_id}/calendar.ics", s.handleEventICS)
 	mux.HandleFunc("POST /events/{group_key}/{event_id}/rsvp", s.handleRsvpSubmit)
 	mux.HandleFunc("POST /events/{group_key}/{event_id}/purchase", s.handlePurchaseTicket)
 
@@ -82,6 +83,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /dashboard/login", s.handleLoginPost)
 	mux.HandleFunc("POST /dashboard/events", s.handleCreateEvent)
 	mux.HandleFunc("POST /dashboard/events/{event_id}/tickets", s.handleCreateTicket)
+	mux.HandleFunc("POST /dashboard/events/{event_id}/cancel", s.handleCancelEvent)
 	mux.HandleFunc("POST /dashboard/events/{group_key}/checkin", s.handleCheckIn)
 	mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
 
@@ -113,15 +115,32 @@ type templateMap map[string]*template.Template
 // definitions ("content", "title", "head") don't collide across pages.
 func loadTemplates() (templateMap, error) {
 	funcs := template.FuncMap{
-		"formatTime":  formatTime,
-		"formatMoney": formatMoney,
-		"formatCents": formatCents,
+		"formatTime":     formatTime,
+		"formatMoney":    formatMoney,
+		"formatCents":    formatCents,
+		"formatDate":     formatDate,
+		"formatDateShort": formatDateShort,
+		"formatRelative": formatRelative,
+		"isPast":         isPast,
+		"isToday":        isToday,
+		"isThisWeek":     isThisWeek,
+		"dayOfWeek":      dayOfWeek,
+		"dayOfMonth":     dayOfMonth,
+		"monthShort":     monthShort,
+		"timeOnly":       timeOnly,
+		"formatDuration": formatDuration,
 	}
 
 	// Read base template
 	baseData, err := templateFiles.ReadFile("templates/base.html")
 	if err != nil {
 		return nil, fmt.Errorf("read base.html: %w", err)
+	}
+
+	// Read fragments template (shared across pages for event_card, etc.)
+	fragData, err := templateFiles.ReadFile("templates/fragments.html")
+	if err != nil {
+		return nil, fmt.Errorf("read fragments.html: %w", err)
 	}
 
 	entries, err := templateFiles.ReadDir("templates")
@@ -140,10 +159,16 @@ func loadTemplates() (templateMap, error) {
 			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
 
-		// Each page template is parsed fresh with the base template.
+		// Each page template is parsed fresh with the base template
+		// AND the fragments template (for shared blocks like event_card).
 		t := template.New("").Funcs(funcs)
 		if _, err := t.Parse(string(baseData)); err != nil {
 			return nil, fmt.Errorf("parse base for %s: %w", name, err)
+		}
+		if name != "fragments.html" {
+			if _, err := t.Parse(string(fragData)); err != nil {
+				return nil, fmt.Errorf("parse fragments for %s: %w", name, err)
+			}
 		}
 		if _, err := t.Parse(string(pageData)); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
@@ -174,6 +199,128 @@ func formatMoney(m *pb.Money) string {
 // formatCents converts a cents amount to a dollar string.
 func formatCents(cents uint64) string {
 	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
+}
+
+// formatDate formats a unix timestamp as "Mon, Jan 2, 2006".
+func formatDate(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("Mon, Jan 2, 2006")
+}
+
+// formatDateShort formats as "Jan 2".
+func formatDateShort(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("Jan 2")
+}
+
+// formatRelative returns a human-friendly relative time string.
+// "Today", "Tomorrow", "In 3 days", "Last week", "2 months ago".
+func formatRelative(unix int64) string {
+	t := time.Unix(unix, 0).UTC()
+	now := time.Now().UTC()
+	diff := t.Sub(now)
+
+	if diff < 0 {
+		abs := -diff
+		switch {
+		case abs < time.Hour:
+			return "Just now"
+		case abs < 24*time.Hour:
+			return "Earlier today"
+		case abs < 48*time.Hour:
+			return "Yesterday"
+		case abs < 7*24*time.Hour:
+			return fmt.Sprintf("%d days ago", int(abs.Hours()/24))
+		case abs < 14*24*time.Hour:
+			return "Last week"
+		case abs < 30*24*time.Hour:
+			return fmt.Sprintf("%d weeks ago", int(abs.Hours()/(24*7)))
+		case abs < 365*24*time.Hour:
+			return fmt.Sprintf("%d months ago", int(abs.Hours()/(24*30)))
+		default:
+			return fmt.Sprintf("%d years ago", int(abs.Hours()/(24*365)))
+		}
+	}
+
+	switch {
+	case diff < time.Hour:
+		return "Soon"
+	case diff < 24*time.Hour:
+		return "Today"
+	case diff < 48*time.Hour:
+		return "Tomorrow"
+	case diff < 7*24*time.Hour:
+		return fmt.Sprintf("In %d days", int(diff.Hours()/24))
+	case diff < 14*24*time.Hour:
+		return "Next week"
+	case diff < 30*24*time.Hour:
+		return fmt.Sprintf("In %d weeks", int(diff.Hours()/(24*7)))
+	case diff < 365*24*time.Hour:
+		return fmt.Sprintf("In %d months", int(diff.Hours()/(24*30)))
+	default:
+		return fmt.Sprintf("In %d years", int(diff.Hours()/(24*365)))
+	}
+}
+
+// isPast returns true if the unix timestamp is in the past.
+func isPast(unix int64) bool {
+	return unix < time.Now().Unix()
+}
+
+// isToday returns true if the unix timestamp is today (UTC).
+func isToday(unix int64) bool {
+	t := time.Unix(unix, 0).UTC()
+	now := time.Now().UTC()
+	return t.Year() == now.Year() && t.YearDay() == now.YearDay()
+}
+
+// isThisWeek returns true if the event is within the next 7 days.
+func isThisWeek(unix int64) bool {
+	diff := unix - time.Now().Unix()
+	return diff > 0 && diff < 7*24*3600
+}
+
+// dayOfWeek returns the abbreviated day name (Mon, Tue, etc).
+func dayOfWeek(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("Mon")
+}
+
+// dayOfMonth returns the day number as a string.
+func dayOfMonth(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("2")
+}
+
+// monthShort returns the abbreviated month name (Jan, Feb, etc).
+func monthShort(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("Jan")
+}
+
+// timeOnly returns the time portion as "3:04 PM".
+func timeOnly(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format("3:04 PM")
+}
+
+// formatDuration returns a human-friendly duration string.
+// e.g. "2 hours", "1.5 hours", "30 min".
+func formatDuration(startUnix, endUnix int64) string {
+	if endUnix <= startUnix {
+		return ""
+	}
+	dur := time.Duration(endUnix - startUnix) * time.Second
+	hours := dur.Hours()
+	if hours >= 1 {
+		if hours == float64(int(hours)) {
+			return fmt.Sprintf("%d hour%s", int(hours), pluralS(int(hours)))
+		}
+		return fmt.Sprintf("%.1f hours", hours)
+	}
+	mins := dur.Minutes()
+	return fmt.Sprintf("%d min", int(mins))
+}
+
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // ---- Rendering helpers ----
@@ -244,15 +391,20 @@ type pageBase struct {
 
 type homeData struct {
 	pageBase
-	Groups []CachedGroup
-	Events []CachedEvent
-	Query  string
+	Groups       []CachedGroup
+	Events       []CachedEvent
+	TodayEvents  []CachedEvent
+	WeekEvents   []CachedEvent
+	LaterEvents  []CachedEvent
+	Query        string
 }
 
 type groupData struct {
 	pageBase
-	Group  CachedGroup
-	Events []CachedEvent
+	Group          CachedGroup
+	UpcomingEvents []CachedEvent
+	PastEvents     []CachedEvent
+	PastEventCount int
 }
 
 type ticketView struct {

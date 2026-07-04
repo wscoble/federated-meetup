@@ -2,30 +2,71 @@
 {{define "title"}}{{.Group.DisplayName}} — Group{{end}}
 {{define "content"}}
 <div class="mb-6">
-	<h1 class="text-2xl sm:text-3xl font-bold mb-1">{{.Group.DisplayName}}</h1>
-	<p class="text-gray-500 text-sm">@{{.Group.CanonicalName}}</p>
+	<div class="flex items-start justify-between gap-4">
+		<div>
+			<h1 class="text-2xl sm:text-3xl font-bold mb-1">{{.Group.DisplayName}}</h1>
+			<p class="text-gray-500 text-sm">@{{.Group.CanonicalName}}</p>
+		</div>
+		<span class="flex items-center gap-1 text-xs text-indigo-500 bg-indigo-50 px-2.5 py-1 rounded-full whitespace-nowrap">
+			<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+			Federated
+		</span>
+	</div>
 </div>
-{{if .Group.Description}}<p class="text-gray-700 mb-6">{{.Group.Description}}</p>{{end}}
 
-{{if .Events}}
-<h2 class="text-xl font-semibold mb-4">Upcoming Events</h2>
-<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-	{{range .Events}}
-	<div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 border border-gray-100 flex flex-col">
-		<a href="/events/{{$.Group.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
-		<p class="text-gray-500 text-sm mt-2">{{formatTime .StartsAt}}</p>
-		{{if .Location}}<p class="text-gray-400 text-sm mt-1">{{.Location}}</p>{{end}}
-		{{if .Cancelled}}
-		<span class="inline-block bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full mt-2">Cancelled</span>
-		{{else}}
-		<span class="inline-block bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full mt-2">Upcoming</span>
-		{{end}}
+{{if .Group.Description}}
+<p class="text-gray-700 mb-6 leading-relaxed">{{.Group.Description}}</p>
+{{end}}
+
+<!-- Stats bar -->
+<div class="flex gap-6 mb-8 text-sm">
+	<div class="flex items-center gap-1.5 text-gray-600">
+		<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+		<span class="font-medium text-gray-900">{{len .UpcomingEvents}}</span> upcoming
+	</div>
+	{{if .PastEventCount}}
+	<div class="flex items-center gap-1.5 text-gray-600">
+		<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+		<span class="font-medium text-gray-900">{{.PastEventCount}}</span> past events
 	</div>
 	{{end}}
 </div>
+
+{{if .UpcomingEvents}}
+<h2 class="text-xl font-semibold mb-4">Upcoming Events</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+	{{range .UpcomingEvents}}
+	{{template "event_card" .}}
+	{{end}}
+</div>
 {{else}}
-<div class="bg-white rounded-xl shadow-sm p-8 text-center border border-gray-100">
-	<p class="text-gray-500">No upcoming events.</p>
+<div class="bg-white rounded-xl shadow-sm p-8 text-center border border-gray-100 mb-8">
+	<p class="text-gray-500">No upcoming events scheduled.</p>
+	{{if .PastEventCount}}
+	<p class="text-gray-400 text-sm mt-1">Check the past events below or follow for updates.</p>
+	{{end}}
+</div>
+{{end}}
+
+{{if .PastEvents}}
+<h2 class="text-lg font-semibold mb-3 text-gray-500">Past Events</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+	{{range .PastEvents}}
+	<div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100 flex flex-col relative overflow-hidden opacity-90">
+		<div class="absolute top-0 right-0 bg-gray-100 text-gray-500 rounded-bl-xl px-3 py-2 text-center">
+			<div class="text-xs font-medium uppercase">{{monthShort .StartsAt}}</div>
+			<div class="text-lg font-bold leading-none">{{dayOfMonth .StartsAt}}</div>
+		</div>
+		<a href="/events/{{$.Group.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-gray-700 hover:underline pr-16">{{.Title}}</a>
+		<p class="text-gray-400 text-sm mt-2">{{formatDate .StartsAt}}</p>
+		{{if .Location}}<p class="text-gray-400 text-sm mt-1">{{.Location}}</p>{{end}}
+		{{if .Cancelled}}
+		<span class="inline-block bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full mt-3">Cancelled</span>
+		{{else}}
+		<span class="inline-block bg-gray-100 text-gray-500 text-xs font-medium px-2.5 py-1 rounded-full mt-3">{{formatRelative .StartsAt}}</span>
+		{{end}}
+	</div>
+	{{end}}
 </div>
 {{end}}
 {{end}}

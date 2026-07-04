@@ -1,28 +1,71 @@
 {{template "base" .}}
-{{define "title"}}Federated Meetup — Home{{end}}
+{{define "title"}}Federated Meetup — Discover Events{{end}}
 {{define "content"}}
-<div class="mb-6 sm:mb-8">
-	<h1 class="text-2xl sm:text-3xl font-bold mb-2">Welcome to Federated Meetup</h1>
-	<p class="text-gray-600 text-sm sm:text-base">Discover and join tech meetups in your area.</p>
+<!-- Hero -->
+<div class="mb-8">
+	<h1 class="text-2xl sm:text-3xl font-bold mb-2">Find your next event</h1>
+	<p class="text-gray-600 text-sm sm:text-base">Discover community events across the federation. No account needed.</p>
 </div>
 
 <!-- Search bar -->
-<div class="mb-6 sm:mb-8">
+<div class="mb-8">
 	<form method="GET" action="/" class="flex flex-col sm:flex-row gap-2">
-		<input type="text" name="q" placeholder="Search groups and events..." value="{{.Query}}"
-			class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
-		<button type="submit" class="bg-indigo-600 text-white rounded-lg px-6 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors">
+		<input type="text" name="q" placeholder="Search events, groups, or topics..." value="{{.Query}}"
+			class="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+		<button type="submit" class="bg-indigo-600 text-white rounded-lg px-6 py-2.5 text-sm font-medium hover:bg-indigo-700 transition-colors">
 			Search
 		</button>
 	</form>
 </div>
 
+{{if .Query}}
+<!-- Search results -->
 {{if .Groups}}
-<h2 class="text-xl font-semibold mb-4">Groups on this host</h2>
+<h2 class="text-lg font-semibold mb-3">Groups matching "{{.Query}}"</h2>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
 	{{range .Groups}}
 	<div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 border border-gray-100">
 		<a href="/groups/{{.CanonicalName}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.DisplayName}}</a>
+		<p class="text-gray-600 text-sm mt-2 line-clamp-2">{{.Description}}</p>
+		<div class="mt-3 flex items-center text-sm text-gray-400">
+			<span>@{{.CanonicalName}}</span>
+		</div>
+	</div>
+	{{end}}
+</div>
+{{end}}
+
+{{if .Events}}
+<h2 class="text-lg font-semibold mb-3">Events matching "{{.Query}}"</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+	{{range .Events}}
+	{{template "event_card" .}}
+	{{end}}
+</div>
+{{end}}
+
+{{if not .Groups}}{{if not .Events}}
+<div class="bg-white rounded-xl shadow-sm p-8 text-center border border-gray-100">
+	<p class="text-gray-500 mb-2">No results for "{{.Query}}".</p>
+	<a href="/" class="text-indigo-600 text-sm font-medium hover:underline">Clear search →</a>
+</div>
+{{end}}{{end}}
+
+{{else}}
+<!-- Default: groups + date-grouped events -->
+
+{{if .Groups}}
+<h2 class="text-lg font-semibold mb-3">Active groups</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+	{{range .Groups}}
+	<div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 border border-gray-100">
+		<div class="flex items-start justify-between">
+			<a href="/groups/{{.CanonicalName}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.DisplayName}}</a>
+			<span class="flex items-center gap-1 text-xs text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
+				<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+				Federated
+			</span>
+		</div>
 		<p class="text-gray-600 text-sm mt-2 line-clamp-2">{{.Description}}</p>
 		<div class="mt-3 flex items-center text-sm text-gray-400">
 			<span>@{{.CanonicalName}}</span>
@@ -39,28 +82,43 @@
 {{end}}
 
 {{if .Events}}
-<h2 class="text-xl font-semibold mb-4">Upcoming Events</h2>
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-	{{range .Events}}
-	<div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 border border-gray-100 flex flex-col">
-		<div class="flex items-start justify-between mb-2">
-			<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
-		</div>
-		<p class="text-gray-500 text-sm mb-3">{{formatTime .StartsAt}}</p>
-		{{if .Location}}<p class="text-gray-400 text-sm mb-3 flex items-center gap-1">
-			<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-			{{.Location}}
-		</p>{{end}}
-		{{if .Cancelled}}
-		<span class="inline-block bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full">Cancelled</span>
-		{{else}}
-		<span class="inline-block bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full">Upcoming</span>
-		{{end}}
-		<div class="mt-auto pt-3">
-			<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-indigo-600 text-sm font-medium hover:underline">View details →</a>
-		</div>
-	</div>
+<!-- Group events by time period -->
+{{if .TodayEvents}}
+<h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+	<span class="w-2 h-2 rounded-full bg-green-500"></span>
+	Happening Today
+</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+	{{range .TodayEvents}}
+	{{template "event_card" .}}
 	{{end}}
 </div>
+{{end}}
+
+{{if .WeekEvents}}
+<h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+	<span class="w-2 h-2 rounded-full bg-orange-400"></span>
+	This Week
+</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+	{{range .WeekEvents}}
+	{{template "event_card" .}}
+	{{end}}
+</div>
+{{end}}
+
+{{if .LaterEvents}}
+<h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+	<span class="w-2 h-2 rounded-full bg-gray-300"></span>
+	Coming Up
+</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+	{{range .LaterEvents}}
+	{{template "event_card" .}}
+	{{end}}
+</div>
+{{end}}
+
+{{end}}
 {{end}}
 {{end}}

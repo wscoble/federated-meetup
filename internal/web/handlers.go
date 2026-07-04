@@ -61,7 +61,34 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		events = filteredEvents
 	}
 
-	s.renderPage(w, "home", homeData{Groups: groups, Events: events, Query: query})
+	// Split events into date groups for the default view.
+	var today, thisWeek, later []CachedEvent
+	if query == "" {
+		now := time.Now().Unix()
+		for _, e := range events {
+			if e.Cancelled {
+				later = append(later, e)
+				continue
+			}
+			diff := e.StartsAt - now
+			if diff < 0 {
+				continue // skip past events in home page
+			}
+			if diff < 24*3600 {
+				today = append(today, e)
+			} else if diff < 7*24*3600 {
+				thisWeek = append(thisWeek, e)
+			} else {
+				later = append(later, e)
+			}
+		}
+	}
+
+	s.renderPage(w, "home", homeData{
+		Groups: groups, Events: events,
+		TodayEvents: today, WeekEvents: thisWeek, LaterEvents: later,
+		Query: query,
+	})
 }
 
 // handleGroup renders a group profile page with upcoming events.
@@ -95,7 +122,23 @@ func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.renderPage(w, "group", groupData{Group: group, Events: events})
+	// Split into upcoming and past.
+	now := s.now().Unix()
+	var upcoming, past []CachedEvent
+	for _, e := range events {
+		if e.StartsAt < now {
+			past = append(past, e)
+		} else {
+			upcoming = append(upcoming, e)
+		}
+	}
+
+	s.renderPage(w, "group", groupData{
+		Group:          group,
+		UpcomingEvents: upcoming,
+		PastEvents:     past,
+		PastEventCount: len(past),
+	})
 }
 
 // handleEvent renders a single event page with schema.org/Event JSON-LD.
@@ -753,4 +796,98 @@ func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
 // hexEncode is a convenience function.
 func hexEncode(b []byte) string {
 	return hex.EncodeToString(b)
+}
+
+// handleEventICS generates an iCalendar (.ics) file for a single event.
+// This lets users add the event to their calendar app (Google Calendar,
+// Apple Calendar, Outlook) with one click.
+func (s *Server) handleEventICS(w http.ResponseWriter, r *http.Request) {
+	groupKey := r.PathValue("group_key")
+	eventID := r.PathValue("event_id")
+	if groupKey == "" || eventID == "" {
+		http.Error(w, "group_key and event_id required", http.StatusBadRequest)
+		return
+	}
+
+	event, err := s.eventFromProduct(groupKey, eventID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	start := time.Unix(event.StartsAt, 0).UTC()
+	// Default duration: 2 hours if no end time specified.
+	end := start.Add(2 * time.Hour)
+
+	// Format: DTSTART:20260715T190000Z
+	dtStart := start.Format("20060102T150405Z")
+	dtEnd := end.Format("20060102T150405Z")
+	dtStamp := time.Now().UTC().Format("20060102T150405Z")
+
+	// Escape text values per RFC 5545.
+	summary := icsEscape(event.Title)
+	desc := icsEscape(event.Description)
+	loc := icsEscape(event.Location)
+
+	ics := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//Federated Meetup//Event//EN\r\n" +
+		"CALSCALE:GREGORIAN\r\n" +
+		"METHOD:PUBLISH\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + eventID + "@federated-meetup\r\n" +
+		"DTSTAMP:" + dtStamp + "\r\n" +
+		"DTSTART:" + dtStart + "\r\n" +
+		"DTEND:" + dtEnd + "\r\n" +
+		"SUMMARY:" + summary + "\r\n" +
+		"DESCRIPTION:" + desc + "\r\n" +
+		"LOCATION:" + loc + "\r\n" +
+		"URL:" + baseURL(r) + "/events/" + groupKey + "/" + eventID + "\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename="+eventID+".ics")
+	w.Write([]byte(ics))
+}
+
+// icsEscape escapes special characters for iCalendar text values per RFC 5545.
+func icsEscape(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, ";", "\\;")
+	s = strings.ReplaceAll(s, ",", "\\,")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
+}
+
+// handleCancelEvent allows an organizer to cancel an event from the dashboard.
+func (s *Server) handleCancelEvent(w http.ResponseWriter, r *http.Request) {
+	groupKey, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	eventID := r.PathValue("event_id")
+	if eventID == "" {
+		http.Error(w, "event_id required", http.StatusBadRequest)
+		return
+	}
+
+	// Mark as cancelled in product store
+	if s.product != nil {
+		if e, ok := s.product.Store().GetEvent(eventID); ok {
+			e.Cancelled = true
+			s.product.Store().PutEvent(e)
+		}
+	}
+
+	// Also update SQLite cache
+	if ce, err := s.store.GetEvent(groupKey, eventID); err == nil {
+		ce.Cancelled = true
+		_ = s.store.UpsertEvent(ce)
+	}
+
+	log.Printf("web: event cancelled: %s/%s", groupKey, eventID)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }

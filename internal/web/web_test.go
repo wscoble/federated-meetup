@@ -771,3 +771,52 @@ func TestEventJSONLD(t *testing.T) {
 		t.Fatal("JSON-LD should contain maximumAttendeeCapacity")
 	}
 }
+// ---- ICS calendar export test ----
+
+func TestEventICSExport(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	groupKey, eventID := seedTestData(t, srv)
+
+	req := httptest.NewRequest("GET", "/events/"+groupKey+"/"+eventID+"/calendar.ics", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+
+	// Verify ICS structure
+	if !strings.Contains(body, "BEGIN:VCALENDAR") {
+		t.Fatal("ICS should contain BEGIN:VCALENDAR")
+	}
+	if !strings.Contains(body, "END:VCALENDAR") {
+		t.Fatal("ICS should contain END:VCALENDAR")
+	}
+	if !strings.Contains(body, "BEGIN:VEVENT") {
+		t.Fatal("ICS should contain BEGIN:VEVENT")
+	}
+	if !strings.Contains(body, "DTSTART:") {
+		t.Fatal("ICS should contain DTSTART")
+	}
+	if !strings.Contains(body, "DTEND:") {
+		t.Fatal("ICS should contain DTEND")
+	}
+	if !strings.Contains(body, "SUMMARY:Test Event") {
+		t.Fatal("ICS should contain event title as SUMMARY")
+	}
+	if !strings.Contains(body, "UID:"+eventID+"@federated-meetup") {
+		t.Fatal("ICS should contain event UID")
+	}
+
+	// Verify content type
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/calendar") {
+		t.Fatalf("expected text/calendar content type, got %s", ct)
+	}
+
+	t.Logf("ICS export OK: %d bytes, contains VCALENDAR+VEVENT", len(body))
+}

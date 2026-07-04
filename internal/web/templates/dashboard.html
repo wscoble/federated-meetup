@@ -7,6 +7,12 @@
 	<button type="submit" class="text-gray-600 hover:text-indigo-600 font-medium">Logout</button>
 </form>
 {{end}}
+{{define "mobile_nav_extra"}}
+<a href="/dashboard" class="flex flex-col items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600">
+	<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+	Dashboard
+</a>
+{{end}}
 {{define "content"}}
 <h1 class="text-2xl sm:text-3xl font-bold mb-6">Organizer Dashboard</h1>
 
@@ -71,7 +77,14 @@
 <div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100">
 	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
 		<a href="/events/{{$.GroupKey}}/{{.EventID}}" class="text-lg sm:text-xl font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
-		<span class="text-sm text-gray-500">{{formatTime .StartsAt}}</span>
+		<div class="flex items-center gap-3">
+			<span class="text-sm text-gray-500">{{formatTime .StartsAt}}</span>
+			<form method="POST" action="/dashboard/events/{{.EventID}}/cancel" class="inline"
+				onclick="return confirm('Cancel this event? This cannot be undone.')">
+				<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+				<button type="submit" class="text-red-600 text-xs font-medium hover:underline">Cancel Event</button>
+			</form>
+		</div>
 	</div>
 
 	<div class="grid grid-cols-3 gap-2 sm:gap-4 mb-4">
