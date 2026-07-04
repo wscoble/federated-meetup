@@ -1,55 +1,49 @@
 {{template "base" .}}
 {{define "title"}}RSVP Confirmation{{end}}
 {{define "content"}}
-<div class="max-w-lg mx-auto">
+<div class="max-w-md">
 	{{if .Confirmed}}
-	<div class="bg-green-50 border border-green-200 rounded-xl p-6 text-center mb-6">
-		<svg class="mx-auto h-12 w-12 text-green-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-		<h1 class="text-2xl font-bold text-green-700 mb-2">You're going!</h1>
-		<p class="text-green-600">Your RSVP is confirmed. See you there.</p>
+	<div class="alert alert-success text-center mb-6">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:48px;height:48px;margin:0 auto 0.75rem;"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+		<h1 style="margin-bottom:0.5rem;">You're going!</h1>
+		<p style="margin:0;">Your RSVP is confirmed. See you there.</p>
 	</div>
 	{{else}}
-	<h1 class="text-2xl sm:text-3xl font-bold mb-6">Confirm Your RSVP</h1>
-	<p class="text-gray-600 mb-6">You're about to RSVP for:</p>
+	<h1 class="mb-6">Confirm Your RSVP</h1>
+	<p class="text-secondary mb-6">You're about to RSVP for:</p>
 	{{end}}
 
-	<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100 mb-6">
+	<div class="card card-lg mb-6">
 		<dl class="space-y-3">
 			<div>
-				<dt class="font-semibold text-gray-700 text-sm">Event</dt>
-				<dd class="text-gray-900 mt-1">{{.EventTitle}}</dd>
+				<dt class="font-semibold text-sm text-secondary">Event</dt>
+				<dd>{{.EventTitle}}</dd>
 			</div>
 			<div>
-				<dt class="font-semibold text-gray-700 text-sm">Email</dt>
-				<dd class="text-gray-600 mt-1">{{.RSVP.UserEmail}}</dd>
+				<dt class="font-semibold text-sm text-secondary">Email</dt>
+				<dd class="text-secondary">{{.RSVP.UserEmail}}</dd>
 			</div>
 			{{if .RSVP.UserName}}
 			<div>
-				<dt class="font-semibold text-gray-700 text-sm">Name</dt>
-				<dd class="text-gray-600 mt-1">{{.RSVP.UserName}}</dd>
+				<dt class="font-semibold text-sm text-secondary">Name</dt>
+				<dd class="text-secondary">{{.RSVP.UserName}}</dd>
 			</div>
 			{{end}}
 		</dl>
 	</div>
 
 	{{if not .Confirmed}}
-	<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100">
+	<div class="card card-lg">
 		<form hx-post="/rsvp/{{.RSVP.Token}}/confirm" hx-target="#confirm-result">
 			<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-			<button type="submit" class="w-full bg-indigo-600 text-white rounded-lg px-4 py-2.5 text-sm font-medium hover:bg-indigo-700 transition-colors">
-				Confirm My RSVP
-			</button>
+			<button type="submit" class="btn btn-primary btn-full">Confirm My RSVP</button>
 		</form>
 		<div id="confirm-result" class="mt-4"></div>
 	</div>
 	{{else}}
 	<div class="flex gap-3">
-		<a href="/" class="flex-1 text-center bg-indigo-600 text-white rounded-lg px-4 py-2.5 text-sm font-medium hover:bg-indigo-700 transition-colors">
-			Browse more events
-		</a>
-		<a href="/my-rsvps?email={{.RSVP.UserEmail}}" class="flex-1 text-center border border-gray-300 text-gray-700 rounded-lg px-4 py-2.5 text-sm font-medium hover:border-indigo-300 transition-colors">
-			View my RSVPs
-		</a>
+		<a href="/" class="btn btn-primary btn-full">Browse more events</a>
+		<a href="/my-rsvps?email={{.RSVP.UserEmail}}" class="btn btn-outline btn-full">View my RSVPs</a>
 	</div>
 	{{end}}
 </div>

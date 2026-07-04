@@ -1,96 +1,100 @@
 {{template "base" .}}
 {{define "title"}}Organizer Dashboard{{end}}
 {{define "nav_extra"}}
-<a href="/dashboard" class="text-indigo-600 font-medium">Dashboard</a>
+<a href="/dashboard" aria-current="page">Dashboard</a>
 <form method="POST" action="/dashboard/logout" class="inline">
 	<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-	<button type="submit" class="text-gray-600 hover:text-indigo-600 font-medium">Logout</button>
+	<button type="submit">Logout</button>
 </form>
 {{end}}
 {{define "mobile_nav_extra"}}
-<a href="/dashboard" class="flex flex-col items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600">
-	<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+<a href="/dashboard" aria-current="page">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+	</svg>
 	Dashboard
 </a>
 {{end}}
 {{define "content"}}
-<h1 class="text-2xl sm:text-3xl font-bold mb-6">Organizer Dashboard</h1>
+<h1 class="mb-6">Organizer Dashboard</h1>
 
 <!-- Revenue Summary -->
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
-	<div class="bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-gray-100">
-		<p class="text-xs sm:text-sm text-gray-500 font-medium uppercase tracking-wide">Total Revenue</p>
-		<p class="text-xl sm:text-2xl font-bold text-gray-900 mt-2">{{formatMoney .TotalRevenue}}</p>
+<div class="stats-grid">
+	<div class="stat-card">
+		<p class="stat-label">Total Revenue</p>
+		<p class="stat-value">{{formatMoney .TotalRevenue}}</p>
 	</div>
-	<div class="bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-gray-100">
-		<p class="text-xs sm:text-sm text-gray-500 font-medium uppercase tracking-wide">Total RSVPs</p>
-		<p class="text-xl sm:text-2xl font-bold text-gray-900 mt-2">{{.TotalRsvps}}</p>
+	<div class="stat-card">
+		<p class="stat-label">Total RSVPs</p>
+		<p class="stat-value">{{.TotalRsvps}}</p>
 	</div>
-	<div class="bg-white rounded-xl shadow-sm p-4 sm:p-5 border border-gray-100">
-		<p class="text-xs sm:text-sm text-gray-500 font-medium uppercase tracking-wide">Total Events</p>
-		<p class="text-xl sm:text-2xl font-bold text-gray-900 mt-2">{{len .Events}}</p>
+	<div class="stat-card">
+		<p class="stat-label">Total Events</p>
+		<p class="stat-value">{{len .Events}}</p>
 	</div>
 </div>
 
 <!-- Create Event -->
-<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 mb-6 border border-gray-100">
-	<h2 class="text-xl font-semibold mb-4">Create Event</h2>
+<div class="card card-lg mb-6">
+	<h2>Create Event</h2>
 	<form hx-post="/dashboard/events" hx-target="#create-result" hx-indicator="#create-spinner" class="space-y-4">
 		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+		<div class="form-row form-row-2">
 			<div>
-				<label for="title" class="block text-sm font-medium text-gray-700">Title</label>
-				<input type="text" id="title" name="title" required maxlength="1024" class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<label for="title">Title</label>
+				<input type="text" id="title" name="title" required maxlength="1024">
 			</div>
 			<div>
-				<label for="starts_at" class="block text-sm font-medium text-gray-700">Starts At</label>
-				<input type="datetime-local" id="starts_at" name="starts_at" required class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<label for="starts_at">Starts At</label>
+				<input type="datetime-local" id="starts_at" name="starts_at" required>
 			</div>
 		</div>
-		<div>
-			<label for="description" class="block text-sm font-medium text-gray-700">Description</label>
-			<textarea id="description" name="description" rows="3" class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"></textarea>
-		</div>
-		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+		<div class="form-row">
 			<div>
-				<label for="location" class="block text-sm font-medium text-gray-700">Location</label>
-				<input type="text" id="location" name="location" maxlength="1024" class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<label for="description">Description</label>
+				<textarea id="description" name="description" rows="3"></textarea>
+			</div>
+		</div>
+		<div class="form-row form-row-2">
+			<div>
+				<label for="location">Location</label>
+				<input type="text" id="location" name="location" maxlength="1024">
 			</div>
 			<div>
-				<label for="capacity" class="block text-sm font-medium text-gray-700">Capacity</label>
-				<input type="number" id="capacity" name="capacity" value="0" min="0" class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<label for="capacity">Capacity</label>
+				<input type="number" id="capacity" name="capacity" value="0" min="0">
 			</div>
 		</div>
 		<!-- Recurrence -->
-		<div>
-			<label for="recurrence_type" class="block text-sm font-medium text-gray-700">Recurrence</label>
-			<select id="recurrence_type" name="recurrence_type"
-				class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
-				<option value="none">Does not repeat</option>
-				<option value="daily">Daily</option>
-				<option value="weekly">Weekly</option>
-				<option value="monthly">Monthly</option>
-			</select>
-		</div>
-		<div id="recurrence-options" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-4">
+		<div class="form-row">
 			<div>
-				<label for="recurrence_count" class="block text-sm font-medium text-gray-700">Number of occurrences</label>
-				<input type="number" id="recurrence_count" name="recurrence_count" value="0" min="0" placeholder="0 = unlimited"
-					class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
-				<p class="mt-1 text-xs text-gray-500">Set to 0 to use an end date instead.</p>
+				<label for="recurrence_type">Recurrence</label>
+				<select id="recurrence_type" name="recurrence_type">
+					<option value="none">Does not repeat</option>
+					<option value="daily">Daily</option>
+					<option value="weekly">Weekly</option>
+					<option value="monthly">Monthly</option>
+				</select>
+			</div>
+		</div>
+		<div id="recurrence-options" style="display: none;" class="form-row form-row-2">
+			<div>
+				<label for="recurrence_count">Number of occurrences</label>
+				<input type="number" id="recurrence_count" name="recurrence_count" value="0" min="0" placeholder="0 = unlimited">
+				<p class="form-hint">Set to 0 to use an end date instead.</p>
 			</div>
 			<div>
-				<label for="recurrence_until" class="block text-sm font-medium text-gray-700">End date (if count = 0)</label>
-				<input type="date" id="recurrence_until" name="recurrence_until"
-					class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+				<label for="recurrence_until">End date (if count = 0)</label>
+				<input type="date" id="recurrence_until" name="recurrence_until">
 			</div>
 		</div>
 		<script src="/static/recurrence.js"></script>
-		<button type="submit" class="bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors">
-			Create Event
-		</button>
-		<span id="create-spinner" class="htmx-indicator inline-block ml-2">
-			<svg class="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+		<button type="submit" class="btn btn-primary">Create Event</button>
+		<span id="create-spinner" class="htmx-indicator">
+			<svg class="spinner" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+				<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" style="opacity: 0.25;"/>
+				<path fill="currentColor" style="opacity: 0.75;" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+			</svg>
 		</span>
 	</form>
 	<div id="create-result" class="mt-4"></div>
@@ -99,75 +103,88 @@
 <!-- Events list with attendees -->
 <div class="space-y-4">
 {{range .Events}}
-<div class="bg-white rounded-xl shadow-sm p-5 sm:p-6 border border-gray-100">
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-		<a href="/events/{{$.GroupKey}}/{{.EventID}}" class="text-lg sm:text-xl font-semibold text-indigo-600 hover:underline">{{.Title}}</a>
+<div class="card card-lg">
+	<div class="flex items-center justify-between gap-2 mb-4">
+		<a href="/events/{{$.GroupKey}}/{{.EventID}}" class="font-semibold">{{.Title}}</a>
 		<div class="flex items-center gap-3">
-			<span class="text-sm text-gray-500">{{formatTime .StartsAt}}</span>
+			<span class="text-sm text-secondary">{{formatTime .StartsAt}}</span>
 			<form method="POST" action="/dashboard/events/{{.EventID}}/cancel" class="inline"
 				onclick="return confirm('Cancel this event? This cannot be undone.')">
 				<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-				<button type="submit" class="text-red-600 text-xs font-medium hover:underline">Cancel Event</button>
+				<button type="submit" class="btn btn-danger">Cancel Event</button>
 			</form>
 		</div>
 	</div>
 
-	<div class="grid grid-cols-3 gap-2 sm:gap-4 mb-4">
-		<div class="text-center">
-			<p class="text-lg sm:text-2xl font-bold text-gray-900">{{.RsvpCount}}</p>
-			<p class="text-xs text-gray-500 uppercase tracking-wide">RSVPs</p>
+	<div class="stats-grid">
+		<div class="stat-card">
+			<p class="stat-label">RSVPs</p>
+			<p class="stat-value">{{.RsvpCount}}</p>
 		</div>
-		<div class="text-center">
-			<p class="text-lg sm:text-2xl font-bold text-gray-900">{{.TicketSold}}</p>
-			<p class="text-xs text-gray-500 uppercase tracking-wide">Sold</p>
+		<div class="stat-card">
+			<p class="stat-label">Sold</p>
+			<p class="stat-value">{{.TicketSold}}</p>
 		</div>
-		<div class="text-center">
-			<p class="text-lg sm:text-2xl font-bold text-gray-900">{{formatMoney .EventRevenue}}</p>
-			<p class="text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
+		<div class="stat-card">
+			<p class="stat-label">Revenue</p>
+			<p class="stat-value">{{formatMoney .EventRevenue}}</p>
 		</div>
 	</div>
 
 	<!-- Create Ticket form -->
-	<form method="POST" action="/dashboard/events/{{.EventID}}/tickets" class="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200">
-		<h3 class="text-sm font-semibold text-gray-700 mb-3">Add Ticket Type</h3>
+	<form method="POST" action="/dashboard/events/{{.EventID}}/tickets" class="card mt-4" style="background: var(--bg-subtle);">
+		<h3>Add Ticket Type</h3>
 		<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-			<input type="text" name="ticket_name" placeholder="Ticket name" required class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
-			<input type="number" name="price_cents" placeholder="Price (cents)" value="0" min="0" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
-			<input type="number" name="ticket_capacity" placeholder="Capacity" value="0" min="0" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
-			<button type="submit" class="bg-indigo-600 text-white rounded-lg px-4 py-1.5 text-sm font-medium hover:bg-indigo-700 transition-colors">Add Ticket</button>
+		<div class="form-row form-row-4">
+			<div>
+				<label for="ticket_name_{{.EventID}}">Ticket Name</label>
+				<input type="text" id="ticket_name_{{.EventID}}" name="ticket_name" placeholder="Ticket name" required>
+			</div>
+			<div>
+				<label for="price_cents_{{.EventID}}">Price (cents)</label>
+				<input type="number" id="price_cents_{{.EventID}}" name="price_cents" placeholder="Price (cents)" value="0" min="0">
+			</div>
+			<div>
+				<label for="ticket_capacity_{{.EventID}}">Capacity</label>
+				<input type="number" id="ticket_capacity_{{.EventID}}" name="ticket_capacity" placeholder="Capacity" value="0" min="0">
+			</div>
+			<div style="display: flex; align-items: flex-end;">
+				<button type="submit" class="btn btn-primary btn-sm">Add Ticket</button>
+			</div>
 		</div>
 	</form>
 
 	<!-- Attendee list -->
 	{{if .Attendees}}
-	<h3 class="text-sm font-semibold text-gray-700 mb-2">Attendees</h3>
-	<div class="overflow-x-auto -mx-5 sm:mx-0 px-5 sm:px-0">
-		<table class="w-full text-sm min-w-400">
-			<thead><tr class="border-b text-left text-gray-500">
-				<th class="py-2 font-medium">Name</th>
-				<th class="font-medium">Email</th>
-				<th class="font-medium">Status</th>
-				<th class="font-medium hidden sm:table-cell">Checked In</th>
-				<th class="font-medium">Action</th>
-			</tr></thead>
+	<h3>Attendees</h3>
+	<div class="overflow-x-auto">
+		<table class="data-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Email</th>
+					<th>Status</th>
+					<th class="hidden-sm">Checked In</th>
+					<th>Action</th>
+				</tr>
+			</thead>
 			<tbody>
 			{{range .Attendees}}
-			<tr class="border-b border-gray-100">
-				<td class="py-2 text-gray-900">{{.Name}}</td>
-				<td class="text-gray-600">{{.Email}}</td>
-				<td><span class="inline-block {{if .Attended}}bg-green-100 text-green-700{{else}}bg-blue-100 text-blue-700{{end}} text-xs font-medium px-2 py-0.5 rounded-full">{{if .Attended}}Checked In{{else}}Going{{end}}</span></td>
-				<td class="text-gray-600 hidden sm:table-cell">{{if .Attended}}Yes{{else}}No{{end}}</td>
+			<tr>
+				<td>{{.Name}}</td>
+				<td class="text-secondary">{{.Email}}</td>
+				<td>{{if .Attended}}<span class="badge badge-success">Checked In</span>{{else}}<span class="badge badge-accent">Going</span>{{end}}</td>
+				<td class="text-secondary hidden-sm">{{if .Attended}}Yes{{else}}No{{end}}</td>
 				<td>
 					{{if not .Attended}}
 					<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline">
 						<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 						<input type="hidden" name="event_id" value="{{$.EventID}}">
 						<input type="hidden" name="email" value="{{.Email}}">
-						<button type="submit" class="text-indigo-600 text-xs font-medium hover:underline">Check In</button>
+						<button type="submit" class="btn btn-primary btn-sm">Check In</button>
 					</form>
 					{{else}}
-					<span class="text-gray-400 text-xs">—</span>
+					<span class="text-muted text-xs">—</span>
 					{{end}}
 				</td>
 			</tr>
@@ -176,12 +193,12 @@
 		</table>
 	</div>
 	{{else}}
-	<p class="text-gray-400 text-sm">No attendees yet.</p>
+	<p class="text-muted text-sm">No attendees yet.</p>
 	{{end}}
 </div>
 {{else}}
-<div class="bg-white rounded-xl shadow-sm p-8 text-center border border-gray-100">
-	<p class="text-gray-500">No events yet. Create one above!</p>
+<div class="card text-center">
+	<p class="text-secondary">No events yet. Create one above!</p>
 </div>
 {{end}}
 </div>

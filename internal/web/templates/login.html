@@ -1,22 +1,24 @@
 {{template "base" .}}
 {{define "title"}}Organizer Login{{end}}
 {{define "content"}}
-<div class="max-w-md mx-auto">
-	<h1 class="text-3xl font-bold mb-6">Organizer Login</h1>
+<div class="max-w-md">
+	<h1 class="mb-6">Organizer Login</h1>
 
-	<div class="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-		<h2 class="text-lg font-semibold mb-4">Sign in with Token</h2>
+	<div class="card card-lg">
+		<h2>Sign in with Token</h2>
 		<form method="POST" action="/dashboard/login" class="space-y-4">
 			<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-			<div>
-				<label for="token" class="block text-sm font-medium text-gray-700">Organizer Token</label>
-				<input type="text" id="token" name="token" required class="mt-1 block w-full rounded-lg border-gray-300 border px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+			<div class="form-row">
+				<div>
+					<label for="token">Organizer Token</label>
+					<input type="text" id="token" name="token" required>
+				</div>
 			</div>
-			<button type="submit" class="w-full bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors">
+			<button type="submit" class="btn btn-primary btn-full">
 				Login
 			</button>
 		</form>
-		<p class="mt-4 text-xs text-gray-500">Demo token: <code class="bg-gray-100 px-1 py-0.5 rounded">demo-organizer-token</code></p>
+		<p class="mt-4 text-xs text-muted">Demo token: <code>demo-organizer-token</code></p>
 	</div>
 </div>
 {{end}}
