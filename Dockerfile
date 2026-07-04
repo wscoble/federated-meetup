@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /fedmeetup ./cmd/fedmeetup
 
-FROM alpine:3.20
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 65532 -S app && \
