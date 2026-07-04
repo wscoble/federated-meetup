@@ -44,7 +44,7 @@ jobs:
       - name: Run Gosec
         uses: securego/gosec@master
         with:
-          args: -severity medium,high -no-fail -fmt sarif -out gosec.sarif ./...
+          args: -severity medium -severity high -no-fail -fmt sarif -out gosec.sarif ./...
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3

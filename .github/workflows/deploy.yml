@@ -25,47 +25,62 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for kubeconfig secret
+        id: kubecheck
+        run: |
+          if [ -z "${{ secrets.K3S_KUBECONFIG }}" ]; then
+            echo "has_kubeconfig=false" >> $GITHUB_OUTPUT
+            echo "K3S_KUBECONFIG not set — skipping deploy"
+          else
+            echo "has_kubeconfig=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Determine image tag
         id: tag
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           if [ "${{ github.event.inputs.image_tag }}" != "" ]; then
             echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
           elif [ "${{ github.event.workflow_run }}" != "" ]; then
-            # Use the SHA from the triggering workflow
             echo "tag=sha-$(echo ${{ github.event.workflow_run.head_sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi
 
       - name: Setup kubectl
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           mkdir -p $HOME/.kube
           echo "${{ secrets.K3S_KUBECONFIG }}" | base64 -d > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
 
-      - name: Create namespace and apply manifests
+      - name: Apply manifests
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           kubectl apply -f deploy/k8s/namespace.yaml
           kubectl apply -f deploy/k8s/pvc.yaml
           kubectl apply -f deploy/k8s/configmap.yaml
-          # Don't apply secret.yaml — secrets are managed out-of-band
           kubectl apply -f deploy/k8s/deployment.yaml
           kubectl apply -f deploy/k8s/service.yaml
           kubectl apply -f deploy/k8s/cloudflare-tunnel.yaml
 
       - name: Set image
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           kubectl -n fedmeetup set image deployment/fedmeetup \
             fedmeetup=ghcr.io/wscoble/federated-meetup:${{ steps.tag.outputs.tag }}
 
       - name: Rollout status
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           kubectl -n fedmeetup rollout status deployment/fedmeetup --timeout=120s
 
       - name: Verify health
+        if: steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           kubectl -n fedmeetup port-forward svc/fedmeetup 8080:8080 &
           sleep 5
@@ -73,7 +88,14 @@ jobs:
           echo "Health check passed!"
 
       - name: Show deployment status
-        if: always()
+        if: always() && steps.kubecheck.outputs.has_kubeconfig == 'true'
         run: |
           kubectl -n fedmeetup get pods -o wide
           kubectl -n fedmeetup describe deployment fedmeetup | tail -20
+
+      - name: Skip notice
+        if: steps.kubecheck.outputs.has_kubeconfig != 'true'
+        run: |
+          echo "::notice::Deploy skipped — K3S_KUBECONFIG secret not set."
+          echo "To enable auto-deploy, add K3S_KUBECONFIG as a repo secret."
+          echo "See deploy/README.md for instructions."
