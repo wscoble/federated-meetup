@@ -1,0 +1,206 @@
+---
+title: Web API
+description: Web routes for humans and crawlers — public pages, RSVP, dashboard, checkout.
+---
+
+# Web API
+
+The host serves a server-rendered web UI (Go `html/template` + HTMX) alongside
+the ConnectRPC API and MCP server. All routes are on the same port as the API.
+
+## Public pages (no auth)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Home page — list of groups + upcoming events. Supports `?q=` search. |
+| `GET` | `/groups/{name}` | Group profile page with upcoming and past events. |
+| `GET` | `/events/{group_key}/{event_id}` | Event page with RSVP form, tickets, JSON-LD. |
+| `GET` | `/events/{group_key}/{event_id}/calendar.ics` | Download ICS calendar file for event. |
+| `GET` | `/healthz` | Health check → `200 ok`. |
+| `GET` | `/identity` | Host identity JSON → `{group_key, name, threshold}`. |
+
+### Home page
+
+```
+GET /
+GET /?q=programming
+```
+
+Shows all groups and upcoming events. Events are split into "Today", "This
+Week", and "Later" sections. The `?q=` parameter filters groups and events by
+name (case-insensitive substring match).
+
+### Group page
+
+```
+GET /groups/vegas-programmers
+```
+
+Shows the group's display name, description, and events split into "Upcoming"
+and "Past" sections.
+
+### Event page
+
+```
+GET /events/0xaaa.../evt-001
+```
+
+Shows event title, description, time, location, RSVP count, capacity, and:
+- RSVP form (if not cancelled and not at capacity)
+- Ticket purchase form (if tickets exist)
+- ICS download link
+- `schema.org/Event` JSON-LD in the `<head>`
+
+## RSVP flow (no auth — email-based)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/events/{group_key}/{event_id}/rsvp` | Submit RSVP (form: `email`, `name`). Returns HTMX fragment. |
+| `GET` | `/rsvp/{token}` | RSVP confirmation page (magic link). |
+| `POST` | `/rsvp/{token}/confirm` | Confirm RSVP (returns HTMX fragment). |
+| `GET` | `/my-rsvps` | List all RSVPs for an email (`?email=...`). |
+| `POST` | `/my-rsvps/cancel` | Cancel RSVP (form: `email`, `group_key`, `event_id`). |
+
+### RSVP submission
+
+```bash
+POST /events/0xaaa.../evt-001/rsvp
+Content-Type: application/x-www-form-urlencoded
+
+email=attendee@example.com&name=Jane
+```
+
+Returns an HTMX HTML fragment (not JSON). The magic link is logged to the
+server console: `/rsvp/{token}`.
+
+### RSVP confirmation
+
+```bash
+GET /rsvp/a1b2c3d4e5f6...
+```
+
+Shows the RSVP confirmation page with event title and a "Confirm" button.
+
+```bash
+POST /rsvp/a1b2c3d4e5f6.../confirm
+```
+
+Sets `confirmed = true`. Returns HTMX fragment showing confirmation.
+
+## Ticket purchase (no auth — payment = auth)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/events/{group_key}/{event_id}/purchase` | Purchase ticket (form: `ticket_id`, `email`). Redirects to checkout. |
+| `GET` | `/checkout/{order_id}` | Checkout page with order details and Stripe redirect. |
+
+### Purchase flow
+
+```bash
+POST /events/0xaaa.../evt-001/purchase
+Content-Type: application/x-www-form-urlencoded
+
+ticket_id=tick-001&email=attendee@example.com
+```
+
+The server:
+1. Reads the ticket to compute amount
+2. Calls `AtomicPurchaseTicket` (capacity check + sold increment + order creation)
+3. Creates Stripe Checkout Session (or mock URL)
+4. Stores order in SQLite
+5. Redirects (`303 See Other`) to `/checkout/{order_id}`
+
+### Checkout page
+
+```
+GET /checkout/ord-a1b2c3...
+```
+
+Shows order details (amount, event title) and a link to Stripe checkout
+(`https://checkout.stripe.com/c/pay/{session_id}`).
+
+## Organizer dashboard (session auth)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/dashboard` | Dashboard (auth-gated, redirects to login if no session). |
+| `GET` | `/dashboard/login` | Login form. |
+| `POST` | `/dashboard/login` | Process login (form: `token`). Creates session cookie. |
+| `POST` | `/dashboard/logout` | Clear session, redirect to home. |
+| `POST` | `/dashboard/events` | Create event (form: `title`, `description`, `starts_at`, `location`, `capacity`). Returns HTMX fragment. |
+| `POST` | `/dashboard/events/{event_id}/tickets` | Create ticket (form: `ticket_name`, `price_cents`, `ticket_capacity`). Redirects to dashboard. |
+| `POST` | `/dashboard/events/{event_id}/cancel` | Cancel event. Redirects to dashboard. |
+| `POST` | `/dashboard/events/{group_key}/checkin` | Check in attendee (form: `event_id`, `email`). Redirects to dashboard. |
+
+### Login
+
+```bash
+POST /dashboard/login
+Content-Type: application/x-www-form-urlencoded
+
+token=demo-organizer-token
+```
+
+Validates the organizer token against the product store, creates a session
+cookie (valid 7 days), and redirects to `/dashboard`.
+
+### Dashboard
+
+The dashboard shows:
+- Upcoming events with RSVP counts, ticket sales, and revenue
+- Total RSVPs across all events
+- Total revenue (completed orders)
+- Attendee lists per event with check-in buttons
+- Pending orders
+
+## Static files
+
+```
+GET /static/*
+```
+
+Serves embedded static assets (CSS, etc.) from `internal/web/static/`.
+
+## Middleware
+
+All web routes pass through middleware that:
+- Sets security headers
+- Handles CSRF tokens for form submissions
+- Manages session cookies
+
+## Response formats
+
+| Route type | Response format |
+|---|---|
+| Public pages | HTML (server-rendered, `text/html`) |
+| RSVP/dashboard actions | HTMX fragments (`text/html`) |
+| Health/identity | Plain text / JSON |
+| ICS export | `text/calendar` |
+| Redirects | HTTP 303 See Other |
+
+The web UI uses **HTMX** for interactivity — no JavaScript framework, no build
+step. Form submissions return HTML fragments that swap into the page.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Web routes are primarily for humans** (HTML responses, not JSON).
+  AI agents should prefer the MCP server (`POST /mcp`) or ConnectRPC API
+  (`/api/v1/`) for structured data.
+  
+  **Useful web routes for agents:**
+  - `GET /healthz` → `200 ok` (health check, plain text)
+  - `GET /identity` → `{"group_key":"0x...","name":"...","threshold":N}` (JSON)
+  - `GET /events/{group_key}/{event_id}` → HTML with embedded `schema.org/Event` JSON-LD
+  - `GET /events/{group_key}/{event_id}/calendar.ics` → ICS file (text/calendar)
+  
+  **RSVP via web (form-encoded, not JSON):**
+  - `POST /events/{group_key}/{event_id}/rsvp` — form: `email`, `name` → HTMX fragment
+  - `GET /rsvp/{token}` → confirmation page
+  - `POST /rsvp/{token}/confirm` → confirms
+  
+  **Organizer auth:** Session cookie via `POST /dashboard/login` (form: `token`)
+  
+  **All other web routes** return HTML for browser rendering. Use MCP or
+  ConnectRPC for programmatic access.
+</Callout>

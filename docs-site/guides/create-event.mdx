@@ -1,0 +1,161 @@
+---
+title: Create and Manage Events
+description: Organizer guide — create events, manage tickets, check in attendees.
+---
+
+# Create and Manage Events
+
+This guide walks through the organizer workflow: logging in, creating events,
+managing tickets, and checking in attendees.
+
+## Logging in
+
+The organizer dashboard is at `/dashboard`. You need an organizer token to
+log in.
+
+1. Navigate to `/dashboard/login`
+2. Enter your organizer token (for demo: `demo-organizer-token`)
+3. You're redirected to the dashboard
+
+### How organizer auth works
+
+Organizer authentication uses **organizer tokens with group scoping**. The
+store maintains a map of `organizer token → group_id`. Every organizer-scoped
+operation validates the token against the group that owns the target resource.
+
+A token valid for group A cannot access resources in group B. Cross-group
+access returns `CodePermissionDenied`. Missing token returns `CodeUnauthenticated`.
+
+## The dashboard
+
+The organizer dashboard (`/dashboard`) shows:
+
+- **Upcoming events** — all non-cancelled events for the group
+- **Total RSVPs** — sum of RSVPs across all upcoming events
+- **Total revenue** — sum of `COMPLETED` orders across all upcoming events
+- **Pending actions** — orders with `PENDING` status
+- **Attendee lists** — per-event attendee roster with check-in status
+
+## Creating an event
+
+From the dashboard, use the "Create Event" form:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| Title | text | Yes | 1-1024 characters |
+| Description | text | No | 0-4096 characters |
+| Starts at | datetime | Yes | Format: `YYYY-MM-DDTHH:MM` |
+| Location | text | No | 0-1024 characters |
+| Capacity | number | No | 0 = unlimited |
+
+The event is created in both the SQLite cache and the product store (if
+available). A 16-char event ID is generated automatically.
+
+### Via the web UI
+
+The create event form returns an HTMX fragment — no page reload needed. On
+success, you see the new event in the dashboard list.
+
+### Event page
+
+Each event has a public page at `/events/{group_key}/{event_id}`. This page
+includes:
+
+- Event title, description, time, location
+- RSVP count vs. capacity
+- Ticket purchase form (if tickets exist)
+- `schema.org/Event` JSON-LD structured data (for search engines and AI agents)
+- ICS calendar download link
+
+## Managing tickets
+
+### Create a ticket
+
+From the dashboard, navigate to an event and create a ticket:
+
+| Field | Type | Description |
+|---|---|---|
+| Ticket name | text | e.g., "Early Bird", "Regular", "Supporter" |
+| Price | number | In cents (e.g., 2000 = $20.00) |
+| Capacity | number | 0 = unlimited |
+
+The store tracks `sold` count per ticket and enforces capacity atomically.
+If a ticket is sold out, purchase returns `FAILED_PRECONDITION`.
+
+### Ticket tiers
+
+| Tier | Use case |
+|---|---|
+| Early Bird | Discounted, limited quantity, early sale window |
+| Regular | Standard price |
+| Supporter | Premium price (supports the group) |
+| Custom | Organizer-defined |
+
+## Checking in attendees
+
+From the dashboard, the check-in form lets organizers mark attendees as
+checked in:
+
+```
+POST /dashboard/events/{group_key}/checkin
+Form data: event_id, email
+```
+
+The RSVP's `attended` field is set to `true` in both the product store and
+the SQLite cache.
+
+## Cancelling an event
+
+Organizers can cancel an event from the dashboard:
+
+```
+POST /dashboard/events/{event_id}/cancel
+```
+
+The event is marked as `cancelled = true` in both the product store and SQLite
+cache. The event page shows "EventCancelled" status in the JSON-LD, and the
+event is excluded from upcoming event listings.
+
+## Event packages
+
+The product supports four event packages:
+
+| Package | Features | Status |
+|---|---|---|
+| **Free Community** (A) | Basic event page, RSVP, no ticketing | ✅ Working |
+| **Recurring Club** (B) | + Recurring events, member management, iCal export | ✅ Working |
+| **Ticketed Workshop** (C) | + Stripe Connect, ticket tiers, capacity, email reminders | ✅ Working (v0) |
+| **Conference** (D) | + Multi-track, sponsor management, vendor marketplace | Future |
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Organizer dashboard:** `GET /dashboard` (auth-gated via session cookie)
+  
+  **Organizer login flow:**
+  1. `POST /dashboard/login` with form field `token=<organizer-token>`
+  2. Creates session cookie, redirects to `/dashboard`
+  3. Session valid for 7 days
+  
+  **Event creation:**
+  - `POST /dashboard/events` (requires session)
+  - Form fields: `title`, `description`, `starts_at` (YYYY-MM-DDTHH:MM), `location`, `capacity`
+  - Returns HTMX fragment (no JSON API for web flow)
+  
+  **Event cancellation:**
+  - `POST /dashboard/events/{event_id}/cancel` (requires session)
+  
+  **Ticket creation:**
+  - `POST /dashboard/events/{event_id}/tickets` (requires session)
+  - Form fields: `ticket_name`, `price_cents`, `ticket_capacity`
+  
+  **Attendee check-in:**
+  - `POST /dashboard/events/{group_key}/checkin` (requires session)
+  - Form fields: `event_id`, `email`
+  
+  **Auth model:** Organizer token → group-scoped session cookie. Cross-group
+  access denied. Demo token: `demo-organizer-token`
+  
+  **Event public page:** `GET /events/{group_key}/{event_id}`
+  Includes `schema.org/Event` JSON-LD in `<head>`.
+</Callout>

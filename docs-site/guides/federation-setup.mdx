@@ -1,0 +1,185 @@
+---
+title: Federation Setup
+description: Configure HOSTD_PEERS, bootstrap, and live sync between hosts.
+---
+
+# Federation Setup
+
+Federation lets hosts sync group state from each other over a WireGuard mesh.
+Events on host A are discoverable from host B. No central server.
+
+## How it works
+
+When `HOSTD_PEERS` is set, the daemon creates a `Syncer` per peer. Each syncer
+performs:
+
+1. **Bootstrap** — pulls the peer's entire transition log via `GetLog`
+   (paginated), replays each transition into local state
+2. **Verify** — compares local state root against peer's `GetSnapshot` root
+3. **Live** — opens a `Subscribe` stream for real-time transition delivery
+
+A malicious peer can only omit transitions, not inject fake ones. Every
+transition is verified by `Apply` (signature checks, state-machine validation).
+
+## Configuration
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `HOSTD_PEERS` | _(empty)_ | Comma-separated peer URLs to federate from |
+| `HOSTD_SYNC_BOOTSTRAP` | `true` | Bootstrap group state from peers on startup |
+| `HOSTD_SYNC_LIVE` | `true` | Maintain live Subscribe streams after bootstrap |
+
+### Example
+
+```bash
+# Host A (Vegas)
+export HOSTD_GROUP_KEY="0xaaaa..."
+export HOSTD_NAME="vegas-host"
+export HOSTD_BASE_URL="https://vegas.example.com"
+export HOSTD_PEERS="http://phoenix:8080,http://saltlake:8080"
+export HOSTD_SYNC_BOOTSTRAP=true
+export HOSTD_SYNC_LIVE=true
+
+# Host B (Phoenix)
+export HOSTD_GROUP_KEY="0xaaaa..."  # Same group key — same group
+export HOSTD_NAME="phoenix-host"
+export HOSTD_BASE_URL="https://phoenix.example.com"
+export HOSTD_PEERS="http://vegas:8080"
+export HOSTD_SYNC_BOOTSTRAP=true
+export HOSTD_SYNC_LIVE=true
+```
+
+**Important:** Both hosts must use the **same `HOSTD_GROUP_KEY`** to sync the
+same group's state. Different group keys = different groups, no sync.
+
+## Bootstrap process
+
+The bootstrap phase pulls the peer's transition log in pages:
+
+```
+1. GetLog(group_key, since_cursor=0, limit=100)
+   → transitions[0..99], next_cursor=100
+2. Apply each transition (verify signatures, state machine)
+3. GetLog(group_key, since_cursor=100, limit=100)
+   → transitions[100..199], next_cursor=200
+4. ... until next_cursor=0 (no more data)
+5. GetSnapshot(group_key) → compare roots
+```
+
+**Idempotent:** re-running bootstrap on an already-synced state is safe.
+Duplicates are rejected by `Apply`'s prior-state hash check.
+
+**Resumable:** if the local state already has N transitions, bootstrap resumes
+from cursor=N (since_index = local count).
+
+## Live streaming
+
+After bootstrap, the syncer opens a `Subscribe` stream:
+
+```
+Subscribe(group_key, since_index=local_count)
+→ TransitionEvent { transition, new_state_root, transition_index }
+→ TransitionEvent { ... }
+→ (stream continues until error or context cancel)
+```
+
+On stream errors, the syncer reconnects after a delay (default 5s), resuming
+from the local transition count to recover any missed events.
+
+## Verification
+
+After bootstrap, the syncer calls `GetSnapshot` on the peer and compares the
+peer's state root against the local state root:
+
+```go
+peerRoot := resp.Msg.GetSnapshot().GetRoot()
+localRoot := s.state.Root()
+if localRoot != peerHash {
+    return fmt.Errorf("root mismatch: local=%x peer=%x", ...)
+}
+```
+
+If roots differ, the local state has diverged. Possible causes:
+- Bug in transition application
+- Legitimate fork (different branches)
+- Malicious peer (omitted transitions)
+
+The caller decides how to handle divergence (alert, re-bootstrap, or accept
+as a fork).
+
+## WireGuard mesh (production)
+
+For production, federation traffic flows over a WireGuard mesh, not over
+public HTTP. The WireGuard overlay provides:
+
+- **Privacy:** federation traffic never crosses the public internet in plaintext
+- **Identity:** X25519 per-host keys verify peer identity
+- **NAT traversal:** mesh topology, no specific network required
+
+The userspace WireGuard implementation (`golang.zx2c4.com/wireguard`) runs
+without root and is portable across Linux/macOS/Windows.
+
+For v0 / local dev, the syncer uses plain HTTP (`http://peer:8080`). For
+production, configure WireGuard tunnels and use the tunnel IPs as peer URLs.
+
+## Federation peer discovery
+
+Each host's `/.well-known/federation` endpoint includes a `federation_peers`
+field:
+
+```json
+{
+  "federation_peers": [
+    "https://phoenix.example.com",
+    "https://saltlake.example.com"
+  ]
+}
+```
+
+An AI agent (or another host) can crawl the federation:
+
+1. Start at any known host
+2. Read `/.well-known/federation` → get `federation_peers`
+3. Repeat for each peer, building a graph of all hosts
+
+No central registry needed — peer-to-peer knowledge, like Fediverse instance
+discovery.
+
+## DDIL resilience
+
+The federation must survive flaky links. The simulator models DDIL
+(Denied/Disrupted/Intermittent/Limited) conditions:
+
+- **Denied:** peer is unreachable (network partition)
+- **Disrupted:** packets are dropped or corrupted
+- **Intermittent:** connection drops and resumes
+- **Limited:** bandwidth is constrained
+
+The syncer handles all of these via auto-reconnect + resume-from-local-count.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Federation config:**
+  - `HOSTD_PEERS`: comma-separated peer URLs (e.g., "http://peer:8080")
+  - `HOSTD_SYNC_BOOTSTRAP`: "true" (default) — GetLog pagination on startup
+  - `HOSTD_SYNC_LIVE`: "true" (default) — Subscribe stream after bootstrap
+  
+  **Sync flow:**
+  1. Bootstrap: `GetLog(group_key, since_cursor=N, limit=100)` paginated
+  2. Verify: `GetSnapshot(group_key)` → compare state roots
+  3. Live: `Subscribe(group_key, since_index=N)` → stream TransitionEvents
+  
+  **Security:** Peer is untrusted. Every transition verified by Apply.
+  Malicious peer can only omit, not inject.
+  
+  **Same group key = same group:** Both hosts must use the same
+  `HOSTD_GROUP_KEY` to sync the same group.
+  
+  **Peer discovery:** `GET /.well-known/federation` → `federation_peers[]`
+  → crawl recursively (Fediverse model).
+  
+  **Reconnect:** 5s delay (default). Resumes from local transition count.
+</Callout>

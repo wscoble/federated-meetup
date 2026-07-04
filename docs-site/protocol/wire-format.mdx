@@ -1,0 +1,195 @@
+---
+title: Wire Format
+description: Protobuf encoding, canonical signing, and HLC wire format.
+---
+
+# Wire Format
+
+The federated-meetup protocol uses protobuf as its canonical wire format,
+transmitted via ConnectRPC over HTTP/2. The wire format is designed for
+deterministic signing — the same transition always produces the same canonical
+bytes, regardless of the serialization library.
+
+## Protobuf
+
+Protocol buffer definitions are in `proto/federated_meetup/v1/`:
+
+- `state.proto` — Protocol primitives (PublicKey, Hash, StateSnapshot, Transition, TransitionType)
+- `rpc.proto` — ConnectRPC service definition (HostService)
+
+Generated Go code is committed to the repository — you do not need `buf` or
+`protoc` to build. To regenerate:
+
+```bash
+./scripts/proto.sh
+```
+
+### ConnectRPC mapping
+
+ConnectRPC maps gRPC-style methods to HTTP paths:
+
+| gRPC method | HTTP path |
+|---|---|
+| `GetGroup` | `POST /api/v1/get-group` |
+| `GetEvent` | `POST /api/v1/get-event` |
+| `ListEvents` | `POST /api/v1/list-events` |
+| `ListGroups` | `POST /api/v1/list-groups` |
+| `ResolveName` | `POST /api/v1/resolve-name` |
+| `GetLog` | `POST /api/v1/get-log` |
+| `GetSnapshot` | `POST /api/v1/get-snapshot` |
+| `Subscribe` | `POST /api/v1/subscribe` |
+| `SubmitTransition` | `POST /api/v1/submit-transition` |
+| `SubmitUserAction` | `POST /api/v1/submit-user-action` |
+| `SubmitEvidence` | `POST /api/v1/submit-evidence` |
+
+ConnectRPC supports both JSON and protobuf wire formats. The `Content-Type`
+header selects the format:
+
+- `application/json` — JSON encoding
+- `application/proto` — protobuf binary encoding
+- `application/grpc` — gRPC wire format (for gRPC-compatible clients)
+
+## Canonical signing
+
+Every transition must be signed by M-of-N stewards. The signature covers the
+**canonical bytes** of the transition, computed as follows:
+
+### Canonical bytes computation
+
+1. Clone the protobuf `Transition` message
+2. Strip the `steward_signatures` field (signatures don't cover themselves)
+3. Marshal with protobuf **deterministic** options
+
+```go
+cp := proto.Clone(t).(*pb.Transition)
+cp.StewardSignatures = nil
+canonical, err := proto.MarshalOptions{Deterministic: true}.Marshal(cp)
+```
+
+### Signature process
+
+1. Each steward independently signs the canonical bytes with their Ed25519 private key
+2. The signature is appended to `transition.steward_signatures`
+3. The host verifies each signature against the steward's public key
+4. The host checks that at least `threshold` distinct stewards have signed
+
+### Key types
+
+| Key type | Algorithm | Use |
+|---|---|---|
+| Steward key | Ed25519 | Signing state transitions |
+| User key | Ed25519 | Signing user actions (RSVP, ATTEST) |
+| WireGuard key | X25519 | Mesh transport (separate domain) |
+| TLS key | RSA/ECDSA | Client HTTPS (separate domain) |
+
+**Implementation rule:** No code path may accept a key from one layer as input
+to another. `internal/crypto/` exposes typed wrappers (`WireGuardKey`,
+`StewardKey`, `TLSKey`) that refuse to interconvert at the type level.
+
+## HLC wire format
+
+The Hybrid Logical Clock (HLC) is transmitted as an 18-byte field on every
+transition (`Transition.hlc`):
+
+```
+Byte layout (big-endian):
+┌─────────────────────┬──────────────┬─────────────────┐
+│  wall nanos (8B)    │ counter (2B) │ reserved (8B)   │
+├─────────────────────┼──────────────┼─────────────────┤
+│  uint64 BE          │ uint16 BE    │ zeros           │
+└─────────────────────┴──────────────┴─────────────────┘
+```
+
+- **Wall nanos** (8 bytes, big-endian uint64): the host's best estimate of
+  "when" the transition was authored, in nanoseconds since the Unix epoch.
+- **Counter** (2 bytes, big-endian uint16): per-host logical clock that breaks
+  ties when two transitions share the same wall component.
+- **Reserved** (8 bytes): zeros, for future use.
+
+### HLC comparison
+
+HLCs compare by their byte representation (big-endian). The wall component
+dominates, then the counter. Two transitions from different hosts can have
+**equal** HLCs — this is permitted and does not violate the protocol.
+
+### HLC guarantees
+
+1. **Per-host monotonicity** — a host's HLC strictly increases across
+   transitions it authors, even when its wall-clock goes backwards.
+2. **Causality** — if host A observes a message from host B, then A's next
+   HLC is strictly greater than B's.
+3. **Bounded wall drift** — the wall component is bounded by
+   `max(local_clock, remote_HLC_wall) + drift`.
+
+## State snapshot encoding
+
+A `StateSnapshot` contains:
+
+```protobuf
+message StateSnapshot {
+  StateRoot root = 1;           // Merkle root hash
+  repeated StateEntry entries = 2;  // KV pairs
+}
+
+message StateEntry {
+  string key = 1;
+  bytes value = 2;
+}
+
+message StateRoot {
+  bytes hash = 1;  // SHA-256 hash
+}
+```
+
+The state is a Merkle KV store. The root hash is the SHA-256 of the Merkle
+tree root. Entries are key-value pairs stored as UTF-8 string keys and
+arbitrary byte-array values.
+
+## Transition encoding
+
+```protobuf
+message Transition {
+  TransitionType type = 1;
+  StateRoot prior_state = 2;      // Hash chain link
+  bytes hlc = 3;                  // 18-byte HLC
+  uint32 branch_id = 4;           // Target branch (default 0)
+  
+  // Type-specific payload (oneof):
+  CreateGroupPayload create_group = 10;
+  AddStewardPayload add_steward = 11;
+  RemoveStewardPayload remove_steward = 12;
+  ChangeThresholdPayload change_threshold = 13;
+  CreateEventPayload create_event = 14;
+  // ... etc
+  
+  repeated StewardSignature steward_signatures = 100;
+}
+```
+
+The `steward_signatures` field is stripped before canonical marshalling for
+signing — the signatures cover the transition body, not the envelope.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Wire format:** ConnectRPC over HTTP/2. JSON or protobuf.
+  
+  **Canonical signing:**
+  1. Clone transition proto
+  2. Strip `steward_signatures` field
+  3. Marshal with `proto.MarshalOptions{Deterministic: true}`
+  4. Each steward signs canonical bytes with Ed25519 private key
+  
+  **HTTP paths:** `/api/v1/{kebab-case-method-name}` (POST for all RPCs)
+  
+  **Content-Type options:** `application/json`, `application/proto`, `application/grpc`
+  
+  **HLC:** 18 bytes = wall_nanos(8B BE uint64) + counter(2B BE uint16) + reserved(8B zeros)
+  
+  **State root:** SHA-256 Merkle root of KV entries
+  
+  **PublicKey:** `{ "raw": "base64-32-bytes" }` for Ed25519
+  
+  **Transition hash chain:** each transition references `prior_state` (previous root hash).
+  Applying a transition produces a new root hash.
+</Callout>

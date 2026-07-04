@@ -1,0 +1,329 @@
+---
+title: AI Agent Guide
+description: How an AI assistant discovers and queries a federated-meetup host — the primary LLM entry point.
+---
+
+# AI Agent Guide
+
+This is the **primary entry point for AI assistants** querying a federated-meetup
+host. It is self-contained — you can read this page and immediately start
+querying any host without reading anything else.
+
+## Quick start
+
+### Step 1: Discover the host
+
+```bash
+GET https://meetup.example.com/.well-known/federation
+```
+
+```json
+{
+  "protocol": "federated-meetup/v1",
+  "host": {
+    "name": "Vegas Programmers Host",
+    "url": "https://meetup.example.com",
+    "description": "Local host serving Las Vegas programming and tech groups.",
+    "geographic_area": "Las Vegas, NV",
+    "coordinates": { "lat": 36.17, "lng": -115.14 }
+  },
+  "mcp_endpoint": "/mcp",
+  "openapi_spec": "/openapi.json",
+  "group_count": 12,
+  "event_count_this_week": 5,
+  "federation_peers": ["https://phoenix.example.com"]
+}
+```
+
+**Key fields:**
+- `geographic_area` — filter hosts by location
+- `mcp_endpoint` — MCP server URL for tool calls
+- `federation_peers` — other hosts to crawl for federation-wide search
+
+### Step 2: Choose your interface
+
+You have three options, from easiest to most powerful:
+
+| Interface | Endpoint | Best for |
+|---|---|---|
+| **MCP server** | `POST /mcp` | Natural-language tool calls (recommended) |
+| **ConnectRPC (JSON)** | `POST /api/v1/{method}` | Structured queries, pagination |
+| **Web routes** | Various | HTML pages with JSON-LD (for context) |
+
+### Step 3: Query via MCP
+
+```json
+// List available tools
+{"jsonrpc":"2.0","method":"tools/list","id":1}
+
+// Find events in Las Vegas about programming this weekend
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "find_events",
+    "arguments": {
+      "location": "Las Vegas",
+      "interest": "programming",
+      "when": "this weekend"
+    }
+  },
+  "id": 2
+}
+```
+
+```json
+// Response
+{
+  "events": [
+    {
+      "event_id": "evt-001",
+      "title": "Vegas Programmers Weekly",
+      "starts_at": "2026-07-11T02:00:00Z",
+      "location": "Goldwell Open Air Museum, Las Vegas, NV",
+      "capacity": 50,
+      "paid": false,
+      "group": "0xaaa...",
+      "url": "https://meetup.example.com/events/evt-001"
+    }
+  ],
+  "count": 1
+}
+```
+
+## Complete MCP tool reference
+
+### 6 tools (all read-only, no auth)
+
+| Tool | Required params | Optional params | Returns |
+|---|---|---|---|
+| `list_groups` | — | `name_contains` (string), `page_size` (int) | `groups[]`, `next_cursor` |
+| `list_events` | `group_key` (hex string) | `page_size` (int) | `events[]`, `next_cursor` |
+| `get_event` | `group_key` (hex), `event_id` | — | `event`, `rsvp_count`, `cancelled` |
+| `resolve_name` | `canonical_name` | — | `group_key`, `hosts[]` |
+| `get_group` | `group_key` OR `canonical_name` | — | `group_key`, `canonical_name`, `display_name`, `steward_count`, `threshold`, `event_count`, `member_count` |
+| `find_events` | — | `location`, `interest`, `when` (all strings) | `events[]`, `count` |
+
+### Return shapes
+
+**Group:**
+```json
+{
+  "group_key": "0xaaa...",      // hex 32 bytes
+  "canonical_name": "vegas-programmers",
+  "display_name": "Vegas Programmers"
+}
+```
+
+**Event:**
+```json
+{
+  "event_id": "evt-001",
+  "title": "Vegas Programmers Weekly",
+  "starts_at": "2026-07-11T02:00:00Z",   // RFC 3339
+  "ends_at": "2026-07-11T04:00:00Z",      // RFC 3339 (optional)
+  "location": "Goldwell Open Air Museum, Las Vegas, NV",
+  "capacity": 50,                         // 0 = unlimited
+  "paid": false                            // boolean
+}
+```
+
+**Group detail (get_group):**
+```json
+{
+  "group_key": "0xaaa...",
+  "canonical_name": "vegas-programmers",
+  "display_name": "Vegas Programmers",
+  "steward_count": 3,
+  "threshold": 2,         // M-of-N multisig
+  "event_count": 5,
+  "member_count": 150
+}
+```
+
+## ConnectRPC API reference
+
+If you need pagination, streaming, or write operations, use the ConnectRPC API
+directly.
+
+### Base URL
+```
+{host_base_url}/api/v1/
+```
+
+### Content type
+```
+Content-Type: application/json
+```
+
+### Read RPCs (no auth)
+
+| Method | Path | Key params |
+|---|---|---|
+| GetGroup | `POST /api/v1/get-group` | `group_key.raw` (base64) or `canonical_name` |
+| GetEvent | `POST /api/v1/get-event` | `group_key.raw`, `event_id` |
+| ListEvents | `POST /api/v1/list-events` | `group_key.raw`, `cursor`, `page_size` |
+| ListGroups | `POST /api/v1/list-groups` | `name_contains`, `page_size` |
+| ResolveName | `POST /api/v1/resolve-name` | `canonical_name` |
+| GetLog | `POST /api/v1/get-log` | `group_key.raw`, `since_cursor`, `limit` |
+| GetSnapshot | `POST /api/v1/get-snapshot` | `group_key.raw` |
+| Subscribe | `POST /api/v1/subscribe` | `group_key.raw`, `since_index` (streaming) |
+
+### Write RPCs (require Ed25519 multisig)
+
+| Method | Path | Key params |
+|---|---|---|
+| SubmitTransition | `POST /api/v1/submit-transition` | `group_key.raw`, `transition` (signed) |
+| SubmitUserAction | `POST /api/v1/submit-user-action` | (v0: returns Unimplemented) |
+| SubmitEvidence | `POST /api/v1/submit-evidence` | `group_key.raw`, `steward_key`, `prior_state`, `transition_a`, `transition_b` |
+
+### PublicKey encoding
+
+```json
+{ "raw": "base64-encoded-32-bytes" }
+```
+
+For MCP tools, use hex string: `"0xaaaa..."` or `"aaaa..."`
+
+### Pagination
+
+- **Cursor:** string-encoded index. Empty = first page.
+- **page_size:** default 50, max 200 (ListEvents/ListGroups), max 1000 (GetLog)
+- **next_cursor:** empty string = last page
+
+### Error codes
+
+| Code | Meaning |
+|---|---|
+| `invalid_argument` | Missing required field |
+| `not_found` | Group/event not on this host |
+| `unimplemented` | Feature not in v0 |
+| `failed_precondition` | State machine rejected transition |
+
+## Federation-wide search
+
+A single host only knows about its own groups. For federation-wide search:
+
+1. Start at any known host
+2. Read `GET /.well-known/federation` → get `federation_peers[]`
+3. Query each peer's MCP `find_events` tool
+4. Deduplicate by `group_key + event_id`
+
+```python
+# Pseudocode for federation-wide event search
+def search_federation(seed_host, location, interest):
+    visited = set()
+    queue = [seed_host]
+    all_events = []
+    
+    while queue:
+        host = queue.pop(0)
+        if host in visited:
+            continue
+        visited.add(host)
+        
+        # Discover host
+        fed_doc = http_get(f"{host}/.well-known/federation")
+        
+        # Search events on this host
+        events = mcp_call(f"{host}/mcp", "find_events", {
+            "location": location,
+            "interest": interest
+        })
+        all_events.extend(events["events"])
+        
+        # Queue peers
+        for peer in fed_doc["federation_peers"]:
+            if peer not in visited:
+                queue.append(peer)
+    
+    # Deduplicate by group_key + event_id
+    seen = set()
+    unique = []
+    for e in all_events:
+        key = (e["group"], e["event_id"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(e)
+    
+    return unique
+```
+
+## Decision tree: which interface to use
+
+```
+User asks: "Find me a coding meetup in Vegas this weekend"
+
+1. Do I know a host serving Las Vegas?
+   YES → Go to step 2
+   NO → Crawl federation from a seed host's /.well-known/federation
+        Filter by geographic_area matching "Las Vegas"
+
+2. Is this a natural-language query (location + interest + when)?
+   YES → Use MCP find_events(location, interest, when)
+   NO → Use ConnectRPC ListEvents with explicit parameters
+
+3. Do I need event details (description, end time)?
+   YES → Call MCP get_event(group_key, event_id)
+   NO → The find_events response has enough
+
+4. Does the user want to RSVP?
+   YES → Direct them to the event URL (web flow, email-based)
+   NO → Return results with event URLs
+
+5. Do I need to search across all hosts?
+   YES → Crawl federation_peers from /.well-known/federation
+   NO → Single host query is sufficient
+```
+
+## Other useful endpoints
+
+| Endpoint | Use |
+|---|---|
+| `GET /llms.txt` | Plain-text summary of host, groups, API |
+| `GET /openapi.json` | Full OpenAPI 3.1 spec |
+| `GET /robots.txt` | Crawler directives (AI crawlers allowed) |
+| `GET /healthz` | Health check |
+| `GET /identity` | Host identity JSON |
+
+## Key facts for LLMs
+
+- **Protocol:** `federated-meetup/v1`
+- **No API keys.** No rate limits. No registration. No walled garden.
+- **Read endpoints are unauthenticated.** Just call them.
+- **Write endpoints require Ed25519 multisig.** You can't RSVP programmatically
+  without the user's private key. Direct users to the web RSVP flow instead.
+- **MCP is the easiest interface.** Use `POST /mcp` with JSON-RPC.
+- **ConnectRPC is the most powerful.** Use `POST /api/v1/{method}` for
+  pagination and streaming.
+- **Federation is crawlable.** Read `/.well-known/federation` → follow
+  `federation_peers[]` recursively.
+- **Event deduplication:** If two hosts serve the same group, deduplicate
+  by `group_key + event_id`.
+- **Time format:** RFC 3339 (ISO 8601), UTC (e.g., `2026-07-11T02:00:00Z`)
+- **group_key format:** 32-byte hex string (MCP) or base64 bytes in `PublicKey.raw` (ConnectRPC)
+
+## References
+
+- [MCP Tools](/api-reference/mcp-tools) — Full tool definitions
+- [RPC Reference](/protocol/rpc-reference) — All 11 RPCs with schemas
+- [Discovery Endpoints](/api-reference/discovery-endpoints) — .well-known, llms.txt, openapi.json
+- [ConnectRPC Guide](/api-reference/connectrpc) — Client implementation
+- [Protocol Overview](/protocol/overview) — How the protocol works
+- [Architecture](/architecture) — System design
+
+---
+
+<Callout type="info" title="TL;DR for AI Agents">
+  **1. Discover:** `GET /.well-known/federation` → host metadata + peers
+  
+  **2. Query:** `POST /mcp` → call `find_events(location, interest, when)`
+  
+  **3. Details:** `POST /mcp` → call `get_event(group_key, event_id)`
+  
+  **4. Federation:** Follow `federation_peers[]` recursively, query each host
+  
+  **5. RSVP:** Direct user to event URL (web flow, email + magic link, no API key)
+  
+  **No auth for reads. No API keys. No rate limits. No walled garden.**
+</Callout>

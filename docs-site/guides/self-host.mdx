@@ -1,0 +1,223 @@
+---
+title: Self-Host Guide
+description: Run your own federated-meetup host with Docker or bare metal.
+---
+
+# Self-Host Guide
+
+Anyone can run a host. The same binary runs the hosted instance and a
+self-hosted instance. No feature gating. No "upgrade to unlock."
+
+## Prerequisites
+
+- Go 1.25+ (for building from source)
+- Or Docker (for containerized deployment)
+- A 32-byte hex string for the group key
+
+## Configuration
+
+All config is via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `HOSTD_ADDR` | `:8080` | Listen address |
+| `HOSTD_GROUP_KEY` | _(required)_ | Hex-encoded 32-byte Ed25519 public key |
+| `HOSTD_NAME` | `hostd` | Canonical name this host advertises |
+| `HOSTD_BASE_URL` | `http://localhost:8080` | Public base URL for absolute links/JSON-LD |
+| `HOSTD_DB_PATH` | `fedmeetup.db` | SQLite path for web store |
+| `HOSTD_DESCRIPTION` | `Federated Meetup host` | Host description for discovery |
+| `HOSTD_AREA` | _(empty)_ | Geographic area for discovery (e.g. "Las Vegas, NV") |
+| `HOSTD_THRESHOLD` | `0` | Initial threshold (v0: unused) |
+| `HOSTD_STEWARDS` | _(empty)_ | Comma-separated hex keys (v0: unused) |
+| `HOSTD_PEERS` | _(empty)_ | Comma-separated peer URLs to federate from |
+| `HOSTD_SYNC_BOOTSTRAP` | `true` | Bootstrap group state from peers on startup |
+| `HOSTD_SYNC_LIVE` | `true` | Maintain live Subscribe streams after bootstrap |
+
+## Docker deployment
+
+### Build
+
+```bash
+docker build -t fedmeetup -f Dockerfile .
+```
+
+### Run
+
+```bash
+docker run -p 8080:8080 \
+  -e HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa" * 32)')" \
+  -e HOSTD_NAME="my-host" \
+  -e HOSTD_BASE_URL="https://meetup.example.com" \
+  -e HOSTD_DESCRIPTION="Local meetup host for Example City" \
+  -e HOSTD_AREA="Example City, ST" \
+  -e HOSTD_DB_PATH="/data/fedmeetup.db" \
+  -v meetup-data:/data \
+  fedmeetup
+```
+
+### Docker Compose
+
+```yaml
+version: "3.8"
+services:
+  fedmeetup:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      HOSTD_GROUP_KEY: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      HOSTD_NAME: "my-host"
+      HOSTD_BASE_URL: "https://meetup.example.com"
+      HOSTD_DESCRIPTION: "Local meetup host"
+      HOSTD_AREA: "Las Vegas, NV"
+      HOSTD_DB_PATH: "/data/fedmeetup.db"
+      # Federation peers (optional)
+      HOSTD_PEERS: "http://phoenix:8080"
+      HOSTD_SYNC_BOOTSTRAP: "true"
+      HOSTD_SYNC_LIVE: "true"
+    volumes:
+      - meetup-data:/data
+    restart: unless-stopped
+
+volumes:
+  meetup-data:
+```
+
+## Bare metal deployment
+
+### Build
+
+```bash
+git clone https://github.com/sscoble/federated-meetup.git
+cd federated-meetup
+go build -o fedmeetup ./cmd/fedmeetup
+```
+
+### Systemd service
+
+```ini
+[Unit]
+Description=Federated Meetup Host
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/fedmeetup/fedmeetup
+Environment=HOSTD_ADDR=0.0.0.0:8080
+Environment=HOSTD_GROUP_KEY=0xaaaa...
+Environment=HOSTD_NAME=my-host
+Environment=HOSTD_BASE_URL=https://meetup.example.com
+Environment=HOSTD_DESCRIPTION=Local meetup host
+Environment=HOSTD_AREA=Las Vegas, NV
+Environment=HOSTD_DB_PATH=/var/lib/fedmeetup/fedmeetup.db
+WorkingDirectory=/opt/fedmeetup
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### TLS termination
+
+The daemon serves plaintext HTTP/1.1 in v0. For production, put it behind a
+reverse proxy (Caddy, nginx, Traefik) that terminates TLS and proxies to the
+daemon. ConnectRPC auto-negotiates HTTP/2 with TLS.
+
+**Caddy example:**
+
+```
+meetup.example.com {
+  reverse_proxy localhost:8080
+}
+```
+
+## Generating a group key
+
+For local dev, any 32-byte hex string works:
+
+```bash
+export HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa" * 32)')"
+```
+
+For production, generate a proper Ed25519 keypair:
+
+```go
+package main
+
+import (
+    "crypto/ed25519"
+    "encoding/hex"
+    "fmt"
+)
+
+func main() {
+    pub, priv, _ := ed25519.GenerateKey(nil)
+    fmt.Printf("Public key (HOSTD_GROUP_KEY): 0x%s\n", hex.EncodeToString(pub))
+    fmt.Printf("Private key (steward): 0x%s\n", hex.EncodeToString(priv))
+    // Store the private key securely — it controls the group
+}
+```
+
+**The private key is the most security-critical object in the system.** Store
+it in cold storage or a hardware-backed key manager. The host only needs the
+public key.
+
+## Health monitoring
+
+```bash
+# Health check
+curl https://meetup.example.com/healthz
+# → ok
+
+# Host identity
+curl https://meetup.example.com/identity
+# → {"group_key":"0x...","name":"my-host","threshold":0}
+
+# Federation document
+curl https://meetup.example.com/.well-known/federation
+# → JSON with host metadata, group count, peers
+```
+
+## Backups
+
+The SQLite database at `HOSTD_DB_PATH` contains the web cache (events, RSVPs,
+sessions, orders). Back it up regularly:
+
+```bash
+# Simple backup
+cp /var/lib/fedmeetup/fedmeetup.db /backup/fedmeetup-$(date +%Y%m%d).db
+
+# Or use SQLite's online backup (no downtime)
+sqlite3 /var/lib/fedmeetup/fedmeetup.db ".backup /backup/fedmeetup.db"
+```
+
+## Self-host parity policy
+
+**ALL features are free in self-host. No feature gating. No "upgrade to unlock."**
+
+A self-hoster gets the exact same product as a paid customer. The only
+difference is who runs the infrastructure. You pay for the operation, not
+the software.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Self-host deployment:**
+  - Single binary: `fedmeetup` (Go, no CGO)
+  - Config: environment variables only (no config file)
+  - Database: pure-Go SQLite at `HOSTD_DB_PATH`
+  - TLS: front with reverse proxy (Caddy/nginx/Traefik)
+  - Health: `GET /healthz` → `200 ok`
+  - Identity: `GET /identity` → `{"group_key":"0x...","name":"...","threshold":N}`
+  
+  **Required env vars:**
+  - `HOSTD_GROUP_KEY` (hex 32 bytes, required)
+  - `HOSTD_NAME` (canonical host name)
+  - `HOSTD_BASE_URL` (public URL for links/JSON-LD)
+  
+  **Optional federation:**
+  - `HOSTD_PEERS` (comma-separated peer URLs)
+  - `HOSTD_SYNC_BOOTSTRAP=true` (bootstrap on startup)
+  - `HOSTD_SYNC_LIVE=true` (live stream after bootstrap)
+</Callout>

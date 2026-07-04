@@ -1,0 +1,176 @@
+---
+title: Architecture
+description: System overview of the federated-meetup host, protocol, and federation layers.
+---
+
+# Architecture
+
+Federated Meetup is built as three independent layers: the **protocol**
+(cryptographic substrate), the **product** (host UX), and the **discovery**
+(open agent surface). Each layer has a different open/closed boundary and a
+different concern.
+
+## System diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         CLIENT → HOST SURFACE                           │
+│                     ConnectRPC over HTTP/2 (TLS)                         │
+│                                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │ Web UI   │  │ Mobile   │  │ AI Agent │  │ Script   │  │ Other    │  │
+│  │ (HTMX)   │  │ (future) │  │ (MCP)    │  │ (gRPC)   │  │ Hosts    │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  │
+│       │              │              │              │             │        │
+│       └──────────────┴──────────────┴──────────────┴─────────────┘        │
+│                                    │                                     │
+└────────────────────────────────────┼─────────────────────────────────────┘
+                                     │
+                          ┌──────────▼──────────┐
+                          │   fedmeetup daemon   │
+                          │   (single binary)    │
+                          │                      │
+                          │  ┌────────────────┐ │
+                          │  │ ConnectRPC API  │ │    11 RPCs
+                          │  │ (11 RPCs)       │ │
+                          │  └────────────────┘ │
+                          │  ┌────────────────┐ │
+                          │  │ Web UI (HTMX)   │ │    Server-rendered
+                          │  └────────────────┘ │
+                          │  ┌────────────────┐ │
+                          │  │ MCP Server      │ │    6 tools
+                          │  └────────────────┘ │
+                          │  ┌────────────────┐ │
+                          │  │ Discovery      │ │    .well-known, llms.txt
+                          │  └────────────────┘ │
+                          │  ┌────────────────┐ │
+                          │  │ Product Svc    │ │    Ticketing, RSVPs
+                          │  └────────────────┘ │
+                          │  ┌────────────────┐ │
+                          │  │ Group State    │ │    Merkle KV, transitions
+                          │  └────────────────┘ │
+                          └──────────┬──────────┘
+                                     │
+┌────────────────────────────────────┼─────────────────────────────────────┐
+│                       HOST → HOST SURFACE                               │
+│                    WireGuard Mesh (private)                              │
+│                                                                         │
+│  ┌──────────▼──────────┐         ┌─────────────────┐                    │
+│  │   Host A            │         │   Host B        │                   │
+│  │   (Vegas)           │◄───────►│   (Phoenix)     │                   │
+│  │   Syncer            │  Wire   │   Syncer        │                   │
+│  │   (Bootstrap+Live)  │  Guard  │   (Bootstrap+    │                   │
+│  │                     │  Mesh   │    Live)        │                   │
+│  └─────────────────────┘         └─────────────────┘                   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Three layers
+
+| Layer | What it handles | Open/closed |
+|---|---|---|
+| **Protocol** | Group keypairs, steward signatures, state machine, forks, branches, WireGuard mesh, migration, mirrors, HLC ordering, equivocation detection | Open source (AGPL-3.0) |
+| **Product** | Event pages, RSVP, ticketing, payments, organizer dashboards, email, iCal, web UI, AI operations, pricing, support | Open source (AGPL-3.0, v0) |
+| **Discovery** | SEO, AIEO, MCP server, feeds, sitemaps, llms.txt, OpenAPI | Open standard (hosts must conform to be discoverable) |
+
+## Two transports
+
+The federation has **two distinct transport surfaces**. This is load-bearing.
+Conflating them collapses the security model.
+
+| Surface | Wire | Encryption | Reachable from |
+|---|---|---|---|
+| Client → Host | ConnectRPC over HTTP/2 (TLS) | TLS | Public internet |
+| Host → Host | Custom protocol over WireGuard | WireGuard (Noise IK) | Private mesh only |
+
+**Why two and not one?** If server-to-server traffic rode the same RPC surface
+as clients, every host would have a public attack surface equal to its
+federation surface. By keeping server-to-server traffic on a private overlay,
+federation traffic is private by construction.
+
+## Three crypto layers
+
+| # | Layer | Question it answers | Key domain | Wire |
+|---|---|---|---|---|
+| 1 | **WireGuard mesh** | "Is this host a trusted peer?" | X25519 per host | UDP, host↔host |
+| 2 | **Multisig governance** | "Did M-of-N stewards authorize this transition?" | Ed25519 per steward | Inside WG tunnel |
+| 3 | **Client ConnectRPC + TLS** | "Is this client authorized?" | Server TLS cert | HTTPS, public |
+
+**Keys never derive from one another.** A host's WireGuard key, steward key,
+and TLS key are three independent random keypairs. Compromise of any single
+layer does not imply compromise of any other.
+
+## Codebase layout
+
+```
+cmd/fedmeetup/          Host daemon — ConnectRPC + MCP + web UI on one port
+cmd/fedmeetup-product/  Product daemon (standalone ConnectRPC product service)
+
+proto/                  Open protobuf standard + ConnectRPC service definitions
+                        (generated Go code is committed — no buf needed)
+
+internal/
+  crypto/               Ed25519 signing, multisig envelopes, X25519 key exchange
+  types/                Protocol primitives (PublicKey, Hash, StateSnapshot)
+  group/                Group state machine — Merkle KV, signed transitions, branches
+  hlc/                  Hybrid logical clocks for ordering
+  host/                 ConnectRPC service implementation
+  product/              Ticketing, orders, RSVPs, organizer auth
+  mcp/                  MCP server + discovery endpoints
+  web/                  Web UI — Go html/template + HTMX + SQLite
+  payment/              Stripe webhook handling
+  ratelimit/            Token bucket rate limiter
+  federation/           Server-to-server sync client (bootstrap + live)
+
+sim/                    Deterministic simulator (VOPR-shaped)
+transport/wg/           Server-to-server WireGuard mesh transport
+docs/                   Strategy + protocol + product docs (8 files, 2K+ lines)
+```
+
+## Single binary
+
+The `fedmeetup` daemon serves everything on one port:
+
+- ConnectRPC API (11 RPCs)
+- Web UI (HTMX, server-rendered)
+- MCP server (6 tools)
+- Discovery endpoints (`.well-known/federation`, `llms.txt`, `openapi.json`, `robots.txt`)
+- Health check (`/healthz`)
+- Identity (`/identity`)
+
+No JavaScript framework. No build step. No CGO. Pure-Go SQLite. One binary.
+
+## Federation sync
+
+When `HOSTD_PEERS` is set, the daemon creates a `Syncer` per peer and performs:
+
+1. **Bootstrap** — Pull the peer's entire transition log via `GetLog` (paginated),
+   replay each transition into local state. Idempotent — re-running is safe.
+2. **Verify** — Check that local state root matches peer's `GetSnapshot` root.
+3. **Live** — Open a `Subscribe` stream for real-time transition delivery.
+   Auto-reconnects on stream errors, resuming from local transition count.
+
+A malicious peer can only *omit* transitions, not inject fake ones — every
+transition is verified by `Apply` (signature checks, state-machine validation).
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **System architecture summary:**
+  - Single Go binary serves ConnectRPC + Web UI + MCP + discovery on one port
+  - Protocol: Ed25519-signed transitions applied to a Merkle KV state machine
+  - Federation: hosts sync via GetLog (bootstrap) + Subscribe (live) over WireGuard mesh
+  - No central server — peer-to-peer knowledge via `/.well-known/federation` → `federation_peers`
+  
+  **Three independent key domains (compromise of one ≠ compromise of others):**
+  1. WireGuard X25519 (mesh transport)
+  2. Ed25519 per steward (state transitions)
+  3. TLS (client-facing)
+  
+  **State model:** Forest of branches, each branch is an independent state machine
+  with its own Merkle KV, transition log, and equivocation log. Branch 0 is genesis.
+  
+  **Ordering:** Hybrid Logical Clocks (HLC) — 18 bytes, total order across hosts
+  without wall-clock sync. Wall nanos (8B BE) + counter (2B BE) + reserved (8B).
+</Callout>

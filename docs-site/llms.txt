@@ -1,0 +1,46 @@
+# Federated Meetup — Documentation Site
+
+> A federation-first alternative to meetup.com. Open protocol, sovereign hosts, AIEO-native discovery.
+
+## What is this?
+
+Federated Meetup is a federated event platform built on three layers:
+1. An open protocol (ConnectRPC, Ed25519 signatures, Merkle KV state machine)
+2. A host product (Go binary: web UI, ticketing, MCP server, discovery endpoints)
+3. Federation (WireGuard mesh, server-to-server sync, no central server)
+
+## Documentation structure
+
+- **Getting Started:** Introduction, Quickstart, Architecture
+- **Protocol:** Overview, State Machine, Identity, Federation, RPC Reference, Wire Format
+- **Guides:** Self-Host, Create Events, RSVP Flow, Ticketing, Federation Setup, Calendar Export
+- **API Reference:** ConnectRPC, MCP Tools, Discovery Endpoints, Web API
+- **AI Agents:** AI Agent Guide (primary LLM entry point)
+
+## Key facts
+
+- Protocol: `federated-meetup/v1`
+- 11 RPCs via ConnectRPC over HTTP/2
+- 6 MCP tools for AI assistants (no auth required)
+- 4 discovery endpoints: .well-known/federation, llms.txt, openapi.json, robots.txt
+- Go 1.25+, pure-Go SQLite, no CGO, no JavaScript framework
+- AGPL-3.0 license
+- 255 tests passing
+
+## For AI agents
+
+Start with the AI Agent Guide — it's self-contained and covers:
+- How to discover a host
+- How to query via MCP (6 tools)
+- How to query via ConnectRPC (11 RPCs)
+- How to crawl the federation (peer-to-peer discovery)
+- Decision tree for which interface to use
+- Complete request/response shapes
+
+## Links
+
+- GitHub: https://github.com/sscoble/federated-meetup
+- Live instance: https://fm.scoble.me
+- AI Agent Guide: /ai-agent-guide
+- MCP Tools: /api-reference/mcp-tools
+- RPC Reference: /protocol/rpc-reference

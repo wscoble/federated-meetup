@@ -1,0 +1,242 @@
+---
+title: Discovery Endpoints
+description: .well-known/federation, llms.txt, openapi.json, robots.txt — how hosts announce themselves.
+---
+
+# Discovery Endpoints
+
+Every host exposes four discovery endpoints that let humans, search engines,
+and AI assistants find and query the host without API keys, registration, or
+a central directory.
+
+## /.well-known/federation
+
+The host discovery endpoint. Returns machine-readable JSON describing the host
+and its groups.
+
+```
+GET /.well-known/federation
+Content-Type: application/json
+Access-Control-Allow-Origin: *
+```
+
+```json
+{
+  "protocol": "federated-meetup/v1",
+  "host": {
+    "name": "Vegas Programmers Host",
+    "url": "https://vegasprogrammers.org",
+    "description": "Local host serving Las Vegas programming and tech groups.",
+    "geographic_area": "Las Vegas, NV",
+    "coordinates": { "lat": 36.17, "lng": -115.14 },
+    "language": "en"
+  },
+  "groups_endpoint": "/api/v1/list-groups",
+  "events_endpoint": "/api/v1/list-events",
+  "resolve_name_endpoint": "/api/v1/resolve-name",
+  "connectrpc_endpoint": "/api/v1/",
+  "mcp_endpoint": "/mcp",
+  "openapi_spec": "/openapi.json",
+  "feeds": {
+    "rss": "/feeds/all.rss",
+    "atom": "/feeds/all.atom",
+    "json": "/feeds/all.json"
+  },
+  "group_count": 12,
+  "event_count_this_week": 5,
+  "federation_peers": [
+    "https://phoenixdevs.org",
+    "https://saltlakecoder.org"
+  ]
+}
+```
+
+### Fields
+
+| Field | Description |
+|---|---|
+| `protocol` | Always `"federated-meetup/v1"` |
+| `host.name` | Human-readable host name |
+| `host.url` | Public base URL |
+| `host.description` | Host description (from `HOSTD_DESCRIPTION`) |
+| `host.geographic_area` | Geographic area (from `HOSTD_AREA`) |
+| `host.coordinates` | Lat/lng for location filtering |
+| `host.language` | Primary language code |
+| `groups_endpoint` | ConnectRPC path for ListGroups |
+| `events_endpoint` | ConnectRPC path for ListEvents |
+| `resolve_name_endpoint` | ConnectRPC path for ResolveName |
+| `connectrpc_endpoint` | ConnectRPC base path |
+| `mcp_endpoint` | MCP server endpoint |
+| `openapi_spec` | OpenAPI 3.1 spec path |
+| `feeds` | RSS/Atom/JSON feed paths |
+| `group_count` | Number of groups on this host |
+| `event_count_this_week` | Events starting in the next 7 days |
+| `federation_peers` | Known peer host URLs (for federation crawling) |
+
+---
+
+## /llms.txt
+
+LLM-readable host summary in plain text. Follows the [llmstxt.org](https://llmstxt.org)
+standard.
+
+```
+GET /llms.txt
+Content-Type: text/plain; charset=utf-8
+```
+
+```
+# Vegas Programmers Host
+
+> Local host serving Las Vegas programming and tech groups.
+
+## Groups
+
+### vegas-programmers
+- Display name: Vegas Programmers
+- Description: Weekly meetup for programmers in the Las Vegas valley.
+- URL: https://vegasprogrammers.org/groups/vegas-programmers
+
+### lv-wordpress
+- Display name: Las Vegas WordPress
+- Description: Monthly meetup for WordPress developers and users.
+- URL: https://vegasprogrammers.org/groups/lv-wordpress
+
+## API
+
+This host speaks the federated-meetup v1 protocol.
+- List groups: GET /api/v1/list-groups
+- List events: GET /api/v1/list-events?group_key=<pubkey>
+- Resolve name: GET /api/v1/resolve-name?canonical_name=<name>
+- OpenAPI spec: GET /openapi.json
+- MCP server: POST /mcp
+
+## Feeds
+
+- RSS: /feeds/all.rss
+- Atom: /feeds/all.atom
+- JSON Feed: /feeds/all.json
+```
+
+---
+
+## /openapi.json
+
+OpenAPI 3.1 spec describing the ConnectRPC API. Auto-generated to match the
+protobuf definitions.
+
+```
+GET /openapi.json
+Content-Type: application/json
+Access-Control-Allow-Origin: *
+```
+
+The spec includes:
+
+- All RPC endpoints mapped to HTTP paths
+- Request/response schemas (JSON mappings of protobuf messages)
+- Authentication notes (reads unauthenticated, writes require signed transitions)
+- Pagination conventions (cursor + page_size)
+- Error codes
+
+### Key paths in the spec
+
+| Path | Method | Description |
+|---|---|---|
+| `/list-groups` | GET | List all groups on this host |
+| `/list-events` | GET | List events for a group |
+| `/get-group` | GET | Get group by key or name |
+| `/get-event` | GET | Get a single event |
+| `/resolve-name` | GET | Resolve canonical name to group key |
+| `/submit-transition` | POST | Submit signed steward transition |
+| `/submit-user-action` | POST | Submit user-signed action |
+| `/get-log` | GET | Get transition log (paginated) |
+| `/get-snapshot` | GET | Get state snapshot |
+| `/subscribe` | GET | Server-streaming live events |
+
+---
+
+## /robots.txt
+
+Crawler directives. Explicitly allows AI crawlers.
+
+```
+GET /robots.txt
+Content-Type: text/plain; charset=utf-8
+```
+
+```
+User-agent: *
+Allow: /
+
+# AI crawlers explicitly allowed
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: AppleBot
+Allow: /
+
+Sitemap: https://meetup.example.com/sitemap.xml
+```
+
+### Why AI crawlers are explicitly allowed
+
+meetup.com is invisible to AI assistants because its data is behind a walled
+garden. The federation's data is open by protocol design. Every host explicitly
+allows AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, AppleBot)
+so that AI assistants can discover and index events.
+
+## Federation peer discovery
+
+The `/.well-known/federation` endpoint includes `federation_peers` — a list of
+known peer host URLs. An AI agent can crawl the entire federation by:
+
+1. Start at any known host
+2. Read `/.well-known/federation` to get `federation_peers`
+3. Repeat for each peer, building a graph of all hosts
+
+No central registry needed — peer-to-peer knowledge, like Fediverse instance
+discovery.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **4 discovery endpoints (all unauthenticated):**
+  
+  | Endpoint | Returns | Content-Type |
+  |---|---|---|
+  | `GET /.well-known/federation` | Host metadata JSON | application/json |
+  | `GET /llms.txt` | Plain-text host summary | text/plain |
+  | `GET /openapi.json` | OpenAPI 3.1 spec | application/json |
+  | `GET /robots.txt` | Crawler directives | text/plain |
+  
+  **Federation document shape:**
+  ```json
+  {
+    "protocol": "federated-meetup/v1",
+    "host": { "name", "url", "description", "geographic_area", "coordinates", "language" },
+    "groups_endpoint": "/api/v1/list-groups",
+    "events_endpoint": "/api/v1/list-events",
+    "mcp_endpoint": "/mcp",
+    "openapi_spec": "/openapi.json",
+    "group_count": N,
+    "event_count_this_week": N,
+    "federation_peers": ["url1", "url2"]
+  }
+  ```
+  
+  **Federation crawl:** Start at any host → read `/.well-known/federation` →
+  follow `federation_peers[]` recursively → build graph of all hosts.
+  
+  **AI crawlers explicitly allowed** in robots.txt: GPTBot, ClaudeBot,
+  PerplexityBot, Google-Extended, AppleBot.
+</Callout>

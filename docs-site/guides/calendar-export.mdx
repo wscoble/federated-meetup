@@ -1,0 +1,203 @@
+---
+title: Calendar Export
+description: ICS export, JSON-LD, and MCP endpoints for calendar integration.
+---
+
+# Calendar Export
+
+The host provides multiple ways for attendees and tools to consume event data:
+ICS calendar files, schema.org JSON-LD structured data, and MCP endpoints.
+
+## ICS calendar export
+
+Every event has a downloadable ICS (iCalendar) file:
+
+```
+GET /events/{group_key}/{event_id}/calendar.ics
+```
+
+This returns a `text/calendar` response with a single `VEVENT`:
+
+```ics
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Federated Meetup//Event//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:evt-001@federated-meetup
+DTSTAMP:20260704T120000Z
+DTSTART:20260711T020000Z
+DTEND:20260711T040000Z
+SUMMARY:Vegas Programmers Weekly
+DESCRIPTION:Weekly meetup for programmers in Las Vegas.
+LOCATION:Goldwell Open Air Museum\, Las Vegas\, NV
+URL:https://meetup.example.com/events/0xaaa.../evt-001
+END:VEVENT
+END:VCALENDAR
+```
+
+### Adding to calendar apps
+
+The ICS file can be imported into:
+- **Google Calendar:** Settings → Import & Export → Import .ics file
+- **Apple Calendar:** File → Import… → Select .ics file
+- **Outlook:** File → Open & Export → Open Calendar File
+- **Any RFC 5545-compliant calendar app**
+
+The `Content-Disposition` header is set to `attachment; filename={event_id}.ics`,
+so browsers download the file directly.
+
+### Default duration
+
+If no end time is specified, the ICS defaults to a 2-hour duration from the
+start time.
+
+### Text escaping
+
+ICS text values are escaped per RFC 5545:
+- `\` → `\\`
+- `;` → `\;`
+- `,` → `\,`
+- newline → `\n`
+
+## schema.org/Event JSON-LD
+
+Every event page (`GET /events/{group_key}/{event_id}`) includes a
+`schema.org/Event` JSON-LD block in the `<head>`:
+
+```html
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Event",
+  "name": "Vegas Programmers Weekly",
+  "startDate": "2026-07-11T02:00:00Z",
+  "endDate": "2026-07-11T04:00:00Z",
+  "location": {
+    "@type": "Place",
+    "name": "Goldwell Open Air Museum",
+    "address": "Las Vegas, NV"
+  },
+  "eventStatus": "https://schema.org/EventScheduled",
+  "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+  "url": "https://meetup.example.com/events/0xaaa.../evt-001",
+  "description": "Weekly meetup for programmers in Las Vegas.",
+  "organizer": {
+    "@type": "Organization",
+    "name": "Vegas Programmers"
+  },
+  "maximumAttendeeCapacity": 50,
+  "remainingAttendeeCapacity": 27
+}
+```
+
+### Required JSON-LD fields
+
+| Field | Value |
+|---|---|
+| `@type` | `"Event"` |
+| `name` | Event title |
+| `startDate` | ISO 8601 datetime |
+| `endDate` | ISO 8601 datetime (if set) |
+| `location` | `schema.org/Place` with `name` and `address` |
+| `eventStatus` | `"EventScheduled"` or `"EventCancelled"` |
+| `eventAttendanceMode` | `"OfflineEventAttendanceMode"` |
+| `url` | Canonical event URL on this host |
+| `organizer` | `schema.org/Organization` or `schema.org/Person` |
+
+### Optional fields
+
+| Field | Description |
+|---|---|
+| `description` | Event description |
+| `image` | Event image URL |
+| `maximumAttendeeCapacity` | From event capacity |
+| `remainingAttendeeCapacity` | Computed from RSVPs |
+| `offers` | `schema.org/Offer` (if ticketed — price, availability, URL) |
+
+### Event status mapping
+
+| Event state | JSON-LD `eventStatus` |
+|---|---|
+| Active | `https://schema.org/EventScheduled` |
+| Cancelled | `https://schema.org/EventCancelled` |
+
+## MCP endpoints
+
+AI assistants can query events via the MCP server at `POST /mcp`. The
+`get_event` tool returns event details including time, location, and capacity:
+
+```json
+// MCP tool call
+{
+  "method": "tools/call",
+  "params": {
+    "name": "get_event",
+    "arguments": {
+      "group_key": "0xaaaa...",
+      "event_id": "evt-001"
+    }
+  }
+}
+```
+
+```json
+// Response
+{
+  "event": {
+    "event_id": "evt-001",
+    "title": "Vegas Programmers Weekly",
+    "starts_at": "2026-07-11T02:00:00Z",
+    "ends_at": "2026-07-11T04:00:00Z",
+    "location": "Goldwell Open Air Museum, Las Vegas, NV",
+    "capacity": 50,
+    "paid": false
+  },
+  "rsvp_count": 23,
+  "cancelled": false
+}
+```
+
+See [MCP Tools](/api-reference/mcp-tools) for the full tool reference.
+
+## Feeds (planned)
+
+The discovery spec defines feed endpoints:
+
+| Endpoint | Format |
+|---|---|
+| `GET /feeds/{canonical_name}.rss` | RSS 2.0 |
+| `GET /feeds/{canonical_name}.atom` | Atom 1.0 |
+| `GET /feeds/{canonical_name}.json` | JSON Feed |
+| `GET /feeds/all.rss` | RSS 2.0 (all events) |
+| `GET /feeds/all.atom` | Atom 1.0 (all events) |
+| `GET /feeds/all.json` | JSON Feed (all events) |
+
+Feed items include event title, description, time, location, group name,
+canonical URL, RSVP count, and embedded `schema.org/Event` JSON-LD.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **ICS export:** `GET /events/{group_key}/{event_id}/calendar.ics`
+  → `text/calendar` response, RFC 5545 VEVENT
+  
+  **JSON-LD:** Embedded in event page HTML as `<script type="application/ld+json">`
+  with `@type: "Event"`. Fields: name, startDate, endDate, location, eventStatus,
+  eventAttendanceMode, url, organizer, maximumAttendeeCapacity,
+  remainingAttendeeCapacity.
+  
+  **MCP get_event tool:**
+  ```json
+  {
+    "name": "get_event",
+    "arguments": { "group_key": "0x...", "event_id": "evt-..." }
+  }
+  ```
+  Returns: `{ event: { event_id, title, starts_at, ends_at, location, capacity, paid }, rsvp_count, cancelled }`
+  
+  **Event time format:** ISO 8601 / RFC 3339 (e.g., `2026-07-11T02:00:00Z`)
+  
+  **Feeds (planned):** `/feeds/all.rss`, `/feeds/all.atom`, `/feeds/all.json`
+</Callout>

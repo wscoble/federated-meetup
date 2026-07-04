@@ -1,0 +1,188 @@
+---
+title: Ticketing
+description: Paid events with Stripe integration — create tickets, manage orders, handle refunds.
+---
+
+# Ticketing
+
+The host supports paid events with Stripe integration. In v0, if
+`STRIPE_SECRET_KEY` is set, real Stripe Checkout Sessions are created. If not,
+a mock payment provider returns a fake URL for local development.
+
+## How ticketing works
+
+### 1. Organizer creates a ticket
+
+From the dashboard, the organizer creates a ticket for an event:
+
+```
+POST /dashboard/events/{event_id}/tickets
+Form data: ticket_name=Early Bird, price_cents=2000, ticket_capacity=50
+```
+
+The ticket is stored in the product store with:
+- `ticket_id`: auto-generated (e.g., `tick-a1b2c3...`)
+- `name`: organizer-provided
+- `price`: Money proto (amount in cents + currency, default USD)
+- `capacity`: 0 = unlimited
+- `sold`: 0 (incremented atomically on purchase)
+
+### 2. Attendee purchases a ticket
+
+From the event page, the attendee clicks "Buy" on a ticket:
+
+```
+POST /events/{group_key}/{event_id}/purchase
+Form data: ticket_id=tick-..., email=attendee@example.com
+```
+
+The server:
+1. Reads the ticket to compute amount (price × quantity, default quantity=1)
+2. Calls `AtomicPurchaseTicket` on the product store
+3. The store atomically checks capacity, increments `sold`, creates a `PENDING` order
+4. If sold out, returns `409 Conflict`
+5. Creates a Stripe Checkout Session (or mock URL)
+6. Stores the order in SQLite for the checkout page
+7. Redirects to `/checkout/{order_id}`
+
+### 3. Checkout page
+
+The checkout page shows the order details and a redirect link to Stripe:
+
+```
+GET /checkout/{order_id}
+```
+
+If a Stripe session ID exists, the page links to
+`https://checkout.stripe.com/c/pay/{session_id}`.
+
+### 4. Payment completion
+
+Stripe sends a webhook (`checkout.session.completed`) which transitions the
+order from `PENDING` → `COMPLETED`. The webhook handler is at the product
+daemon's webhook endpoint.
+
+Webhook events handled:
+
+| Event | Order transition |
+|---|---|
+| `checkout.session.completed` | PENDING → COMPLETED |
+| `checkout.session.expired` | PENDING → FAILED |
+| `charge.failed` | PENDING → FAILED |
+| `charge.dispute.created` | COMPLETED → DISPUTED |
+| `charge.refunded` | COMPLETED → REFUNDED (or PARTIALLY_REFUNDED) |
+
+## Order state machine
+
+```
+                    ┌─────────────┐
+                    │   PENDING   │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+     checkout.session   charge.failed   │
+       .completed       checkout.session │
+              │          .expired        │
+              ▼            │            │
+        ┌──────────┐      ▼            │
+        │COMPLETED │  ┌───────┐        │
+        └──────────┘  │FAILED │        │
+                      └───────┘        │
+                                       │
+              charge.dispute.created   │
+              ──────────────────────────►
+                             ┌──────────┐
+                             │ DISPUTED │
+                             └──────────┘
+
+     From COMPLETED or PENDING:
+        RefundOrder (amount=0)  → REFUNDED
+        RefundOrder (amount>0)  → PARTIALLY_REFUNDED
+                                   (→ REFUNDED when cumulative = full)
+```
+
+All state transitions are **atomic and idempotent**. The store methods hold a
+write lock for the entire check-and-mutate sequence, eliminating TOCTOU races.
+
+## Refunds
+
+The organizer can issue refunds:
+
+- **Full refund** (amount = 0): order → `REFUNDED`, ticket `sold` count decremented
+- **Partial refund** (amount > 0): order → `PARTIALLY_REFUNDED`,
+  `refunded_amount` accumulated. When cumulative refunds reach the full amount,
+  transitions to `REFUNDED` and decrements `sold`.
+- **Idempotency**: refunding an already-fully-refunded order returns
+  `CodeFailedPrecondition` without double-decrementing `sold` count.
+
+## Capacity management
+
+The store enforces capacity atomically:
+
+```go
+order, found, soldOut := ps.AtomicPurchaseTicket(
+    ticketID, email, orderID, sessionID,
+    quantity, amount, currency,
+)
+```
+
+- If `found == false`: ticket doesn't exist → 404
+- If `soldOut == true`: ticket is at capacity → 409 Conflict
+- Otherwise: `sold` is incremented, `PENDING` order is created
+
+The atomic check-and-increment prevents overselling under concurrent requests.
+
+## Mock payment (local dev)
+
+If `STRIPE_SECRET_KEY` is not set, the mock payment provider returns a fake
+checkout URL. This lets you test the full purchase flow without a Stripe
+account.
+
+## Stripe webhook signature verification
+
+The webhook handler verifies the `Stripe-Signature` header against the
+webhook signing secret. Invalid signatures are rejected before processing.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Ticket purchase flow (web):**
+  1. `POST /events/{group_key}/{event_id}/purchase` — form: `ticket_id`, `email`
+  2. Creates PENDING order atomically (capacity check + sold increment)
+  3. Redirects to `GET /checkout/{order_id}`
+  4. Checkout page links to Stripe (or mock URL)
+  5. Stripe webhook completes the order
+  
+  **Order states:** PENDING → COMPLETED | FAILED | DISPUTED
+  COMPLETED → REFUNDED | PARTIALLY_REFUNDED
+  
+  **Ticket shape:**
+  ```json
+  {
+    "ticket_id": "tick-...",
+    "name": "Early Bird",
+    "price": { "amount": 2000, "currency": "USD" },
+    "capacity": 50,
+    "sold": 23
+  }
+  ```
+  
+  **Order shape:**
+  ```json
+  {
+    "order_id": "ord-...",
+    "ticket_id": "tick-...",
+    "attendee_email": "attendee@example.com",
+    "status": "ORDER_STATUS_PENDING",
+    "stripe_session_id": "sess_...",
+    "amount_paid": { "amount": 2000, "currency": "USD" },
+    "refunded_amount": { "amount": 0, "currency": "USD" }
+  }
+  ```
+  
+  **Atomic capacity:** `AtomicPurchaseTicket` holds write lock for
+  check + increment + order creation. No overselling under concurrency.
+  
+  **Stripe env:** `STRIPE_SECRET_KEY` (if set → real Stripe, else → mock)
+</Callout>

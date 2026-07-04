@@ -1,0 +1,168 @@
+---
+title: State Machine
+description: Group state machine — branches, transitions, HLC ordering, and equivocation detection.
+---
+
+# State Machine
+
+A group's state is a **forest of branches**, each branch an independent state
+machine. This is the load-bearing architectural shift. It exists because mutation
+must be local to a branch — two stewards who disagree should not fight over the
+same log; they each create a branch and the community arbitrates by showing up.
+
+## Branches
+
+- Every transition targets exactly one branch, identified by `Transition.branch_id` (uint32, default 0).
+- Branch 0 is the **genesis branch**, created by `CREATE_GROUP`. It holds the initial steward set and threshold.
+- `BRANCH_CREATE` allocates the next monotonic branch ID (1, 2, 3, ...) and copies the parent's stewards + threshold at the snapshot. The new branch inherits the group's keypair.
+- Branch IDs are never reused within a group's lifetime.
+- A branch's KV state, transition log, and equivocation log are independent of every other branch.
+- Cross-branch comparisons are meaningless — branches are different state machines that share only the group's keypair.
+- Cross-branch "equivocation" is not detected (different state machines, different semantics).
+- A host serves one or more branches; clients pick which branch to follow via `BRANCH_ADOPT` (a local, host-side operation, not a transition).
+
+### Branch cap
+
+`group.State.MaxBranches` defaults to 1000. `BRANCH_CREATE` is rejected once the
+branch count would exceed this cap. The cap is on per-group branch count, not
+on creation rate — branching is supposed to be easy.
+
+## Transitions
+
+Every transition carries:
+
+- **Type** — one of the 15 canonical transition types (or a custom opaque type)
+- **Prior state** — the state root hash this transition builds on (hash chain)
+- **HLC** — hybrid logical clock for total ordering across hosts
+- **Branch ID** — which branch this transition targets (default 0)
+- **Payload** — type-specific data (event details, steward key, RSVP data, etc.)
+- **Steward signatures** — Ed25519 signatures from M-of-N stewards
+
+### Canonical form
+
+Transition canonical bytes are computed with protobuf deterministic marshalling.
+The `steward_signatures` field is stripped before marshalling — signatures
+cover the transition body, not the signature envelope itself.
+
+```go
+cp := proto.Clone(t).(*pb.Transition)
+cp.StewardSignatures = nil
+canonical, _ := proto.MarshalOptions{Deterministic: true}.Marshal(cp)
+```
+
+### Apply pipeline
+
+When `state.Apply(transition)` is called:
+
+1. **Rate limit check** — if a per-steward token-bucket limiter is configured,
+   the first verifying signer's bucket is checked. Rejected transitions don't
+   pollute the equivocation log. (Fires BEFORE signature verification — cheap
+   rejection first.)
+2. **Signature verification** — multisig envelope checked against the steward
+   set at the transition's `prior_state`. At least `threshold` distinct stewards
+   must have signed.
+3. **Equivocation check** — the `(steward_pubkey, prior_state)` pair is checked
+   against the equivocation log. A second distinct transition at the same key
+   triggers `EquivocationEvidence`.
+4. **State machine validation** — the transition type's preconditions are checked
+   (e.g., `ADD_STEWARD` requires the new key isn't already a steward,
+   `REMOVE_STEWARD` requires the key is currently a steward, `CREATE_EVENT`
+   requires a valid event payload).
+5. **Apply** — the transition's effects are applied to the Merkle KV state, the
+   transition is appended to the log, and the state root is recomputed.
+
+## HLC ordering
+
+Federation hosts have unsynchronized wall-clocks. We cannot rely on wall-clock
+for total ordering. The protocol uses **Hybrid Logical Clocks (HLC)** for
+clock-independent ordering.
+
+### HLC format
+
+18 bytes on the wire (matches `Transition.hlc` field):
+
+```
+| 8 bytes wall nanos BE | 2 bytes counter BE | 8 bytes reserved |
+```
+
+- **Wall component:** the host's best estimate of "when" the transition was
+  authored, in nanoseconds since the Unix epoch.
+- **Counter:** a per-host logical clock that breaks ties when two transitions
+  share the same wall component.
+
+### Guarantees
+
+1. **Per-host monotonicity** — a host's HLC strictly increases across
+   transitions it authors, even when its wall-clock goes backwards (NTP step,
+   suspend/resume). The counter advances to preserve order.
+2. **Causality** — if host A observes a message from host B, then A's next
+   locally-generated HLC is strictly greater than B's.
+3. **Bounded wall drift** — the wall component is bounded by
+   `max(local_clock, remote_HLC_wall) + drift`.
+
+### HLC drift validation
+
+The host rejects any inbound message whose HLC wall component is more than
+`MaxHLCDrift` (default 60s) ahead of the host's local clock. This prevents
+malicious peers from "using up" future ordering space.
+
+## Equivocation detection
+
+A malicious steward (or one whose key has been compromised) may sign two
+different transitions at the same `prior_state`. This is a fork-by-insider attack.
+
+**Defense:** every transition's signing steward is recorded in an
+**equivocation log** keyed by `(steward_pubkey, prior_state)`. A second distinct
+signed transition at the same key triggers `EquivocationEvidence`. Honest hosts
+that observe the evidence gossip it to peers and sign a `REMOVE_STEWARD`
+transition against the offending key.
+
+**Status:** v1 implements data-structure detection. End-to-end gossip and
+slash-on-evidence is a future cycle.
+
+## Hardening
+
+### Steward set bound
+
+`group.State.MaxStewards` defaults to 100. `ADD_STEWARD` is rejected once the
+prospective steward set would exceed this cap.
+
+### Per-steward rate limit
+
+Token-bucket rate limiter per `(steward_pubkey, group_id)`. Each transition
+consumes one token. Default: 10 transitions/second per steward per group,
+burst 10. Buckets are lazily created on first use.
+
+### Branch-local mutation
+
+Mutations are local to a branch. A flood on branch N has zero effect on branch
+M — not even equivocation detection crosses branches. The cap on per-group
+branches (`MaxBranches`, default 1000) bounds total branches, not creation rate.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **State model:**
+  - Group state = forest of branches, each branch = independent state machine
+  - Branch 0 = genesis (from CREATE_GROUP)
+  - State root = SHA-256 Merkle root of the KV state
+  - Transitions form a hash chain via `prior_state` field
+  
+  **Transition apply pipeline (5 stages):**
+  1. Rate limit (token bucket per steward+group, fires first)
+  2. Signature verification (Ed25519 multisig, threshold-of-N)
+  3. Equivocation check (steward+prior_state deduplication)
+  4. State machine validation (type-specific preconditions)
+  5. Apply (mutate KV, append log, recompute root)
+  
+  **HLC format:** 18 bytes = wall_nanos(8B BE) + counter(2B BE) + reserved(8B)
+  
+  **Ordering:** Total order across hosts via HLC byte comparison. Wall-clock
+  is advisory only.
+  
+  **Hardening limits:**
+  - MaxStewards: 100 (default)
+  - MaxBranches: 1000 (default)
+  - Rate limit: 10 trans/sec/steward/group, burst 10 (default)
+  - HLC drift rejection: >60s ahead of local clock (default)
+</Callout>

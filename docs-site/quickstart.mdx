@@ -1,0 +1,117 @@
+---
+title: Quickstart
+description: Get a federated-meetup host running in 5 minutes.
+---
+
+# Quickstart
+
+## Prerequisites
+
+- Go 1.25+
+- That's it. SQLite is pure-Go (`modernc.org/sqlite`), no CGO required.
+
+## Build and run
+
+```bash
+git clone https://github.com/sscoble/federated-meetup.git
+cd federated-meetup
+go build ./...
+
+# Generate a group key (any 32-byte hex string works for local dev)
+export HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa" * 32)')"
+export HOSTD_NAME="my-host"
+export HOSTD_BASE_URL="http://localhost:8091"
+export HOSTD_DB_PATH="/tmp/fedmeetup.db"
+export HOSTD_ADDR="127.0.0.1:8091"
+
+go run ./cmd/fedmeetup
+```
+
+Open `http://localhost:8091` — you'll see the web UI with seeded demo data
+(Vegas Programmers group + 3 events). The demo organizer token is
+`demo-organizer-token`.
+
+## Docker
+
+```bash
+docker build -t fedmeetup -f Dockerfile .
+docker run -p 8091:8091 \
+  -e HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa" * 32)')" \
+  -e HOSTD_NAME="my-host" \
+  -e HOSTD_BASE_URL="http://localhost:8091" \
+  fedmeetup
+```
+
+## Verify it's running
+
+```bash
+# Health check
+curl http://localhost:8091/healthz
+# → ok
+
+# Host identity
+curl http://localhost:8091/identity
+# → {"group_key":"0xaaa...","name":"my-host","threshold":0}
+
+# Discovery endpoint
+curl http://localhost:8091/.well-known/federation
+# → JSON with host metadata, group count, peers
+
+# LLM-readable summary
+curl http://localhost:8091/llms.txt
+# → Plain text describing groups, API, and feeds
+
+# List groups via MCP
+curl -X POST http://localhost:8091/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+## What you get
+
+| Feature | How to access |
+|---|---|
+| Web UI | `http://localhost:8091/` |
+| Group page | `http://localhost:8091/groups/vegas-programmers` |
+| Event page | `http://localhost:8091/events/{group_key}/{event_id}` |
+| Organizer dashboard | `http://localhost:8091/dashboard` (login with `demo-organizer-token`) |
+| ConnectRPC API | `/api/v1/` (ConnectRPC over HTTP/2) |
+| MCP server | `POST /mcp` |
+| Discovery | `/.well-known/federation`, `/llms.txt`, `/openapi.json`, `/robots.txt` |
+| ICS calendar | `GET /events/{group_key}/{event_id}/calendar.ics` |
+
+## Next steps
+
+- [Architecture](/architecture) — Understand the system design
+- [Self-Host Guide](/guides/self-host) — Configure for production
+- [Create Events](/guides/create-event) — Organizer workflow
+- [Federation Setup](/guides/federation-setup) — Connect to peer hosts
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Local dev endpoint:** `http://localhost:8091`
+  
+  **Key endpoints to probe:**
+  - `GET /healthz` → `200 ok` (health check)
+  - `GET /.well-known/federation` → JSON host metadata
+  - `GET /llms.txt` → plain-text summary
+  - `GET /openapi.json` → OpenAPI 3.1 spec
+  - `POST /mcp` → MCP server (JSON-RPC)
+  
+  **MCP tools/list response shape:**
+  ```json
+  {
+    "tools": [
+      {"name": "list_groups", "description": "List all groups hosted by this host"},
+      {"name": "list_events", "description": "List upcoming events for a group"},
+      {"name": "get_event", "description": "Get details for a single event"},
+      {"name": "resolve_name", "description": "Resolve a canonical name to a group"},
+      {"name": "get_group", "description": "Get group details"},
+      {"name": "find_events", "description": "Search for events by location and/or interest"}
+    ]
+  }
+  ```
+  
+  **Demo credentials:** Organizer token `demo-organizer-token`
+</Callout>

@@ -1,0 +1,150 @@
+---
+title: RSVP Flow
+description: Attendee guide — RSVP with magic links, no account required.
+---
+
+# RSVP Flow
+
+The attendee experience is the joy surface. The design principle: **no account,
+no password, no profile. Email + magic-link = session.** The target is
+time-to-RSVP under 60 seconds on a mobile phone.
+
+## How RSVP works
+
+### 1. Attendee finds an event
+
+The attendee navigates to the event page:
+
+```
+GET /events/{group_key}/{event_id}
+```
+
+The page shows the event title, description, time, location, RSVP count, and
+an RSVP form. If the event has tickets, those are shown too.
+
+### 2. Attendee submits RSVP
+
+The attendee enters their email (and optionally their name) in the RSVP form:
+
+```
+POST /events/{group_key}/{event_id}/rsvp
+Form data: email=attendee@example.com, name=Jane
+```
+
+The server:
+1. Validates the email (3-256 chars, valid UTF-8)
+2. Verifies the event exists
+3. Generates a 32-char hex magic-link token
+4. Stores the RSVP with `confirmed = false`
+5. Returns an HTMX fragment confirming the RSVP was received
+
+### 3. Attendee confirms via magic link
+
+The magic link is at `/rsvp/{token}`. In v0, the link is logged to the server
+console (email sending is not yet wired). The attendee clicks the link:
+
+```
+GET /rsvp/{token}
+```
+
+This shows the RSVP confirmation page with the event title and a "Confirm"
+button.
+
+### 4. Attendee confirms
+
+```
+POST /rsvp/{token}/confirm
+```
+
+The server:
+1. Looks up the RSVP by token
+2. Sets `confirmed = true`
+3. Returns an HTMX fragment showing "RSVP confirmed"
+
+### 5. Managing RSVPs
+
+Attendees can view all their RSVPs at:
+
+```
+GET /my-rsvps?email=attendee@example.com
+```
+
+This shows all upcoming RSVPs for that email, with cancel buttons.
+
+### 6. Cancelling an RSVP
+
+```
+POST /my-rsvps/cancel
+Form data: email, group_key, event_id
+```
+
+The RSVP is cancelled (deleted from the store).
+
+## Magic-link design
+
+| Property | Value |
+|---|---|
+| Token format | 32-char hex (16 random bytes, hex-encoded) |
+| Token storage | SQLite, mapped to email + event |
+| Token lifetime | Until RSVP is cancelled (no expiry in v0) |
+| Re-RSVP | Returns existing RSVP with fresh token (no duplicates) |
+| Confirmation | Token → RSVP lookup → set `confirmed = true` |
+
+### Why magic links?
+
+The magic-link flow exists to minimize **time-to-RSVP**. The design constraint
+is under 60 seconds from "I want to go" to "I'm going" on a phone. Requiring
+an account, a password, and a profile would add friction that violates this
+constraint.
+
+## What the RSVP flow does NOT do (v0)
+
+- **Email sending** — the magic link is generated and logged, but not emailed.
+  In production, a transactional email service would deliver the link.
+- **SMS** — no SMS notifications.
+- **Push notifications** — no push notifications (by design — no "engagement"
+  notifications are a product constraint, not a gap).
+
+## The "no dark patterns" principle
+
+The RSVP flow is designed around negative constraints:
+
+- No "only 3 spots left!" countdown timers
+- No "14 people are looking at this event right now"
+- No pre-checked boxes
+- No confirmshaming ("No, I don't want to attend this great event")
+- No manufactured urgency
+
+These are product constraints. Violating any of them is a bug.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **RSVP flow (web, for humans):**
+  1. `POST /events/{group_key}/{event_id}/rsvp` — form fields: `email`, `name`
+     → generates magic-link token, returns HTMX fragment
+  2. `GET /rsvp/{token}` — shows confirmation page
+  3. `POST /rsvp/{token}/confirm` — confirms the RSVP
+  
+  **RSVP management:**
+  - `GET /my-rsvps?email={email}` — list all RSVPs for an email
+  - `POST /my-rsvps/cancel` — cancel RSVP (form: `email`, `group_key`, `event_id`)
+  
+  **Token format:** 32-char hex string (16 random bytes)
+  
+  **RSVP record shape:**
+  ```json
+  {
+    "group_key": "0x...",
+    "event_id": "evt-...",
+    "user_email": "attendee@example.com",
+    "user_name": "Jane",
+    "token": "a1b2c3...",
+    "confirmed": false,
+    "created_at": 1234567890
+  }
+  ```
+  
+  **No auth required** — email is the identity. No password, no account.
+  Magic-link token is the session.
+</Callout>

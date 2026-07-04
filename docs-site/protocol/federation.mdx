@@ -1,0 +1,196 @@
+---
+title: Federation
+description: How federation works — syncer, WireGuard mesh, bootstrap, live streaming, and convergence.
+---
+
+# Federation
+
+Federation is what makes the protocol actually federated. Hosts talk to each
+other over a private WireGuard mesh, synchronizing group state via the
+protocol's replication primitives. No central server. No public federation
+API. The federation surface is not the client attack surface.
+
+## Two-phase sync
+
+The federation syncer (`internal/federation/syncer.go`) operates in two phases:
+
+### 1. Bootstrap (cold mirror)
+
+When a host first discovers a group it wants to mirror, it pulls the peer's
+entire transition log via `GetLog` (paginated) and replays each transition
+into the local state.
+
+```
+Host A                          Host B (peer)
+  │                               │
+  │  GetLog(group_key, cursor=0)  │
+  │──────────────────────────────►│
+  │  ← transitions[0..99]         │
+  │  next_cursor=100              │
+  │                               │
+  │  Apply each transition        │
+  │  (signature verify +          │
+  │   state machine check)        │
+  │                               │
+  │  GetLog(group_key, cursor=100)│
+  │──────────────────────────────►│
+  │  ← transitions[100..199]      │
+  │  next_cursor=200              │
+  │                               │
+  │  ... until next_cursor=0      │
+  │  (no more data)               │
+  │                               │
+  │  Verify: GetSnapshot           │
+  │──────────────────────────────►│
+  │  ← snapshot root               │
+  │  Compare local root vs peer    │
+  │  ✓ match                       │
+```
+
+**Idempotent:** re-running Bootstrap on an already-synced state is safe.
+Duplicates are rejected by `Apply`'s prior-state hash check.
+
+**Resumable:** if the local state already has some transitions, Bootstrap
+resumes from the local transition count (`since_index = local count`) to
+avoid re-applying.
+
+### 2. Live (hot mirror)
+
+After bootstrap, the host opens a `Subscribe` stream to receive new
+transitions in real-time.
+
+```
+Host A                          Host B (peer)
+  │                               │
+  │  Subscribe(group_key,         │
+  │    since_index=local_count)    │
+  │──────────────────────────────►│
+  │                               │
+  │  ← TransitionEvent {          │
+  │    transition,                │
+  │    new_state_root,            │
+  │    transition_index,          │
+  │    group_key                  │
+  │  }                            │
+  │                               │
+  │  Apply transition             │
+  │  ✓                            │
+  │                               │
+  │  ← TransitionEvent { ... }    │
+  │  ... (stream continues)        │
+  │                               │
+  │  ✗ stream error               │
+  │  (reconnect in 5s)            │
+  │  Resume from local_count      │
+  │──────────────────────────────►│
+  │  ← replay missed + live        │
+```
+
+**Auto-reconnect:** on stream errors, the syncer reconnects after a delay
+(default 5s), resuming from the local transition count to recover any missed
+events.
+
+### 3. Verify (integrity check)
+
+After bootstrap, the host calls `GetSnapshot` on the peer and compares the
+peer's state root against the local state root. If they differ, the local
+state has diverged — either due to a bug, a fork, or a malicious peer.
+
+## Security model
+
+The syncer does NOT trust the peer. Every transition is verified by `Apply`:
+
+- **Signature verification:** Ed25519 multisig against the group's steward set
+- **State machine validation:** prior-state hash chain, transition preconditions
+- **Equivocation detection:** (steward, prior_state) deduplication
+
+A malicious peer can only **omit** transitions, not inject fake ones. Omission
+is detectable via the `Verify` root comparison.
+
+## WireGuard mesh transport
+
+Server-to-server traffic flows over a userspace WireGuard overlay. The overlay
+IP space is private to the federation — nothing about the federation service
+is addressable from the public internet.
+
+| Property | Value |
+|---|---|
+| Wire format | Custom protocol over WireGuard |
+| Encryption | WireGuard (Noise IK) |
+| Key type | X25519 per host |
+| Reachable from | Private mesh only |
+| Requires root | No (userspace WireGuard via `golang.zx2c4.com/wireguard`) |
+| NAT traversal | Supported (mesh topology, no specific network required) |
+
+### Operational implication
+
+A host runs two listeners:
+
+1. A public ConnectRPC server (HTTPS) for clients
+2. A WireGuard interface participating in the federation mesh, with a static private IP
+
+## Configuration
+
+Federation sync is controlled by three environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `HOSTD_PEERS` | _(empty)_ | Comma-separated peer URLs to federate from |
+| `HOSTD_SYNC_BOOTSTRAP` | `true` | Bootstrap group state from peers on startup |
+| `HOSTD_SYNC_LIVE` | `true` | Maintain live Subscribe streams after bootstrap |
+
+### Example
+
+```bash
+export HOSTD_PEERS="http://phoenix:8080,http://saltlake:8080"
+export HOSTD_SYNC_BOOTSTRAP=true
+export HOSTD_SYNC_LIVE=true
+```
+
+The daemon creates one `Syncer` per peer. Each syncer bootstraps in a goroutine,
+then starts a live stream. The host becomes a mirror of the group state from
+each peer's perspective.
+
+## Federation peer discovery
+
+Each host's `/.well-known/federation` endpoint includes a `federation_peers`
+field listing other hosts it knows about. An AI agent (or another host) can
+crawl the federation by:
+
+1. Start at any known host
+2. Read `/.well-known/federation` to get `federation_peers`
+3. Repeat for each peer, building a graph of all hosts
+
+This is the same model as Fediverse instance discovery — no central registry,
+just peer-to-peer knowledge.
+
+## DDIL resilience
+
+The federation must survive Vegas-to-Phoenix flakiness. The simulator models
+DDIL (Denied/Disrupted/Intermittent/Limited) conditions on the mesh as a
+first-class concern. See `sim/ddil.go` for the fault profiles.
+
+A federation that only works on a healthy datacenter LAN is not a federation.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Federation sync model:**
+  - Phase 1 (Bootstrap): `GetLog(group_key, since_cursor=N, limit=100)` paginated
+  - Phase 2 (Live): `Subscribe(group_key, since_index=N)` server-streaming
+  - Phase 3 (Verify): `GetSnapshot(group_key)` → compare state roots
+  
+  **Security:** Peer is untrusted. Every transition verified by Apply (signatures + state machine).
+  Malicious peer can only omit, not inject.
+  
+  **Transport:** WireGuard mesh (X25519, Noise IK, private overlay). NOT public internet.
+  
+  **Config vars:**
+  - `HOSTD_PEERS`: comma-separated peer URLs
+  - `HOSTD_SYNC_BOOTSTRAP`: "true" (default) — bootstrap on startup
+  - `HOSTD_SYNC_LIVE`: "true" (default) — live stream after bootstrap
+  
+  **Peer discovery:** Crawl `/.well-known/federation` → `federation_peers[]` recursively.
+  
+  **Reconnect:** 5s default delay. Resumes from local transition count (missed events recovered).
+</Callout>

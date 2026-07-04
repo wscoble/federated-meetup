@@ -1,0 +1,73 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Federated Meetup",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.png",
+  "colors": {
+    "primary": "#2563eb",
+    "light": "#3b82f6",
+    "dark": "#1e40af"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "index",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "protocol/overview",
+              "protocol/state-machine",
+              "protocol/identity",
+              "protocol/federation",
+              "protocol/rpc-reference",
+              "protocol/wire-format"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/self-host",
+              "guides/create-event",
+              "guides/rsvp-flow",
+              "guides/ticketing",
+              "guides/federation-setup",
+              "guides/calendar-export"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "api-reference/connectrpc",
+              "api-reference/mcp-tools",
+              "api-reference/discovery-endpoints",
+              "api-reference/web-api"
+            ]
+          },
+          {
+            "group": "AI Agents",
+            "pages": [
+              "ai-agent-guide"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "social": {
+      "github": "https://github.com/sscoble/federated-meetup"
+    }
+  }
+}

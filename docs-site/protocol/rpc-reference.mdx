@@ -1,0 +1,428 @@
+---
+title: RPC Reference
+description: All 11 ConnectRPC RPCs with request/response schemas and examples.
+---
+
+# RPC Reference
+
+The federated-meetup protocol exposes **11 RPCs** via ConnectRPC over HTTP/2.
+The service is defined in `proto/federated_meetup/v1/rpc.proto` and implemented
+in `internal/host/service.go`.
+
+**Base URL:** `{HOSTD_BASE_URL}/api/v1/` (e.g., `http://localhost:8091/api/v1/`)
+
+**Transport:** ConnectRPC over HTTP/2. JSON or protobuf wire format.
+
+**Auth model:** Read endpoints are unauthenticated. Write endpoints require
+Ed25519 multisig signed transitions (not bearer tokens).
+
+## Reads (unauthenticated)
+
+### GetGroup
+
+Returns the current state snapshot, steward set, and threshold for a group.
+
+```json
+// Request
+{
+  "group_key": { "raw": "base64-or-hex-bytes" }
+}
+// or
+{
+  "canonical_name": "vegas-programmers"
+}
+```
+
+```json
+// Response
+{
+  "snapshot": {
+    "root": { "hash": "..." },
+    "entries": [
+      { "key": "canonical_name", "value": "dmVnYXMtcHJvZ3JhbW1lcnM=" },
+      { "key": "display_name", "value": "VGVnYXMgUHJvZ3JhbW1lcnM=" }
+    ]
+  },
+  "stewards": [
+    { "raw": "..." }
+  ],
+  "threshold": 2
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_key` | PublicKey | One of | 32-byte Ed25519 public key |
+| `canonical_name` | string | One of | Human-readable group name |
+
+**v0 note:** `canonical_name` resolution returns `CodeUnimplemented`. Use `group_key`.
+
+---
+
+### GetEvent
+
+Returns a single event by (group_key, event_id).
+
+```json
+// Request
+{
+  "group_key": { "raw": "..." },
+  "event_id": "evt-2026-07-10"
+}
+```
+
+```json
+// Response
+{
+  "event": {
+    "event_id": "evt-2026-07-10",
+    "title": "Vegas Programmers Weekly",
+    "starts_at": "2026-07-11T02:00:00Z",
+    "location": "Goldwell Open Air Museum, Las Vegas, NV",
+    "capacity": 50,
+    "paid": false
+  },
+  "rsvps": [],
+  "cancelled": false
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_key` | PublicKey | Yes | 32-byte group public key |
+| `event_id` | string | Yes | Event identifier |
+
+---
+
+### ListEvents
+
+Pages through a group's event log (newest first).
+
+```json
+// Request
+{
+  "group_key": { "raw": "..." },
+  "cursor": "0",
+  "page_size": 50
+}
+```
+
+```json
+// Response
+{
+  "events": [
+    {
+      "event_id": "evt-001",
+      "title": "Vegas Programmers Weekly",
+      "starts_at": "2026-07-11T02:00:00Z",
+      "location": "Goldwell Open Air Museum",
+      "capacity": 50,
+      "paid": false
+    }
+  ],
+  "next_cursor": "3"
+}
+```
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `group_key` | PublicKey | Yes | — | 32-byte group public key |
+| `cursor` | string | No | `""` | Offset (string-encoded index) |
+| `page_size` | uint32 | No | 50 | Max 200 |
+
+---
+
+### ListGroups
+
+Lists all groups hosted by this host.
+
+```json
+// Request
+{
+  "name_contains": "vegas",
+  "page_size": 50
+}
+```
+
+```json
+// Response
+{
+  "groups": [
+    {
+      "group_key": { "raw": "..." },
+      "canonical_name": "vegas-programmers",
+      "display_name": "Vegas Programmers"
+    }
+  ],
+  "next_cursor": ""
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name_contains` | string | No | Substring filter on canonical name |
+| `page_size` | uint32 | No | Default 50, max 200 |
+
+---
+
+### ResolveName
+
+Resolves a canonical name to the group key + hosting URLs.
+
+```json
+// Request
+{
+  "canonical_name": "vegas-programmers"
+}
+```
+
+```json
+// Response
+{
+  "group_key": { "raw": "..." },
+  "hosts": ["my-host"]
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `canonical_name` | string | Yes | Canonical name to resolve |
+
+**v0 note:** Returns the FIRST hosted group + this host's name. A future cycle
+will add a proper name directory.
+
+---
+
+### GetLog
+
+Returns a paginated slice of the group's transition log.
+
+```json
+// Request
+{
+  "group_key": { "raw": "..." },
+  "since_cursor": 0,
+  "limit": 100
+}
+```
+
+```json
+// Response
+{
+  "transitions": [
+    {
+      "type": "TRANSITION_TYPE_CREATE_GROUP",
+      "prior_state": { "hash": "..." },
+      "hlc": "...",
+      "branch_id": 0,
+      "steward_signatures": [...]
+    }
+  ],
+  "next_cursor": 100,
+  "total": 250
+}
+```
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `group_key` | PublicKey | Yes | — | 32-byte group public key |
+| `since_cursor` | uint64 | No | 0 | Start index |
+| `limit` | uint32 | No | 100 | Max 1000 (server-side cap) |
+
+---
+
+### GetSnapshot
+
+Returns the current state snapshot (or a snapshot at a specific root if requested).
+
+```json
+// Request
+{
+  "group_key": { "raw": "..." },
+  "root": null
+}
+```
+
+```json
+// Response
+{
+  "snapshot": {
+    "root": { "hash": "..." },
+    "entries": [
+      { "key": "canonical_name", "value": "..." }
+    ]
+  },
+  "transition_index": 250
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_key` | PublicKey | Yes | 32-byte group public key |
+| `root` | StateRoot | No | Specific root to look up (v0: returns `Unimplemented` if set) |
+
+**v0 note:** Only current-head snapshots. Root-keyed lookups return `CodeUnimplemented`.
+
+---
+
+### Subscribe (streaming)
+
+Server-streaming RPC. Receives live transition events for a group.
+
+```json
+// Request
+{
+  "group_key": { "raw": "..." },
+  "since_index": 100
+}
+```
+
+```json
+// Stream events (each event):
+{
+  "transition": { ... },
+  "new_state_root": { "hash": "..." },
+  "transition_index": 101,
+  "group_key": { "raw": "..." }
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_key` | PublicKey | Yes | 32-byte group public key |
+| `since_index` | uint64 | No | If >0, replays transitions with index > since_index before going live |
+
+**Behavior:** If `since_index` is non-zero, transitions already in the log with
+index > since_index are replayed before live streaming begins. This gives
+crash-recovery semantics.
+
+---
+
+## Writes (require signed transitions)
+
+### SubmitTransition
+
+Applies a steward-signed transition to a group's state machine.
+
+```json
+// Request
+{
+  "group_key": { "raw": "..." },
+  "transition": {
+    "type": "TRANSITION_TYPE_CREATE_EVENT",
+    "prior_state": { "hash": "..." },
+    "hlc": "...",
+    "branch_id": 0,
+    "create_event": {
+      "event_id": "evt-001",
+      "title": "Vegas Programmers Weekly",
+      "starts_at": "2026-07-11T02:00:00Z",
+      "location": "Goldwell Open Air Museum",
+      "capacity": 50,
+      "paid": false
+    },
+    "steward_signatures": [...]
+  }
+}
+```
+
+```json
+// Response
+{
+  "new_snapshot": {
+    "root": { "hash": "..." },
+    "entries": [...]
+  },
+  "transition_index": 251
+}
+```
+
+**Verification:** The transition is verified by `internal/group`:
+- Cosigner signatures (Ed25519 multisig)
+- Multisig threshold (M-of-N)
+- Equivocation check
+- State invariants
+
+**Error codes:**
+- `CodeInvalidArgument` — nil request, nil group_key, nil transition, invalid transition
+- `CodeNotFound` — group not hosted here
+- `CodeFailedPrecondition` — apply failed (bad prior_state, rate limited, etc.)
+
+---
+
+### SubmitUserAction
+
+Applies a user-signed action (RSVP, ATTEST, CANCEL_RSVP).
+
+**v0 status:** Stub — returns `CodeUnimplemented`. Wiring user-signed actions
+into the apply switch is a future cycle.
+
+---
+
+### SubmitEvidence
+
+Receives equivocation evidence from a peer host. Stores it for
+`REMOVE_STEWARD` submission.
+
+```json
+// Request (EvidenceEnvelope)
+{
+  "group_key": { "raw": "..." },
+  "steward_key": { "raw": "..." },
+  "prior_state": { "hash": "..." },
+  "transition_a": { ... },
+  "transition_b": { ... }
+}
+```
+
+```json
+// Response (Ack)
+{
+  "ok": true,
+  "detail": "evidence stored"
+}
+```
+
+**v0 note:** Stores the evidence but does NOT auto-submit `REMOVE_STEWARD` —
+that requires the host to hold steward keys to sign the slash transition.
+
+---
+
+## Error codes
+
+| Code | Meaning |
+|---|---|
+| `CodeInvalidArgument` | Nil request, missing required field, invalid encoding |
+| `CodeNotFound` | Group or event not found on this host |
+| `CodeUnimplemented` | Feature not wired in v0 (canonical_name resolution, SubmitUserAction, snapshot-by-root) |
+| `CodeFailedPrecondition` | State machine rejected the transition (bad prior_state, rate limited, equivocation) |
+| `CodePermissionDenied` | (Product layer) Organizer token not valid for the target group |
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **11 RPCs:**
+  | RPC | Method | Auth | Streaming |
+  |---|---|---|---|
+  | `GetGroup` | unary | none | no |
+  | `GetEvent` | unary | none | no |
+  | `ListEvents` | unary | none | no |
+  | `ListGroups` | unary | none | no |
+  | `ResolveName` | unary | none | no |
+  | `GetLog` | unary | none | no |
+  | `GetSnapshot` | unary | none | no |
+  | `Subscribe` | server-stream | none | yes |
+  | `SubmitTransition` | unary | Ed25519 multisig | no |
+  | `SubmitUserAction` | unary | user sig | no (v0: Unimplemented) |
+  | `SubmitEvidence` | unary | peer | no |
+  
+  **HTTP paths (ConnectRPC):** `{base}/api/v1/{method-name}` (kebab-case)
+  Example: `POST /api/v1/get-group`, `POST /api/v1/list-events`
+  
+  **Pagination:** cursor (string) + page_size (uint32). Empty cursor = first page.
+  `next_cursor` empty = last page. GetLog uses numeric cursor (since_cursor uint64).
+  
+  **PublicKey encoding:** `{ "raw": "base64-bytes" }` (32 bytes for Ed25519)
+  
+  **OpenAPI spec available at:** `GET /openapi.json`
+</Callout>

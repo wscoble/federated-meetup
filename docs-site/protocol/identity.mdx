@@ -1,0 +1,158 @@
+---
+title: Identity
+description: Groups, users, stewards, and cryptographic keys in the federated-meetup protocol.
+---
+
+# Identity
+
+The protocol defines three identity types — groups, users, and stewards —
+each with distinct cryptographic properties and roles.
+
+## Group identity
+
+Each group has an **Ed25519 keypair**. The public key is the group's canonical
+identifier on the network — a 32-byte value, typically represented as a
+hex-encoded string (e.g., `0xaaaa...`).
+
+The private key is held by the group's stewards, distributed across them with a
+**threshold signature scheme**. The group's stewards choose the threshold at
+creation time (e.g., 2-of-3, 3-of-5, 5-of-7). The protocol does not pick — it
+enforces whatever threshold the group specifies.
+
+### Key custody
+
+The private key is the most security-critical object in the system. The
+protocol specifies a wallet-style key-custody model:
+
+- **Cold storage** for the primary key (offline, hardware-backed)
+- **Hot steward signatures** for routine operations (each steward signs with
+  their own Ed25519 key; the host verifies that at least `threshold` distinct
+  stewards have signed)
+
+The protocol does not require a specific custody implementation.
+
+### Group key in config
+
+The host daemon reads the group key from the `HOSTD_GROUP_KEY` environment
+variable:
+
+```bash
+export HOSTD_GROUP_KEY="0x$(python3 -c 'print("aa" * 32)')"
+```
+
+This is a hex-encoded 32-byte Ed25519 public key. The private key is NOT held
+by the host — it's held by the stewards.
+
+## User identity
+
+Each user has an **Ed25519 keypair**. The public key is the user's canonical
+identifier. Users can hold multiple identities (work, personal, anonymous for
+sensitive meetups) — the protocol does not require a single identity per human.
+
+### Portability
+
+A user's identity is portable across hosts. If a user is on Host A and wants
+to attend an event on a group served by Host B, the user does not need an
+account on Host B. The user signs the RSVP with their private key, the RSVP
+travels with the signature, and Host B can verify the signature against the
+user's public key.
+
+### What the protocol does for users
+
+- Verifies signatures
+- Resolves user identities across hosts
+- Resolves groups across hosts
+- Routes RSVPs, attestations, and other signed messages to the right group and host
+
+### What the protocol does NOT do for users
+
+- Recover lost keys
+- Moderate abusive users
+- Provide customer support
+- Provide discovery or recommendations
+
+## Steward identity
+
+A steward is a **user identity** that has been added to a group's steward set.
+The group's state machine records steward additions, removals, and threshold
+changes as signed transitions.
+
+The protocol does not distinguish "steward" from "user" at the cryptographic
+level. A steward is a user identity with a signed role-attestation from the
+group. The distinction is a role, not a different key type.
+
+### Steward operations
+
+| Operation | Transition type | Who signs |
+|---|---|---|
+| Add a steward | `ADD_STEWARD` | M-of-N existing stewards |
+| Remove a steward | `REMOVE_STEWARD` | M-of-N existing stewards |
+| Change threshold | `CHANGE_THRESHOLD` | M-of-N existing stewards |
+| Create event | `CREATE_EVENT` | M-of-N stewards |
+| Cancel event | `CANCEL_EVENT` | M-of-N stewards |
+| Migrate group | `MIGRATE` | M-of-N stewards |
+| Fork group | `FORK` | Single steward (protocol minimum) |
+
+### Key rotation
+
+A steward rotates their Ed25519 key by sending an `ADD_STEWARD` (with the new
+key) + `REMOVE_STEWARD` (with the old key) transition pair. This is a Layer 2
+operation and has zero effect on the WireGuard mesh (Layer 1) or TLS (Layer 3).
+
+## Three independent key domains
+
+The federation has three cryptographic layers with three independent key
+domains. Each layer answers a different question and uses keys that are not
+derivable from one another.
+
+| # | Layer | Question | Key type | Wire |
+|---|---|---|---|---|
+| 1 | WireGuard mesh | "Is this host a trusted peer?" | X25519 per host | UDP, host↔host |
+| 2 | Multisig governance | "Did M-of-N stewards authorize this?" | Ed25519 per steward | Inside WG tunnel |
+| 3 | Client ConnectRPC + TLS | "Is this client authorized?" | Server TLS cert | HTTPS, public |
+
+**Keys never derive from one another.** A host's WireGuard private key, a
+steward's Ed25519 private key, and a host's TLS private key are three
+independent random keypairs. They are not derived from each other, not
+HKDF-derivative, not cross-signed.
+
+**Implementation rule:** No code path may accept a key from one layer as input
+to another. `internal/crypto/` exposes three types (`WireGuardKey`,
+`StewardKey`, `TLSKey`) that refuse to interconvert at the type level.
+
+## Discovery
+
+Groups are discoverable by human-readable names (e.g., `vegas-programmers`).
+The protocol defines a thin discovery layer:
+
+- Every group has at least one **canonical name** (a string)
+- A name is resolved to a group identifier through a **public directory**
+- A public directory is a service that maps names to group identifiers
+- A public directory is itself a host (it speaks the protocol)
+- There can be many directories — no single party controls the namespace
+
+The `ResolveName` RPC resolves a canonical name to a group key + hosting URLs.
+See [RPC Reference](/protocol/rpc-reference) for details.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Identity types:**
+  - Group: Ed25519 keypair, public key = 32-byte hex string (canonical ID)
+  - User: Ed25519 keypair, public key = canonical ID, portable across hosts
+  - Steward: a user identity added to a group's steward set via signed transition
+  
+  **Key domains (3 independent, non-derivable):**
+  1. X25519 (WireGuard mesh transport)
+  2. Ed25519 per steward (state transition signatures)
+  3. TLS (client-facing HTTPS)
+  
+  **Threshold signature:** Group specifies M-of-N at creation. Host verifies
+  at least M distinct steward signatures per transition. v1 uses multisig
+  envelope (each steward signs independently); FROST threshold sig is a
+  future cycle.
+  
+  **Name resolution:** `ResolveName(canonical_name) → { group_key, hosts[] }`
+  
+  **Config var for group key:** `HOSTD_GROUP_KEY` (hex, 32 bytes, required)
+</Callout>

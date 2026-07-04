@@ -1,0 +1,153 @@
+---
+title: Protocol Overview
+description: The open federated-meetup protocol — groups, stewards, transitions, and federation.
+---
+
+# Protocol Overview
+
+The federated-meetup protocol is the open cryptographic substrate that any host
+can implement to participate in the federation. It is free as in speech. It
+does not encode commercial policy, UX decisions, or pricing. It is the
+foundation on which hosts and products are built.
+
+## The model in one paragraph
+
+A **group** is a sovereign object identified by a cryptographic keypair. The
+group's state (member list, event history, steward set, fork history, signed
+attestations) is a replicated state machine, addressable by the group's
+public key. Any number of **hosts** can serve a group by storing a copy of the
+state and providing a UI on top. A **user** has a cryptographic identity, lives
+on at least one host, and can interact with any group in the federation
+regardless of which host serves the group. **Stewards** are the humans who
+control the group's keypair. **Forks** are new sovereign groups whose state
+diverges from a parent group at a chosen snapshot. **Mirrors** are read-only
+copies of a group's state hosted by a different host.
+
+## Core concepts
+
+### Groups
+
+Each group has an Ed25519 keypair. The **public key** is the group's canonical
+identifier on the network — a 32-byte hex string. The private key is held by
+the group's stewards, distributed across them with a threshold signature
+scheme (e.g., 2-of-3, 3-of-5 — the group's stewards choose at creation time).
+
+The private key is the source of truth for *who speaks for the group*. If
+2-of-3 stewards must sign a state transition, the protocol enforces that.
+
+### Users
+
+Each user has an Ed25519 keypair. The public key is the user's canonical
+identifier. Users can hold multiple identities (work, personal, anonymous).
+A user's identity is portable across hosts — if a user is on Host A and wants
+to attend an event on a group served by Host B, the user signs the RSVP with
+their private key, and Host B can verify the signature against the user's
+public key.
+
+### Stewards
+
+A steward is a user identity that has been added to a group's steward set.
+The group's state machine records steward additions, removals, and threshold
+changes as signed transitions. The protocol does not distinguish "steward"
+from "user" at the cryptographic level — a steward is a user identity with a
+signed role-attestation from the group.
+
+### Hosts
+
+A host is a service that stores a group's state and serves it to clients. The
+protocol does not require any specific host architecture — a host may be a
+single server, a replicated database, a CDN, a peer-to-peer node, or a
+self-hosted Raspberry Pi.
+
+### Transitions
+
+State changes are **signed transitions** applied to the group's state machine.
+The protocol defines canonical transition types:
+
+| Transition | Description |
+|---|---|
+| `CREATE_GROUP` | Initial state, sets steward set, threshold, group name, metadata |
+| `ADD_STEWARD` | Adds a user identity to the steward set |
+| `REMOVE_STEWARD` | Removes a user identity from the steward set |
+| `CHANGE_THRESHOLD` | Changes the steward signing threshold |
+| `ADD_MEMBER` | Adds a user to the group's member list |
+| `REMOVE_MEMBER` | Removes a user from the group's member list |
+| `CREATE_EVENT` | Creates a new event (title, time, location, capacity, free/paid) |
+| `UPDATE_EVENT` | Modifies event fields |
+| `CANCEL_EVENT` | Marks an event as cancelled |
+| `RSVP` | A user signing that they will attend an event |
+| `CANCEL_RSVP` | A user retracting an RSVP |
+| `ATTEST` | A signed attestation from one identity to another |
+| `BRANCH_CREATE` | Creates a new branch within the same group |
+| `FORK` | Creates a new sovereign group from a snapshot |
+| `MIGRATE` | Moves a group's hosting to a different host |
+
+Hosts and clients may add custom transition types for product features, but
+those types are ignored or shown as opaque data by hosts that don't implement
+them.
+
+### Forks and branches
+
+A group's state is a **forest of branches**, each branch an independent state
+machine. Branches share the group's keypair but have independent state, logs,
+and equivocation tracking.
+
+| Operation | Use case | What's shared | What's new |
+|---|---|---|---|
+| **BRANCH_CREATE** | "I disagree with the direction but still want to be in this group" | Group keypair, steward set, threshold | New branch ID + isolated state machine |
+| **FORK** | "This group is captured/hostile/dead — I'm taking the history and leaving" | Nothing — full sovereign split | New keypair, new stewards, new threshold, new group identity |
+
+### Migration
+
+A group can migrate from one host to another via a `MIGRATE` transition, signed
+by the steward threshold. This prevents host lock-in — a group can always leave
+with full state. The old host can continue serving as a mirror after migration.
+
+### Mirrors
+
+A mirror is a host that stores a read-only (or eventually-consistent write) copy
+of a group's state. Mirrors serve performance (geographic distribution) and
+resilience (if the primary host goes down, mirrors still serve read state).
+
+## What the protocol does NOT define
+
+- Event location format (freeform string vs structured address)
+- Ticketing/pricing format
+- Reputation aggregation format
+- Group descriptions, member profiles, photo storage
+- Any UX decision
+
+These are product concerns. Hosts and clients may define their own formats
+and exchange them as opaque blobs within the state.
+
+## Learn more
+
+- [State Machine](/protocol/state-machine) — Branches, transitions, HLC ordering
+- [Identity](/protocol/identity) — Groups, users, stewards, keys
+- [Federation](/protocol/federation) — Syncer, mesh, convergence
+- [RPC Reference](/protocol/rpc-reference) — All 11 RPCs
+- [Wire Format](/protocol/wire-format) — Protobuf encoding, canonical signing
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **Protocol identifier:** `federated-meetup/v1`
+  
+  **Core entities:**
+  - Group: identified by Ed25519 public key (32-byte hex string)
+  - User: identified by Ed25519 public key, portable across hosts
+  - Steward: a user identity with a signed role-attestation from a group
+  - Host: stores and serves group state; identified by canonical name
+  
+  **Transition types (15 canonical):** CREATE_GROUP, ADD_STEWARD, REMOVE_STEWARD,
+  CHANGE_THRESHOLD, ADD_MEMBER, REMOVE_MEMBER, CREATE_EVENT, UPDATE_EVENT,
+  CANCEL_EVENT, RSVP, CANCEL_RSVP, ATTEST, BRANCH_CREATE, FORK, MIGRATE
+  
+  **Branch model:** Forest of branches per group. Branch 0 = genesis.
+  Each branch has independent KV state, transition log, equivocation log.
+  Branches share the group's keypair but not state mutations.
+  
+  **Key insight for AI agents:** Read endpoints are unauthenticated. Write
+  endpoints require Ed25519 multisig signatures from the group's stewards
+  (threshold-of-N). No bearer tokens, no API keys.
+</Callout>

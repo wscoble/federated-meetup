@@ -1,0 +1,219 @@
+---
+title: ConnectRPC Client Guide
+description: How to build a ConnectRPC client for the federated-meetup protocol.
+---
+
+# ConnectRPC Client Guide
+
+The federated-meetup protocol uses ConnectRPC over HTTP/2. ConnectRPC is a
+modern RPC framework that works with standard HTTP/2 and supports both JSON
+and protobuf wire formats. Anyone can implement a client — no SDK required.
+
+## Quick start (Go)
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "net/http"
+
+    "connectrpc.com/connect"
+    pb "github.com/sscoble/federated-meetup/proto/federated_meetup/v1"
+    "github.com/sscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
+)
+
+func main() {
+    // Create a ConnectRPC client
+    client := federatedmeetupv1connect.NewHostServiceClient(
+        http.DefaultClient,
+        "http://localhost:8091",
+    )
+
+    // List all groups on this host
+    resp, err := client.ListGroups(context.Background(),
+        connect.NewRequest(&pb.ListGroupsRequest{}))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for _, g := range resp.Msg.GetGroups() {
+        log.Printf("Group: %s (key: %x)", g.GetCanonicalName(), g.GetGroupKey().GetRaw())
+    }
+}
+```
+
+## Protocol basics
+
+### Service name
+
+The ConnectRPC service is `federatedmeetupv1connect.HostService`. The service
+path is auto-generated from the package name.
+
+### Wire formats
+
+ConnectRPC supports three content types:
+
+| Content-Type | Format | Use case |
+|---|---|---|
+| `application/json` | JSON | Quick prototyping, curl, AI agents |
+| `application/proto` | Protobuf binary | Maximum efficiency |
+| `application/grpc` | gRPC wire format | gRPC-compatible clients |
+
+### HTTP methods
+
+All ConnectRPC RPCs use `POST` with the method name in the URL path:
+
+```
+POST /api/v1/get-group
+POST /api/v1/list-events
+POST /api/v1/subscribe  (server-streaming)
+```
+
+### Using curl
+
+```bash
+# List groups (JSON)
+curl -X POST http://localhost:8091/api/v1/list-groups \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Get a group (JSON)
+curl -X POST http://localhost:8091/api/v1/get-group \
+  -H "Content-Type: application/json" \
+  -d '{"group_key":{"raw":"AAAA...=="}}'
+
+# List events
+curl -X POST http://localhost:8091/api/v1/list-events \
+  -H "Content-Type: application/json" \
+  -d '{"group_key":{"raw":"AAAA...=="},"page_size":10}'
+```
+
+## Auth model
+
+| Surface | Auth method |
+|---|---|
+| Read RPCs | None (unauthenticated) |
+| Write RPCs | Ed25519 multisig signed transitions |
+| MCP tools | None (unauthenticated) |
+
+Read RPCs (`GetGroup`, `GetEvent`, `ListEvents`, `ListGroups`, `ResolveName`,
+`GetLog`, `GetSnapshot`, `Subscribe`) require no authentication.
+
+Write RPCs (`SubmitTransition`, `SubmitUserAction`, `SubmitEvidence`) require
+the transition to be signed by M-of-N stewards. There are no bearer tokens —
+authentication is cryptographic, not session-based.
+
+## Pagination
+
+List RPCs use cursor-based pagination:
+
+```json
+// Request
+{
+  "cursor": "0",
+  "page_size": 50
+}
+
+// Response
+{
+  "events": [...],
+  "next_cursor": "50"
+}
+```
+
+- Empty cursor = first page
+- `next_cursor` empty = last page
+- `page_size` default 50, max 200 (ListEvents) or 1000 (GetLog)
+
+## Server streaming (Subscribe)
+
+The `Subscribe` RPC is server-streaming. The client opens a long-lived stream
+and receives `TransitionEvent` messages as transitions are applied:
+
+```go
+stream, err := client.Subscribe(context.Background(),
+    connect.NewRequest(&pb.SubscribeRequest{
+        GroupKey:   &pb.PublicKey{Raw: groupKey[:]},
+        SinceIndex: 100, // replay transitions after index 100
+    }))
+if err != nil {
+    log.Fatal(err)
+}
+
+for stream.Receive() {
+    ev := stream.Msg()
+    log.Printf("Transition #%d: type=%v root=%x",
+        ev.GetTransitionIndex(),
+        ev.GetTransition().GetType(),
+        ev.GetNewStateRoot().GetHash())
+}
+```
+
+### Crash recovery
+
+If `since_index` is non-zero, transitions already in the log with
+`index > since_index` are replayed before live streaming begins. This gives
+crash-recovery semantics — a client that disconnected and reconnects with its
+last-seen index gets all missed transitions.
+
+## Error handling
+
+ConnectRPC uses standard gRPC status codes:
+
+| Code | Meaning |
+|---|---|
+| `CodeInvalidArgument` | Nil request, missing required field |
+| `CodeNotFound` | Group or event not found on this host |
+| `CodeUnimplemented` | Feature not wired in v0 |
+| `CodeFailedPrecondition` | State machine rejected the transition |
+| `CodePermissionDenied` | (Product layer) Wrong group scope |
+
+```go
+resp, err := client.GetEvent(ctx, connect.NewRequest(&pb.GetEventRequest{
+    GroupKey: &pb.PublicKey{Raw: groupKey[:]},
+    EventId:  "nonexistent",
+}))
+if err != nil {
+    if connect.CodeOf(err) == connect.CodeNotFound {
+        // event not found
+    }
+}
+```
+
+## Generated code
+
+The generated ConnectRPC Go code is committed to the repository:
+
+- `proto/federated_meetup/v1/federatedmeetupv1connect/rpc.connect.go` — ConnectRPC service handler/client
+- `proto/federated_meetup/v1/rpc.pb.go` — Protobuf message types (requests/responses)
+- `proto/federated_meetup/v1/state.pb.go` — State machine types (Transition, StateSnapshot, etc.)
+
+You do not need `buf` or `protoc` to build. The generated code is importable
+directly.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **ConnectRPC endpoint:** `{base_url}/api/v1/{method}` (POST, kebab-case)
+  
+  **Content types:** `application/json` (recommended for agents), `application/proto`
+  
+  **No auth needed for reads.** Writes require Ed25519 multisig signed transitions.
+  
+  **Example curl (JSON):**
+  ```bash
+  curl -X POST http://host:8091/api/v1/list-groups \
+    -H "Content-Type: application/json" -d '{}'
+  ```
+  
+  **Pagination:** cursor (string) + page_size (uint32). Empty cursor = first page.
+  
+  **Streaming:** Subscribe is server-streaming (HTTP/2 long-lived stream).
+  Use `since_index` for crash recovery (replays missed transitions before live).
+  
+  **OpenAPI spec:** `GET /openapi.json` has full schema for all RPCs.
+  
+  **Error codes:** gRPC standard (InvalidArgument, NotFound, Unimplemented, FailedPrecondition)
+</Callout>

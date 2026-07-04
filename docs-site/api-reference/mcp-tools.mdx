@@ -1,0 +1,281 @@
+---
+title: MCP Tools
+description: MCP server tool definitions for AI assistants — 6 tools for querying federated-meetup hosts.
+---
+
+# MCP Tools
+
+The host exposes an MCP (Model Context Protocol) server at `POST /mcp`. AI
+assistants (Claude, ChatGPT, and others) can connect to the MCP server and
+call tools to query the host's groups and events — no API key, no rate limit,
+no registration.
+
+## Connection
+
+- **Endpoint:** `POST /mcp`
+- **Transport:** MCP streamable-http (JSON-RPC over HTTP)
+- **Library:** `github.com/mark3labs/mcp-go`
+- **Auth:** None (read tools are unauthenticated)
+
+## Tools
+
+The MCP server exposes 6 tools:
+
+### 1. list_groups
+
+List all groups hosted by this host.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name_contains` | string | No | `""` | Substring filter on canonical name |
+| `page_size` | integer | No | 50 | Max 200 |
+
+**Returns:**
+
+```json
+{
+  "groups": [
+    {
+      "group_key": "0xaaa...",
+      "canonical_name": "vegas-programmers",
+      "display_name": "Vegas Programmers"
+    }
+  ],
+  "next_cursor": ""
+}
+```
+
+---
+
+### 2. list_events
+
+List upcoming events for a group.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `group_key` | string | Yes | — | Hex-encoded 32-byte group public key |
+| `page_size` | integer | No | 50 | Max 200 |
+
+**Returns:**
+
+```json
+{
+  "events": [
+    {
+      "event_id": "evt-001",
+      "title": "Vegas Programmers Weekly",
+      "starts_at": "2026-07-11T02:00:00Z",
+      "location": "Goldwell Open Air Museum, Las Vegas, NV",
+      "capacity": 50,
+      "paid": false
+    }
+  ],
+  "next_cursor": ""
+}
+```
+
+---
+
+### 3. get_event
+
+Get details for a single event.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_key` | string | Yes | Hex-encoded 32-byte group public key |
+| `event_id` | string | Yes | The event ID to look up |
+
+**Returns:**
+
+```json
+{
+  "event": {
+    "event_id": "evt-001",
+    "title": "Vegas Programmers Weekly",
+    "starts_at": "2026-07-11T02:00:00Z",
+    "ends_at": "2026-07-11T04:00:00Z",
+    "location": "Goldwell Open Air Museum, Las Vegas, NV",
+    "capacity": 50,
+    "paid": false
+  },
+  "rsvp_count": 23,
+  "cancelled": false
+}
+```
+
+---
+
+### 4. resolve_name
+
+Resolve a canonical name to a group key and the hosts serving it.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `canonical_name` | string | Yes | Canonical name (e.g., "vegas-programmers") |
+
+**Returns:**
+
+```json
+{
+  "group_key": "0xaaa...",
+  "hosts": ["my-host"]
+}
+```
+
+---
+
+### 5. get_group
+
+Get group details. Provide either `group_key` (hex) or `canonical_name`.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_key` | string | One of | Hex-encoded 32-byte group public key |
+| `canonical_name` | string | One of | Canonical name of the group |
+
+**Returns:**
+
+```json
+{
+  "group_key": "0xaaa...",
+  "canonical_name": "vegas-programmers",
+  "display_name": "Vegas Programmers",
+  "steward_count": 3,
+  "threshold": 2,
+  "event_count": 5,
+  "member_count": 150
+}
+```
+
+---
+
+### 6. find_events
+
+Search for events by location and/or interest across all groups on this host.
+This is a host-level search, not federation-wide.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `location` | string | No | Location filter (e.g., "Las Vegas") |
+| `interest` | string | No | Interest keyword (e.g., "programming") |
+| `when` | string | No | Time filter (e.g., "this weekend", "next week") |
+
+**Returns:**
+
+```json
+{
+  "events": [
+    {
+      "event_id": "evt-001",
+      "title": "Vegas Programmers Weekly",
+      "starts_at": "2026-07-11T02:00:00Z",
+      "location": "Goldwell Open Air Museum, Las Vegas, NV",
+      "capacity": 50,
+      "paid": false,
+      "group": "0xaaa...",
+      "url": "https://meetup.example.com/events/evt-001"
+    }
+  ],
+  "count": 1
+}
+```
+
+**Filtering logic:**
+- `location`: case-insensitive substring match on event location
+- `interest`: case-insensitive substring match on event title
+- `when`: simple time-window matching (e.g., "this weekend" = next 2 days)
+
+## JSON-RPC protocol
+
+The MCP server uses JSON-RPC 2.0 framing. Example session:
+
+```json
+// 1. List available tools
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "id": 1
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      { "name": "list_groups", "description": "..." },
+      { "name": "list_events", "description": "..." },
+      { "name": "get_event", "description": "..." },
+      { "name": "resolve_name", "description": "..." },
+      { "name": "get_group", "description": "..." },
+      { "name": "find_events", "description": "..." }
+    ]
+  },
+  "id": 1
+}
+
+// 2. Call a tool
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "find_events",
+    "arguments": {
+      "location": "Las Vegas",
+      "interest": "programming",
+      "when": "this weekend"
+    }
+  },
+  "id": 2
+}
+```
+
+## Why MCP is the moat
+
+meetup.com structurally cannot expose an MCP server without killing their
+walled garden. An MCP server gives AI assistants direct, real-time access to
+their event database — no API key, no rate limit, no platform wall. That is
+the opposite of their business model.
+
+The federation has no walled garden to protect. The data is open by protocol
+design. Every host can expose an MCP server, and every AI assistant can
+connect to every host.
+
+---
+
+<Callout type="info" title="For AI Agents">
+  **MCP endpoint:** `POST /mcp` (JSON-RPC 2.0, streamable-http transport)
+  
+  **6 tools:**
+  | Tool | Required params | Returns |
+  |---|---|---|
+  | `list_groups` | none | groups[] with group_key, canonical_name, display_name |
+  | `list_events` | group_key (hex) | events[] with event_id, title, starts_at, location, capacity |
+  | `get_event` | group_key (hex), event_id | event details + rsvp_count + cancelled |
+  | `resolve_name` | canonical_name | group_key + hosts[] |
+  | `get_group` | group_key OR canonical_name | group details + steward_count + threshold |
+  | `find_events` | location, interest, when (all optional) | events[] matching filters |
+  
+  **No auth.** All tools are read-only and unauthenticated.
+  
+  **group_key format:** hex string, 32 bytes, with or without "0x" prefix.
+  
+  **JSON-RPC call example:**
+  ```json
+  {"jsonrpc":"2.0","method":"tools/call","params":{"name":"find_events","arguments":{"location":"Las Vegas","interest":"programming"}},"id":2}
+  ```
+  
+  **Note:** `find_events` is host-level search only. For federation-wide search,
+  query multiple hosts (discovered via `/.well-known/federation`).
+</Callout>
