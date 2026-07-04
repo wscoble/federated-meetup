@@ -6,9 +6,10 @@ require (
 	connectrpc.com/connect v1.20.0
 	github.com/mark3labs/mcp-go v0.55.1
 	github.com/stripe/stripe-go/v76 v76.25.0
-	golang.org/x/crypto v0.37.0
+	golang.org/x/crypto v0.53.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 	google.golang.org/protobuf v1.36.11
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -22,14 +23,13 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/net v0.39.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	gvisor.dev/gvisor v0.0.0-20250503011706-39ed1f5ac29c // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.53.0 // indirect
 )
