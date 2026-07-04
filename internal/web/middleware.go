@@ -11,8 +11,9 @@ import (
 )
 
 // CSPHeader is the Content-Security-Policy for the web frontend.
-// script-src 'self' allows the vendored htmx.min.js; no inline scripts.
-// style-src 'self' 'unsafe-inline' allows Tailwind CDN inline styles initially.
+// script-src 'self' allows vendored htmx.min.js and theme.js.
+// style-src 'self' 'unsafe-inline' allows inline styles in event JSON-LD.
+// connect-src 'self' allows HTMX requests to same origin.
 const CSPHeader = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
 
 // SessionCookieName is the cookie name for organizer sessions.

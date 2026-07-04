@@ -1,56 +1,56 @@
 {{define "rsvp_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-lg p-4">
-	<p class="text-green-700 font-medium">RSVP created! Check your email for a confirmation link.</p>
-	<p class="text-sm text-gray-500 mt-2">We sent a magic link to {{.Email}}. Click the link to confirm your RSVP.</p>
+<div class="alert alert-success">
+	<p class="font-medium">RSVP created! Check your email for a confirmation link.</p>
+	<p class="text-sm text-secondary mt-2">We sent a magic link to {{.Email}}. Click the link to confirm your RSVP.</p>
 </div>
 {{end}}
 
 {{define "rsvp_confirmed_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-lg p-4">
-	<p class="text-green-700 font-medium">RSVP confirmed! See you there.</p>
+<div class="alert alert-success">
+	<p class="font-medium">RSVP confirmed! See you there.</p>
 </div>
 {{end}}
 
 {{define "event_created_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-lg p-4">
-	<p class="text-green-700 font-medium">Event created!</p>
-	<p class="text-sm text-gray-600 mt-1">{{.Title}}</p>
-	<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-indigo-600 text-sm hover:underline mt-2 inline-block">View event →</a>
+<div class="alert alert-success">
+	<p class="font-medium">Event created!</p>
+	<p class="text-sm text-secondary mt-2">{{.Title}}</p>
+	<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-sm font-medium mt-2 inline-block" style="color: var(--accent);">View event →</a>
 </div>
 {{end}}
 
 {{define "ticket_created_fragment"}}
-<div class="bg-green-50 border border-green-200 rounded-lg p-4">
-	<p class="text-green-700 font-medium">Ticket type created!</p>
+<div class="alert alert-success">
+	<p class="font-medium">Ticket type created!</p>
 </div>
 {{end}}
 
 {{define "error_fragment"}}
-<div class="bg-red-50 border border-red-200 rounded-lg p-4">
-	<p class="text-red-700 font-medium">{{.Error}}</p>
+<div class="alert alert-error">
+	<p class="font-medium">{{.Error}}</p>
 </div>
 {{end}}
 
 {{define "event_card"}}
-<div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 border border-gray-100 flex flex-col relative overflow-hidden">
+<div class="card event-card">
 	<!-- Date badge -->
-	<div class="absolute top-0 right-0 bg-indigo-50 text-indigo-700 rounded-bl-xl px-3 py-2 text-center">
-		<div class="text-xs font-medium uppercase">{{monthShort .StartsAt}}</div>
-		<div class="text-lg font-bold leading-none">{{dayOfMonth .StartsAt}}</div>
+	<div class="date-badge">
+		<div class="month">{{monthShort .StartsAt}}</div>
+		<div class="day">{{dayOfMonth .StartsAt}}</div>
 	</div>
-	<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-lg font-semibold text-indigo-600 hover:underline pr-16">{{.Title}}</a>
-	<p class="text-gray-500 text-sm mt-2">{{dayOfWeek .StartsAt}}, {{formatDateShort .StartsAt}} · {{timeOnly .StartsAt}}</p>
-	{{if .Location}}<p class="text-gray-400 text-sm mt-1 flex items-center gap-1">
-		<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+	<a href="/events/{{.GroupKey}}/{{.EventID}}" class="event-title">{{.Title}}</a>
+	<p class="event-meta">{{dayOfWeek .StartsAt}}, {{formatDateShort .StartsAt}} · {{timeOnly .StartsAt}}</p>
+	{{if .Location}}<p class="event-meta mt-2">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
 		{{.Location}}
 	</p>{{end}}
-	<div class="mt-auto pt-3 flex items-center gap-3">
+	<div class="event-footer">
 		{{if .Cancelled}}
-		<span class="inline-block bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full">Cancelled</span>
+		<span class="badge badge-danger">Cancelled</span>
 		{{else}}
-		<span class="inline-block bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full">{{formatRelative .StartsAt}}</span>
+		<span class="badge badge-success">{{formatRelative .StartsAt}}</span>
 		{{end}}
-		<a href="/events/{{.GroupKey}}/{{.EventID}}" class="text-indigo-600 text-sm font-medium hover:underline ml-auto">Details →</a>
+		<a href="/events/{{.GroupKey}}/{{.EventID}}" class="event-link" aria-label="View details for {{.Title}}">Details →</a>
 	</div>
 </div>
 {{end}}
