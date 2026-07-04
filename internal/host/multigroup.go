@@ -37,9 +37,14 @@ import (
 // It is the host's "which groups am I currently serving" registry.
 // At v0 it is populated at startup from a config-supplied list;
 // future cycles will populate it dynamically (gossip, peer sync).
+//
+// It also maintains a name → GroupID directory for ResolveName.
+// The directory is populated via RegisterName when groups are created
+// or discovered (e.g. from the product store's canonical names).
 type MultiGroup struct {
-	mu    sync.RWMutex
-	byKey map[types.GroupID]*group.State
+	mu      sync.RWMutex
+	byKey   map[types.GroupID]*group.State
+	byName  map[string]types.GroupID // canonical_name → group_id
 }
 
 // NewMultiGroup constructs a registry pre-populated with the given
@@ -51,7 +56,8 @@ type MultiGroup struct {
 // groups the host serves.
 func NewMultiGroup(name string, states ...*group.State) *MultiGroup {
 	mg := &MultiGroup{
-		byKey: make(map[types.GroupID]*group.State, len(states)),
+		byKey:  make(map[types.GroupID]*group.State, len(states)),
+		byName: make(map[string]types.GroupID),
 	}
 	for _, s := range states {
 		if s == nil {
@@ -92,4 +98,35 @@ func (m *MultiGroup) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.byKey)
+}
+
+// RegisterName associates a canonical name with a group ID.
+// This populates the name directory used by ResolveName.
+// If the name is already registered to a different group, it is
+// overwritten (last write wins — the caller is responsible for
+// conflict resolution, e.g. by checking first).
+func (m *MultiGroup) RegisterName(canonicalName string, gid types.GroupID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.byName[canonicalName] = gid
+}
+
+// LookupName resolves a canonical name to a group ID.
+// Returns (gid, true) if found, (zero, false) otherwise.
+func (m *MultiGroup) LookupName(canonicalName string) (types.GroupID, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	gid, ok := m.byName[canonicalName]
+	return gid, ok
+}
+
+// AllNames returns all registered canonical names.
+func (m *MultiGroup) AllNames() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, 0, len(m.byName))
+	for name := range m.byName {
+		out = append(out, name)
+	}
+	return out
 }

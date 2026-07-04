@@ -301,9 +301,24 @@ func (s *Service) ResolveName(
 	if r == nil || r.CanonicalName == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("canonical_name is empty"))
 	}
+
+	// Try the name directory first.
+	if gid, ok := s.groups.LookupName(r.CanonicalName); ok {
+		hosts := []string{}
+		if s.name != "" {
+			hosts = append(hosts, s.name)
+		}
+		return connect.NewResponse(&pb.ResolveNameResponse{
+			GroupKey: keyToProto(gid),
+			Hosts:    hosts,
+		}), nil
+	}
+
+	// Fallback: if no name directory match, return the first hosted
+	// group (v0 backward compatibility for single-group hosts).
 	gids := s.groups.All()
 	if len(gids) == 0 {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("no groups hosted here"))
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("name %q not found and no groups hosted here", r.CanonicalName))
 	}
 	hosts := []string{}
 	if s.name != "" {

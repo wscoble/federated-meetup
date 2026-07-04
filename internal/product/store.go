@@ -64,6 +64,18 @@ func (s *Store) DeleteGroup(id string) {
 	delete(s.groups, id)
 }
 
+// ListGroups returns all groups in the store (sorted by GroupId for
+// deterministic ordering).
+func (s *Store) ListGroups() []*pb.Group {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*pb.Group, 0, len(s.groups))
+	for _, g := range s.groups {
+		out = append(out, g)
+	}
+	return out
+}
+
 // --- Event ---
 
 func (s *Store) PutEvent(e *pb.Event) {

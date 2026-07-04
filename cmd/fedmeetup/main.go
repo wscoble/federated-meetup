@@ -222,6 +222,12 @@ func main() {
 	// Seed demo data if the product store is empty (idempotent).
 	webSrv.SeedData()
 
+	// Register group canonical names with the host's name directory
+	// so ResolveName can map canonical_name → group_key.
+	for _, g := range prodStore.ListGroups() {
+		svc.Groups().RegisterName(g.CanonicalName, cfg.groupKey)
+	}
+
 	// ---- MCP discovery layer ----
 	mcpCfg := mcp.HostConfig{
 		Name:           cfg.name,
