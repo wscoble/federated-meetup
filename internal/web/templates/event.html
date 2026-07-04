@@ -7,9 +7,16 @@
 <!-- Breadcrumb -->
 <nav class="breadcrumb" aria-label="Breadcrumb">
 	<a href="/groups/{{.Group.CanonicalName}}">{{.Group.DisplayName}}</a>
-	<span class="sep">›</span>
+	<span class="sep" aria-hidden="true">›</span>
 	<span class="current">{{.Event.Title}}</span>
 </nav>
+
+<!-- Cancelled banner -->
+{{if .Event.Cancelled}}
+<div class="alert alert-error mb-6" role="alert">
+	<p class="font-bold">This event has been cancelled.</p>
+</div>
+{{end}}
 
 <!-- Event header -->
 <div class="flex gap-4 mb-6">
@@ -46,6 +53,9 @@
 			{{else}}
 			<p class="text-secondary text-sm">{{formatRelative .Event.StartsAt}}</p>
 			{{end}}
+
+			<!-- Share hint -->
+			<p class="text-muted text-xs" style="margin-top: 0.25rem;">Know someone who'd enjoy this? Use Share to spread the word.</p>
 		</div>
 	</div>
 </div>
@@ -75,7 +85,29 @@
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
 				Attendance
 			</div>
-			<p class="detail-value">{{.RsvpCount}} going{{if .Event.Capacity}} / {{.Event.Capacity}} spots{{end}}</p>
+			{{if .Event.Capacity}}
+				{{if ge .RsvpCount .Event.Capacity}}
+				<p class="detail-value">
+					{{.RsvpCount}} of {{.Event.Capacity}} going
+					<span class="badge badge-danger" style="margin-left: 0.4rem;">Sold out</span>
+				</p>
+				{{else}}
+				<p class="detail-value">{{.RsvpCount}} of {{.Event.Capacity}} going ({{formatPercent .RsvpCount .Event.Capacity}})</p>
+				{{end}}
+				<div class="capacity-fill">
+					<div class="progress-bar">
+						<div class="fill {{fillClass .RsvpCount .Event.Capacity}}" style="width: {{formatPercent .RsvpCount .Event.Capacity}};"></div>
+					</div>
+					<span class="label">{{formatPercent .RsvpCount .Event.Capacity}} full</span>
+				</div>
+			{{else if gt .RsvpCount 0}}
+				<div class="attendance">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+					<span class="count">{{.RsvpCount}}</span> {{if eq .RsvpCount 1}}person{{else}}people{{end}} going
+				</div>
+			{{else}}
+				<p class="detail-value">Be the first to RSVP!</p>
+			{{end}}
 		</div>
 	</div>
 </div>
@@ -94,15 +126,36 @@
 	<h2>Tickets</h2>
 	<div class="space-y-3">
 		{{range .Tickets}}
+		{{$sold := toInt .Sold}}
+		{{$cap := toInt .Capacity}}
 		<div class="card">
 			<div class="flex flex-col gap-3">
 				<div class="flex items-center justify-between gap-3 flex-wrap">
 					<div>
 						<p class="font-medium">{{.Name}}</p>
-						<p class="text-sm text-muted mt-2">{{.Sold}} / {{.Capacity}} sold</p>
+						{{if $cap}}
+							{{if ge $sold $cap}}
+							<p class="text-sm text-muted mt-2">{{$sold}} / {{$cap}} sold — <span class="badge badge-danger">Sold out</span></p>
+							{{else}}
+							<p class="text-sm text-muted mt-2">{{$sold}} / {{$cap}} sold ({{formatPercent $sold $cap}})</p>
+							{{end}}
+						{{else}}
+						<p class="text-sm text-muted mt-2">{{$sold}} sold</p>
+						{{end}}
 					</div>
 					<span class="font-bold text-lg">{{formatMoney .Price}}</span>
 				</div>
+				{{if $cap}}
+				{{if lt $sold $cap}}
+				<div class="capacity-fill">
+					<div class="progress-bar">
+						<div class="fill {{fillClass $sold $cap}}" style="width: {{formatPercent $sold $cap}};"></div>
+					</div>
+					<span class="label">{{toInt .Capacity}} spots total</span>
+				</div>
+				{{end}}
+				{{end}}
+				{{if lt $sold $cap}}
 				<form method="POST" action="/events/{{$.Event.GroupKey}}/{{$.Event.EventID}}/purchase">
 					<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 					<input type="hidden" name="ticket_id" value="{{.TicketID}}">
@@ -116,6 +169,9 @@
 						</div>
 					</div>
 				</form>
+				{{else}}
+				<p class="text-sm text-muted" style="padding-top: 0.5rem;">This ticket type is sold out.</p>
+				{{end}}
 			</div>
 		</div>
 		{{end}}

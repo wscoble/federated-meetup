@@ -30,7 +30,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: fedmeetup
-          image: 10.43.63.17:5000/fedmeetup:latest
+          image: docker.io/library/fedmeetup:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

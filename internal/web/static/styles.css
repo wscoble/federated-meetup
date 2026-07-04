@@ -380,6 +380,15 @@ p { margin-bottom: 0.5rem; }
   color: var(--accent);
   background: var(--bg-hover);
 }
+.btn-secondary {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
 .btn-danger {
   color: var(--danger);
   font-size: 0.8rem;
@@ -763,3 +772,169 @@ code {
 }
 .break-all { word-break: break-all; }
 .overflow-x-auto { overflow-x: auto; }
+
+/* ---- Filter pills ---- */
+.filter-pills {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.filter-pill {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.825rem;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  transition: all 0.15s;
+}
+.filter-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.filter-pill[aria-current="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* ---- Progress bar ---- */
+.progress-bar {
+  height: 8px;
+  background: var(--bg-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.4rem;
+}
+.progress-bar .fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s;
+}
+.progress-bar .fill.fill-high {
+  background: var(--success);
+}
+.progress-bar .fill.fill-warning {
+  background: var(--warning);
+}
+
+/* ---- Attendance indicator ---- */
+.attendance {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.attendance svg { width: 14px; height: 14px; flex-shrink: 0; }
+.attendance .count { font-weight: 600; color: var(--text-secondary); }
+
+/* ---- Capacity badge on event cards ---- */
+.event-card .capacity-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.event-card .capacity-info .attendance {
+  font-size: 0.75rem;
+}
+
+/* ---- Subscribe buttons ---- */
+.subscribe-links {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.subscribe-links .btn {
+  font-size: 0.8rem;
+}
+
+/* ---- Empty state ---- */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1.5rem;
+}
+.empty-state svg {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+.empty-state h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+.empty-state p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  max-width: 24rem;
+  margin: 0 auto 1rem;
+}
+
+/* ---- Dashboard event card improvements ---- */
+.event-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.825rem;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+.event-stats .stat-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.event-stats .stat-item .val {
+  font-weight: 700;
+  color: var(--text);
+}
+.event-stats .stat-item svg { width: 14px; height: 14px; }
+
+/* ---- Capacity fill indicator ---- */
+.capacity-fill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.capacity-fill .label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.capacity-fill .progress-bar {
+  flex: 1;
+  margin-top: 0;
+}
+
+/* ---- Check-in rate badge ---- */
+.checkin-rate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+/* ---- RSS link in head ---- */
+.feed-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.feed-link:hover { color: var(--accent); }
+.feed-link svg { width: 14px; height: 14px; }

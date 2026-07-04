@@ -25,9 +25,10 @@ import (
 
 // handleHome renders the home page: list of groups + upcoming events.
 // Supports ?q= search query to filter groups and events by name.
+// Supports ?when= filter: "today", "week", "all" (default: all).
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	groups, _ := s.store.ListGroups()
-	events, _ := s.store.ListUpcomingEvents("", 10)
+	events, _ := s.store.ListUpcomingEvents("", 50)
 
 	// Sync from product store if available
 	if s.product != nil {
@@ -42,10 +43,18 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 				events[i].Capacity = int(pe.Capacity)
 				events[i].Cancelled = pe.Cancelled
 			}
+			// Populate RSVP count for each event
+			count, _ := s.store.RsvpCount(e.GroupKey, e.EventID)
+			events[i].RsvpCount = count
 		}
 	}
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	dateFilter := strings.TrimSpace(r.URL.Query().Get("when"))
+	if dateFilter == "" {
+		dateFilter = "all"
+	}
+
 	if query != "" {
 		// Filter groups by display name (case-insensitive)
 		var filteredGroups []CachedGroup
@@ -68,31 +77,43 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 
 	// Split events into date groups for the default view.
 	var today, thisWeek, later []CachedEvent
-	if query == "" {
-		now := time.Now().Unix()
-		for _, e := range events {
-			if e.Cancelled {
-				later = append(later, e)
-				continue
-			}
-			diff := e.StartsAt - now
-			if diff < 0 {
-				continue // skip past events in home page
-			}
-			if diff < 24*3600 {
-				today = append(today, e)
-			} else if diff < 7*24*3600 {
-				thisWeek = append(thisWeek, e)
-			} else {
-				later = append(later, e)
-			}
+	now := time.Now().Unix()
+	for _, e := range events {
+		if e.Cancelled {
+			later = append(later, e)
+			continue
+		}
+		diff := e.StartsAt - now
+		if diff < 0 {
+			continue // skip past events in home page
+		}
+		// Populate RSVP count
+		count, _ := s.store.RsvpCount(e.GroupKey, e.EventID)
+		e.RsvpCount = count
+		if diff < 24*3600 {
+			today = append(today, e)
+		} else if diff < 7*24*3600 {
+			thisWeek = append(thisWeek, e)
+		} else {
+			later = append(later, e)
 		}
 	}
 
+	// Apply date filter to the events list
+	var displayEvents []CachedEvent
+	switch dateFilter {
+	case "today":
+		displayEvents = today
+	case "week":
+		displayEvents = append(append(displayEvents, today...), thisWeek...)
+	default:
+		displayEvents = events
+	}
+
 	s.renderPage(w, "home", homeData{
-		Groups: groups, Events: events,
+		Groups: groups, Events: displayEvents,
 		TodayEvents: today, WeekEvents: thisWeek, LaterEvents: later,
-		Query: query,
+		Query: query, DateFilter: dateFilter, TotalEvents: len(events),
 	})
 }
 
@@ -131,6 +152,9 @@ func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
 	now := s.now().Unix()
 	var upcoming, past []CachedEvent
 	for _, e := range events {
+		// Populate RSVP count
+		count, _ := s.store.RsvpCount(e.GroupKey, e.EventID)
+		e.RsvpCount = count
 		if e.StartsAt < now {
 			past = append(past, e)
 		} else {
@@ -140,6 +164,7 @@ func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
 
 	s.renderPage(w, "group", groupData{
 		Group:          group,
+		GroupKey:       group.GroupKey,
 		UpcomingEvents: upcoming,
 		PastEvents:     past,
 		PastEventCount: len(past),
@@ -523,12 +548,24 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// Get attendees from SQLite
 		rsvpRecords, _ := s.store.ListRsvpsForEvent(e.GroupKey, e.EventID)
 		var attendees []attendeeView
+		checkedIn := 0
 		for _, rec := range rsvpRecords {
 			attendees = append(attendees, attendeeView{
 				Email:    rec.UserEmail,
 				Name:     rec.UserName,
 				Attended: rec.Attended,
 			})
+			if rec.Attended {
+				checkedIn++
+			}
+		}
+
+		// Get capacity from product store
+		capacity := e.Capacity
+		if s.product != nil {
+			if pe, ok := s.product.Store().GetEvent(e.EventID); ok {
+				capacity = int(pe.Capacity)
+			}
 		}
 
 		// Get ticket sales and revenue from product store
@@ -555,13 +592,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dashEvents = append(dashEvents, dashboardEvent{
-			EventID:      e.EventID,
-			Title:        e.Title,
-			StartsAt:     e.StartsAt,
-			RsvpCount:    count,
-			TicketSold:   ticketSold,
-			EventRevenue: &pb.Money{Amount: eventRevenueAmount, Currency: eventRevenueCurrency},
-			Attendees:    attendees,
+			EventID:       e.EventID,
+			Title:         e.Title,
+			StartsAt:      e.StartsAt,
+			RsvpCount:     count,
+			TicketSold:    ticketSold,
+			EventRevenue:  &pb.Money{Amount: eventRevenueAmount, Currency: eventRevenueCurrency},
+			Attendees:     attendees,
+			Capacity:      capacity,
+			CheckedIn:     checkedIn,
 		})
 	}
 
@@ -1255,4 +1294,219 @@ func (s *Server) handleCancelEvent(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("web: event cancelled: %s/%s", groupKey, eventID)
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// ---- Group ICS calendar subscription ----
+
+// handleGroupICS generates an iCalendar (.ics) feed for all upcoming events
+// in a group. This lets users subscribe to a group's calendar in their
+// calendar app (Google Calendar, Apple Calendar, Outlook).
+func (s *Server) handleGroupICS(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "group name required", http.StatusBadRequest)
+		return
+	}
+
+	group, err := s.store.GetGroupByCanonicalName(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	events, _ := s.store.ListUpcomingEvents(group.GroupKey, 100)
+
+	// Sync from product store
+	if s.product != nil {
+		for i, e := range events {
+			if pe, ok := s.product.Store().GetEvent(e.EventID); ok {
+				events[i].Title = pe.Title
+				events[i].Description = pe.Description
+				if pe.Location != "" {
+					events[i].Location = pe.Location
+				}
+				events[i].Capacity = int(pe.Capacity)
+				events[i].Cancelled = pe.Cancelled
+			}
+		}
+	}
+
+	now := s.now().Unix()
+	var vevents []string
+	for _, e := range events {
+		if e.StartsAt < now || e.Cancelled {
+			continue
+		}
+		start := time.Unix(e.StartsAt, 0).UTC()
+		end := start.Add(2 * time.Hour)
+		dtStart := start.Format("20060102T150405Z")
+		dtEnd := end.Format("20060102T150405Z")
+		dtStamp := time.Now().UTC().Format("20060102T150405Z")
+
+		vevents = append(vevents,
+			"BEGIN:VEVENT\r\n"+
+				"UID:"+e.EventID+"@federated-meetup\r\n"+
+				"DTSTAMP:"+dtStamp+"\r\n"+
+				"DTSTART:"+dtStart+"\r\n"+
+				"DTEND:"+dtEnd+"\r\n"+
+				"SUMMARY:"+icsEscape(e.Title)+"\r\n"+
+				"DESCRIPTION:"+icsEscape(e.Description)+"\r\n"+
+				"LOCATION:"+icsEscape(e.Location)+"\r\n"+
+				"URL:"+baseURL(r)+"/events/"+e.GroupKey+"/"+e.EventID+"\r\n"+
+				"END:VEVENT\r\n")
+	}
+
+	ics := "BEGIN:VCALENDAR\r\n"+
+		"VERSION:2.0\r\n"+
+		"PRODID:-//Federated Meetup//Group Calendar//EN\r\n"+
+		"CALSCALE:GREGORIAN\r\n"+
+		"METHOD:PUBLISH\r\n"+
+		"X-WR-CALNAME:"+icsEscape(group.DisplayName)+"\r\n"+
+		"X-WR-CALDESC:"+icsEscape(group.Description)+"\r\n"+
+		strings.Join(vevents, "")+
+		"END:VCALENDAR\r\n"
+
+	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename="+group.CanonicalName+".ics")
+	w.Write([]byte(ics))
+}
+
+// ---- Group RSS feed ----
+
+// handleGroupRSS generates an Atom 1.0 feed for a group's upcoming events.
+func (s *Server) handleGroupRSS(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "group name required", http.StatusBadRequest)
+		return
+	}
+
+	group, err := s.store.GetGroupByCanonicalName(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	events, _ := s.store.ListUpcomingEvents(group.GroupKey, 20)
+
+	// Sync from product store
+	if s.product != nil {
+		for i, e := range events {
+			if pe, ok := s.product.Store().GetEvent(e.EventID); ok {
+				events[i].Title = pe.Title
+				events[i].Description = pe.Description
+				if pe.Location != "" {
+					events[i].Location = pe.Location
+				}
+				events[i].Capacity = int(pe.Capacity)
+				events[i].Cancelled = pe.Cancelled
+			}
+		}
+	}
+
+	now := s.now().Unix()
+	base := baseURL(r)
+	feedURL := base + "/groups/" + group.CanonicalName + "/feed.xml"
+
+	var entries []string
+	for _, e := range events {
+		if e.StartsAt < now || e.Cancelled {
+			continue
+		}
+		eventURL := base + "/events/" + e.GroupKey + "/" + e.EventID
+		updated := time.Unix(e.StartsAt, 0).UTC().Format("2006-01-02T15:04:05Z")
+		summary := xmlEscape(e.Title)
+		desc := xmlEscape(e.Description)
+		if desc == "" {
+			desc = summary
+		}
+		entries = append(entries,
+			"<entry>"+
+				"<title>"+summary+"</title>"+
+				"<link href=\""+eventURL+"\"/>"+
+				"<id>"+eventURL+"</id>"+
+				"<updated>"+updated+"</updated>"+
+				"<summary>"+desc+"</summary>"+
+				"</entry>")
+	}
+
+	updated := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	feed := "<?xml version=\"1.0\" encoding=\"utf-8\"?>"+
+		"<feed xmlns=\"http://www.w3.org/2005/Atom\">"+
+		"<title>"+xmlEscape(group.DisplayName)+" — Events</title>"+
+		"<link href=\""+feedURL+"\" rel=\"self\"/>"+
+		"<link href=\""+base+"/groups/"+group.CanonicalName+"\"/>"+
+		"<id>"+feedURL+"</id>"+
+		"<updated>"+updated+"</updated>"+
+		strings.Join(entries, "")+
+		"</feed>"
+
+	w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
+	w.Write([]byte(feed))
+}
+
+// xmlEscape escapes special XML characters.
+func xmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	return s
+}
+
+// ---- Attendee CSV export ----
+
+// handleAttendeesCSV exports the attendee list for an event as CSV.
+// Used by organizers for check-in sheets and record-keeping.
+func (s *Server) handleAttendeesCSV(w http.ResponseWriter, r *http.Request) {
+	groupKey, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	eventID := r.PathValue("event_id")
+	if eventID == "" {
+		http.Error(w, "event_id required", http.StatusBadRequest)
+		return
+	}
+
+	rsvpRecords, _ := s.store.ListRsvpsForEvent(groupKey, eventID)
+
+	// Get event title
+	eventTitle := eventID
+	if event, err := s.eventFromProduct(groupKey, eventID); err == nil {
+		eventTitle = event.Title
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=attendees-"+eventID+".csv")
+
+	// Write CSV
+	w.Write([]byte("Name,Email,Status,Checked In\n"))
+	for _, rec := range rsvpRecords {
+		status := "Pending"
+		if rec.Confirmed {
+			status = "Confirmed"
+		}
+		checkedIn := "No"
+		if rec.Attended {
+			checkedIn = "Yes"
+		}
+		// CSV escape: wrap in quotes, double internal quotes
+		name := csvEscape(rec.UserName)
+		email := csvEscape(rec.UserEmail)
+		w.Write([]byte(name + "," + email + "," + status + "," + checkedIn + "\n"))
+	}
+
+	log.Printf("web: CSV export: %d attendees for event %s (%s)", len(rsvpRecords), eventID, eventTitle)
+}
+
+// csvEscape escapes a string for CSV output.
+func csvEscape(s string) string {
+	if strings.ContainsAny(s, ",\"\n\r") {
+		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	}
+	return s
 }
