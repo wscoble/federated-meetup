@@ -22,6 +22,11 @@
 //   HOSTD_DB_PATH      SQLite path for web store (default "fedmeetup.db")
 //   HOSTD_DESCRIPTION  host description for discovery endpoints
 //   HOSTD_AREA         geographic area for discovery (e.g. "Las Vegas, NV")
+//
+// Federation sync (optional — omit to run standalone):
+//   HOSTD_PEERS        comma-separated peer URLs to sync from (e.g. "http://peer:8080")
+//   HOSTD_SYNC_BOOTSTRAP  if "true" (default), bootstrap from peers on startup
+//   HOSTD_SYNC_LIVE    if "true" (default), maintain live Subscribe streams after bootstrap
 package main
 
 import (
@@ -40,6 +45,7 @@ import (
 
 	"github.com/sscoble/federated-meetup/proto/federated_meetup/v1/federatedmeetupv1connect"
 
+	"github.com/sscoble/federated-meetup/internal/federation"
 	"github.com/sscoble/federated-meetup/internal/group"
 	"github.com/sscoble/federated-meetup/internal/host"
 	"github.com/sscoble/federated-meetup/internal/mcp"
@@ -59,6 +65,9 @@ type config struct {
 	dbPath      string
 	description string
 	area        string
+	peers       []string
+	syncBootstrap bool
+	syncLive    bool
 }
 
 func loadConfig() (*config, error) {
@@ -92,6 +101,19 @@ func loadConfig() (*config, error) {
 		cfg.threshold = uint32(v)
 	}
 	_ = os.Getenv("HOSTD_STEWARDS") // v0: parsed but unused.
+
+	// Federation sync config.
+	cfg.syncBootstrap = getEnv("HOSTD_SYNC_BOOTSTRAP", "true") == "true"
+	cfg.syncLive = getEnv("HOSTD_SYNC_LIVE", "true") == "true"
+	if peers := os.Getenv("HOSTD_PEERS"); peers != "" {
+		for _, p := range strings.Split(peers, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cfg.peers = append(cfg.peers, p)
+			}
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -193,6 +215,44 @@ func main() {
 		cfg.addr, hex.EncodeToString(cfg.groupKey[:]), cfg.name, cfg.threshold, rpcPath)
 	log.Printf("fedmeetup: HostService=%s", federatedmeetupv1connect.HostServiceName)
 	log.Printf("fedmeetup: web UI at %s, base_url=%s, db=%s", cfg.addr, cfg.baseURL, cfg.dbPath)
+
+	// ---- Federation sync (optional) ----
+	// If HOSTD_PEERS is set, create a Syncer per peer and bootstrap
+	// + live-stream from each. This makes this host a mirror of the
+	// group state from the peer's perspective.
+	if len(cfg.peers) > 0 {
+		syncCtx, syncCancel := context.WithCancel(context.Background())
+		defer syncCancel()
+
+		for _, peerURL := range cfg.peers {
+			peerURL := peerURL // capture for goroutine
+			syncer := federation.NewSyncer(peerURL, cfg.groupKey, state, nil)
+
+			if cfg.syncBootstrap {
+				log.Printf("fedmeetup: bootstrapping from peer %s", peerURL)
+				go func() {
+					applied, err := syncer.Bootstrap(syncCtx)
+					if err != nil {
+						log.Printf("fedmeetup: bootstrap from %s failed: %v", peerURL, err)
+						return
+					}
+					log.Printf("fedmeetup: bootstrap from %s complete (%d transitions applied, root=%x)",
+						peerURL, applied, state.Root())
+				}()
+			}
+
+			if cfg.syncLive {
+				go func() {
+					log.Printf("fedmeetup: live streaming from peer %s", peerURL)
+					if err := syncer.Live(syncCtx); err != nil {
+						log.Printf("fedmeetup: live stream from %s ended: %v", peerURL, err)
+					}
+				}()
+			}
+		}
+		log.Printf("fedmeetup: federation sync active with %d peer(s)", len(cfg.peers))
+	}
+
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}

@@ -89,6 +89,9 @@ All config is via environment variables:
 | `HOSTD_AREA` | _(empty)_ | Geographic area for discovery (e.g. "Las Vegas, NV") |
 | `HOSTD_THRESHOLD` | `0` | Initial threshold (v0: unused) |
 | `HOSTD_STEWARDS` | _(empty)_ | Comma-separated hex keys (v0: unused) |
+| `HOSTD_PEERS` | _(empty)_ | Comma-separated peer URLs to federate from (e.g. "http://peer:8080") |
+| `HOSTD_SYNC_BOOTSTRAP` | `true` | Bootstrap group state from peers on startup |
+| `HOSTD_SYNC_LIVE` | `true` | Maintain live Subscribe streams after bootstrap |
 
 ## Architecture
 
@@ -110,6 +113,7 @@ internal/
   web/                  Web UI — Go html/template + HTMX + SQLite
   payment/              Stripe webhook handling
   ratelimit/            Token bucket rate limiter
+  federation/           Server-to-server sync client (bootstrap + live)
 
 sim/                    Deterministic simulator (VOPR-shaped)
 transport/wg/           Server-to-server WireGuard mesh transport
