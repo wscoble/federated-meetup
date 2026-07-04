@@ -60,9 +60,10 @@ type HostConfig struct {
 // Server is the MCP server for a federated-meetup host. It wraps the
 // host's ConnectRPC Service as MCP tools.
 type Server struct {
-	cfg    HostConfig
-	svc    *host.Service
-	mcpSrv *server.MCPServer
+	cfg     HostConfig
+	svc     *host.Service
+	mcpSrv  *server.MCPServer
+	product ProductStore // optional — enables write tools (create_event, list_all_events)
 }
 
 // NewServer constructs an MCP server bound to the given host Service and

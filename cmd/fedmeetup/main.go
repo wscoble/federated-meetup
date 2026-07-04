@@ -259,13 +259,19 @@ func main() {
 	mux.Handle(rpcPath, rpcHandler)
 
 	// MCP + discovery endpoints
-	mcp.RegisterEndpoints(mux, svc, mcpCfg)
+	mcpSrv := mcp.RegisterEndpoints(mux, svc, mcpCfg)
+	mcpSrv.SetProductStore(prodStore)
+	log.Printf("fedmeetup: MCP server enabled (8 tools: 6 read + 2 write)")
 
 	// ActivityPub federation (WebFinger, actor, outbox, inbox)
 	apAdapter := activitypub.NewProductStoreAdapter(prodStore)
 	apSvc := activitypub.NewActivityPubService(cfg.baseURL, apAdapter)
 	apSvc.RegisterRoutes(mux)
 	log.Printf("fedmeetup: ActivityPub endpoints enabled (WebFinger, actor, outbox, inbox)")
+
+	// Wire ActivityPub delivery into the web server
+	webSrv.SetActivityPubService(apSvc)
+	log.Printf("fedmeetup: ActivityPub delivery enabled")
 
 	// Web UI (all routes: /, /groups/, /events/, /dashboard/, /rsvp/, /checkout/, /static/)
 	mux.Handle("/", webSrv.Routes())
