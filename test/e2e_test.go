@@ -61,12 +61,10 @@ const (
 // It exercises all product surfaces in sequence against a real binary.
 func TestE2E_FullProductFlow(t *testing.T) {
 	// ---- Build the binary ----
-	t.Run("build", func(t *testing.T) {
-		repoRoot := findRepoRoot(t)
-		binary := buildBinary(t, repoRoot)
-		t.Cleanup(func() {
-			_ = os.Remove(binary)
-		})
+	repoRoot := findRepoRoot(t)
+	buildBinary(t, repoRoot)
+	t.Cleanup(func() {
+		_ = os.Remove(e2eBinary)
 	})
 
 	// ---- Start the server ----
@@ -752,7 +750,7 @@ func isRSVPConfirmedInDB(t *testing.T, dbPath, token string) bool {
 // extractLatestEventIDFromDB queries the SQLite database for the most recently created event.
 func extractLatestEventIDFromDB(t *testing.T, dbPath, title string) string {
 	t.Helper()
-	return queryDB(t, dbPath, "SELECT event_id FROM events WHERE title = ? ORDER BY cached_at DESC LIMIT 1", title)
+	return queryDB(t, dbPath, "SELECT event_id FROM events_cache WHERE title = ? ORDER BY cached_at DESC LIMIT 1", title)
 }
 
 // queryDB is a helper that runs a single-value SQL query against the SQLite database.
