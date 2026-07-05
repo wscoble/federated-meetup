@@ -21,7 +21,7 @@
 </div>
 
 {{if .Group.Description}}
-<p class="text-secondary mb-6 leading-relaxed">{{.Group.Description}}</p>
+<p class="text-secondary mb-6 leading-relaxed">{{linkify .Group.Description}}</p>
 {{end}}
 
 <!-- Stats bar -->
@@ -36,6 +36,13 @@
 		<span class="stat-value">{{.PastEventCount}}</span> past events
 	</div>
 	{{end}}
+</div>
+
+<!-- Organizer info -->
+<div class="group-meta">
+	<span class="text-muted text-sm">Created {{formatDateShort .Group.CreatedAt}}</span>
+	<span class="text-muted text-sm">·</span>
+	<span class="text-muted text-sm">{{.Group.MemberCount}} member{{if ne .Group.MemberCount 1}}s{{end}}</span>
 </div>
 
 <!-- Subscribe links -->

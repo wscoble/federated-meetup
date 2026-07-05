@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -158,6 +159,7 @@ func loadTemplates() (templateMap, error) {
 		"div":            divInt,
 		"fillClass":      fillClass,
 		"toInt":          toInt,
+		"linkify":        linkify,
 	}
 
 	// Read base template
@@ -429,6 +431,21 @@ func divInt(n, d int) int {
 	return n / d
 }
 
+// linkify converts plain text into safe HTML: auto-links URLs and converts
+// newlines to <br> tags. Escapes all other HTML to prevent XSS.
+func linkify(text string) template.HTML {
+	// First escape all HTML
+	esc := template.HTMLEscapeString(text)
+	// Auto-link URLs
+	urlRe := regexp.MustCompile(`https?://[^\s<>"']+`)
+	esc = urlRe.ReplaceAllStringFunc(esc, func(url string) string {
+		return `<a href="` + url + `" rel="noopener nofollow" target="_blank">` + url + `</a>`
+	})
+	// Convert newlines to <br>
+	esc = strings.ReplaceAll(esc, "\n", "<br>")
+	return template.HTML(esc)
+}
+
 // ---- Rendering helpers ----
 
 func (s *Server) renderPage(w http.ResponseWriter, page string, data interface{}) {
@@ -525,6 +542,7 @@ type homeData struct {
 	Query        string
 	DateFilter   string
 	TotalEvents  int
+	TotalGroups  int
 }
 
 type groupData struct {
@@ -728,12 +746,17 @@ func (s *Server) eventFromProduct(groupKey, eventID string) (CachedEvent, error)
 func (s *Server) groupFromProduct(groupID string) (CachedGroup, error) {
 	if s.product != nil {
 		if g, ok := s.product.Store().GetGroup(groupID); ok {
-			return CachedGroup{
+			cg := CachedGroup{
 				GroupKey:      g.GroupId,
 				CanonicalName: g.CanonicalName,
 				DisplayName:   g.DisplayName,
 				Description:   g.Description,
-			}, nil
+				MemberCount:   g.MemberCount,
+			}
+			if g.CreatedAt != nil {
+				cg.CreatedAt = g.CreatedAt.AsTime().Unix()
+			}
+			return cg, nil
 		}
 	}
 	return s.store.GetGroup(groupID)

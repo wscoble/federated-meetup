@@ -119,7 +119,7 @@
 {{if .Event.Description}}
 <div class="card card-lg mb-6">
 	<h2>About this event</h2>
-	<p class="text-secondary whitespace-pre-line leading-relaxed">{{.Event.Description}}</p>
+	<p class="text-secondary whitespace-pre-line leading-relaxed">{{linkify .Event.Description}}</p>
 </div>
 {{end}}
 
@@ -181,6 +181,9 @@
 	</div>
 </div>
 {{end}}
+
+<!-- Back to group -->
+<a href="/groups/{{.Group.CanonicalName}}" class="btn btn-outline">← Back to {{.Group.DisplayName}}</a>
 
 <!-- RSVP section -->
 {{if not .Event.Cancelled}}

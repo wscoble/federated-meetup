@@ -126,6 +126,8 @@ type CachedGroup struct {
 	CanonicalName string
 	DisplayName   string
 	Description   string
+	MemberCount   uint64
+	CreatedAt     int64 // unix timestamp, 0 if unknown
 }
 
 // UpsertGroup inserts or updates a group in the cache.

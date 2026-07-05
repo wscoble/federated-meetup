@@ -50,6 +50,9 @@
 		{{else}}
 		<span class="badge badge-success"><time datetime="{{formatISO .StartsAt}}" data-format="relative">{{formatRelative .StartsAt}}</time></span>
 		{{end}}
+		<a href="/events/{{.GroupKey}}/{{.EventID}}/calendar.ics" class="event-ical" download aria-label="Download iCal for {{.Title}}" title="Add to calendar">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 13v4m2-2h-4"/></svg>
+		</a>
 		<a href="/events/{{.GroupKey}}/{{.EventID}}" class="event-link" aria-label="View details for {{.Title}}">Details →</a>
 	</div>
 	<!-- Attendance & capacity info -->
