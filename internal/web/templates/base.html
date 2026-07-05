@@ -21,6 +21,8 @@
 	<script src="/static/theme.js" defer></script>
 	<script src="/static/timezone.js" defer></script>
 	<script src="/static/shortcuts.js" defer></script>
+	<script src="/static/toast.js" defer></script>
+
 	{{block "head" .}}{{end}}
 </head>
 <body>
@@ -71,7 +73,19 @@
 	</main>
 
 	<footer class="site-footer" role="contentinfo">
-		<p>Federated Meetup — open protocol, federated events. <a href="https://github.com/wscoble/federated-meetup" style="color: var(--accent);">Source</a></p>
+		<div class="footer-content">
+			<p>Federated Meetup — open protocol, federated events.</p>
+			<div class="footer-links">
+				<a href="https://github.com/wscoble/federated-meetup">Source</a>
+				<a href="https://github.com/wscoble/federated-meetup#readme">Docs</a>
+				<a href="/api/openapi.json">API</a>
+			</div>
+			<div class="footer-shortcuts">
+				<span><kbd>/</kbd> search</span>
+				<span><kbd>g</kbd> home</span>
+				<span><kbd>t</kbd> theme</span>
+			</div>
+		</div>
 	</footer>
 
 	<!-- Mobile bottom nav -->
@@ -81,6 +95,12 @@
 				<path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
 			</svg>
 			Discover
+		</a>
+		<a href="/groups/new">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+			</svg>
+			Create
 		</a>
 		<a href="/my-rsvps">
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
