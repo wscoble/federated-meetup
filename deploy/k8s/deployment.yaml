@@ -21,6 +21,10 @@ spec:
       labels:
         app.kubernetes.io/name: federated-meetup
         app.kubernetes.io/component: host-daemon
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
     spec:
       nodeSelector:
         kubernetes.io/hostname: cluster-node-1
