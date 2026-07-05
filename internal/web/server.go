@@ -114,7 +114,10 @@ func (s *Server) Routes() http.Handler {
 	// Checkout
 	mux.HandleFunc("GET /checkout/{order_id}", s.handleCheckout)
 
-	return s.withMiddleware(mux)
+	// Prometheus metrics endpoint
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
+
+	return s.metricsMiddleware(s.withMiddleware(mux))
 }
 
 // ---- Template loading ----
