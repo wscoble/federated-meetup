@@ -118,6 +118,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Groups: groups, Events: displayEvents,
 		TodayEvents: today, WeekEvents: thisWeek, LaterEvents: later,
 		Query: query, DateFilter: dateFilter, TotalEvents: len(events),
+		TotalGroups: len(groups),
 	})
 }
 
