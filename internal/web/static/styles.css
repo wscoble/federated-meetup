@@ -1016,3 +1016,103 @@ kbd {
   color: var(--accent);
   font-weight: 500;
 }
+
+/* ---- Toast notifications ---- */
+#toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.toast {
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: auto;
+  max-width: 24rem;
+  text-align: center;
+}
+.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast-success {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success);
+}
+.toast-error {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger);
+}
+.toast-info {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+/* ---- Footer improvements ---- */
+.site-footer {
+  padding: 2rem 1rem;
+}
+.site-footer .footer-content {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: center;
+  justify-content: space-between;
+}
+.site-footer .footer-links {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+.site-footer .footer-links a {
+  color: var(--text-muted);
+}
+.site-footer .footer-links a:hover {
+  color: var(--accent);
+}
+.site-footer .footer-shortcuts {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+@media (max-width: 640px) {
+  .site-footer .footer-content {
+    flex-direction: column;
+    text-align: center;
+  }
+  .site-footer .footer-shortcuts {
+    display: none;
+  }
+}
+
+/* ---- Mobile nav improvements ---- */
+.mobile-nav a {
+  position: relative;
+}
+.mobile-nav .badge-dot {
+  position: absolute;
+  top: 0.25rem;
+  right: 25%;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+}
