@@ -15,6 +15,7 @@ data:
   HOSTD_PROTOCOL_DB: "/data/protocol.db"
   HOSTD_DESCRIPTION: "Federated Meetup — fm.scoble.me"
   HOSTD_AREA: "Las Vegas, NV"
+  TZ: "America/Los_Angeles"
   HOSTD_THRESHOLD: "0"
   HOSTD_SYNC_BOOTSTRAP: "true"
   HOSTD_SYNC_LIVE: "true"

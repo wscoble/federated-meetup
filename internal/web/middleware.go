@@ -83,7 +83,7 @@ func (s *Server) csrfMiddleware(h http.Handler) http.Handler {
 			if !s.validateCSRF(r) {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(`<div class="bg-red-50 border border-red-200 rounded-md p-4"><p class="text-red-700 font-medium">CSRF token validation failed</p></div>`))
+				w.Write([]byte(`<div class="alert alert-error"><p class="font-medium">CSRF token validation failed. Please refresh the page and try again.</p></div>`))
 				return
 			}
 		}

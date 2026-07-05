@@ -151,6 +151,7 @@ func loadTemplates() (templateMap, error) {
 		"dayOfMonth":     dayOfMonth,
 		"monthShort":     monthShort,
 		"timeOnly":       timeOnly,
+		"formatISO":      formatISO,
 		"formatDuration": formatDuration,
 		"formatPercent":  formatPercent,
 		"percentInt":     percentInt,
@@ -209,8 +210,9 @@ func loadTemplates() (templateMap, error) {
 }
 
 // formatTime converts a unix timestamp to a human-readable string.
+// Uses the server's local timezone (configured via TZ env or system).
 func formatTime(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("Mon, Jan 2, 2006 3:04 PM MST")
+	return time.Unix(unix, 0).Format("Mon, Jan 2, 2006 3:04 PM MST")
 }
 
 // formatMoney formats a pb.Money proto as a human-readable price string.
@@ -231,19 +233,19 @@ func formatCents(cents uint64) string {
 
 // formatDate formats a unix timestamp as "Mon, Jan 2, 2006".
 func formatDate(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("Mon, Jan 2, 2006")
+	return time.Unix(unix, 0).Format("Mon, Jan 2, 2006")
 }
 
 // formatDateShort formats as "Jan 2".
 func formatDateShort(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("Jan 2")
+	return time.Unix(unix, 0).Format("Jan 2")
 }
 
 // formatRelative returns a human-friendly relative time string.
 // "Today", "Tomorrow", "In 3 days", "Last week", "2 months ago".
 func formatRelative(unix int64) string {
-	t := time.Unix(unix, 0).UTC()
-	now := time.Now().UTC()
+	t := time.Unix(unix, 0)
+	now := time.Now()
 	diff := t.Sub(now)
 
 	if diff < 0 {
@@ -293,10 +295,10 @@ func isPast(unix int64) bool {
 	return unix < time.Now().Unix()
 }
 
-// isToday returns true if the unix timestamp is today (UTC).
+// isToday returns true if the unix timestamp is today.
 func isToday(unix int64) bool {
-	t := time.Unix(unix, 0).UTC()
-	now := time.Now().UTC()
+	t := time.Unix(unix, 0)
+	now := time.Now()
 	return t.Year() == now.Year() && t.YearDay() == now.YearDay()
 }
 
@@ -308,22 +310,27 @@ func isThisWeek(unix int64) bool {
 
 // dayOfWeek returns the abbreviated day name (Mon, Tue, etc).
 func dayOfWeek(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("Mon")
+	return time.Unix(unix, 0).Format("Mon")
 }
 
 // dayOfMonth returns the day number as a string.
 func dayOfMonth(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("2")
+	return time.Unix(unix, 0).Format("2")
 }
 
 // monthShort returns the abbreviated month name (Jan, Feb, etc).
 func monthShort(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("Jan")
+	return time.Unix(unix, 0).Format("Jan")
 }
 
 // timeOnly returns the time portion as "3:04 PM".
 func timeOnly(unix int64) string {
-	return time.Unix(unix, 0).UTC().Format("3:04 PM")
+	return time.Unix(unix, 0).Format("3:04 PM")
+}
+
+// formatISO returns an ISO 8601 timestamp for use in <time datetime=""> attributes.
+func formatISO(unix int64) string {
+	return time.Unix(unix, 0).Format("2006-01-02T15:04:05Z07:00")
 }
 
 // formatDuration returns a human-friendly duration string.
@@ -438,6 +445,24 @@ func (s *Server) renderPage(w http.ResponseWriter, page string, data interface{}
 	}
 }
 
+// renderNotFound renders a styled 404 page.
+func (s *Server) renderNotFound(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.renderPage(w, "not_found", pageBase{
+		CSRFToken: csrfTokenFromRequest(r),
+	})
+}
+
+// renderError renders a styled 500 error page.
+func (s *Server) renderError(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusInternalServerError)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.renderPage(w, "error", pageBase{
+		CSRFToken: csrfTokenFromRequest(r),
+	})
+}
+
 func (s *Server) renderFragment(w http.ResponseWriter, name string, data interface{}) {
 	// Fragments are defined in fragments.html — use that template set.
 	t, ok := s.tmpls["fragments"]
@@ -484,8 +509,10 @@ func validateString(name, value string, minLen, maxLen int) error {
 // access JSONLD (empty for pages that don't need it) and CSRFToken.
 
 type pageBase struct {
-	JSONLD   template.JS
+	JSONLD    template.JS
 	CSRFToken string
+	MetaDesc  string
+	MetaImage string
 }
 
 type homeData struct {

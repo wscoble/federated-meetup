@@ -39,7 +39,7 @@
 		<div class="day">{{dayOfMonth .StartsAt}}</div>
 	</div>
 	<a href="/events/{{.GroupKey}}/{{.EventID}}" class="event-title">{{.Title}}</a>
-	<p class="event-meta">{{dayOfWeek .StartsAt}}, {{formatDateShort .StartsAt}} · {{timeOnly .StartsAt}}</p>
+	<p class="event-meta"><time datetime="{{formatISO .StartsAt}}" data-format="short">{{dayOfWeek .StartsAt}}, {{formatDateShort .StartsAt}}</time> · <time datetime="{{formatISO .StartsAt}}" data-format="time">{{timeOnly .StartsAt}}</time></p>
 	{{if .Location}}<p class="event-meta mt-2">
 		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
 		{{.Location}}
@@ -48,7 +48,7 @@
 		{{if .Cancelled}}
 		<span class="badge badge-danger">Cancelled</span>
 		{{else}}
-		<span class="badge badge-success">{{formatRelative .StartsAt}}</span>
+		<span class="badge badge-success"><time datetime="{{formatISO .StartsAt}}" data-format="relative">{{formatRelative .StartsAt}}</time></span>
 		{{end}}
 		<a href="/events/{{.GroupKey}}/{{.EventID}}" class="event-link" aria-label="View details for {{.Title}}">Details →</a>
 	</div>

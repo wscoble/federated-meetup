@@ -29,7 +29,7 @@
 		<div class="flex items-start justify-between gap-2 flex-wrap">
 			<div>
 				<a href="/events/{{.GroupKey}}/{{.EventID}}" class="font-semibold" style="color:var(--accent);">{{.EventTitle}}</a>
-				<p class="text-sm text-muted mt-2">{{formatTime .StartsAt}}</p>
+				<p class="text-sm text-muted mt-2"><time datetime="{{formatISO .StartsAt}}" data-format="datetime">{{formatTime .StartsAt}}</time></p>
 			</div>
 			<span class="badge {{if .Confirmed}}badge-success{{else}}badge-warning{{end}}">
 				{{if .Confirmed}}Confirmed{{else}}Pending{{end}}
