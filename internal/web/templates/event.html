@@ -9,6 +9,7 @@
 	<a href="/groups/{{.Group.CanonicalName}}">{{.Group.DisplayName}}</a>
 	<span class="sep" aria-hidden="true">›</span>
 	<span class="current">{{.Event.Title}}</span>
+	<span class="search-hint" aria-hidden="true"><kbd>/</kbd> to search</span>
 </nav>
 
 <!-- Cancelled banner -->
@@ -22,9 +23,11 @@
 <div class="flex gap-4 mb-6">
 	<!-- Date block -->
 	<div class="date-block">
-		<div class="month">{{monthShort .Event.StartsAt}}</div>
-		<div class="day">{{dayOfMonth .Event.StartsAt}}</div>
-		<div class="weekday">{{dayOfWeek .Event.StartsAt}}</div>
+		<time datetime="{{formatISO .Event.StartsAt}}" data-format="short">
+			<div class="month">{{monthShort .Event.StartsAt}}</div>
+			<div class="day">{{dayOfMonth .Event.StartsAt}}</div>
+			<div class="weekday">{{dayOfWeek .Event.StartsAt}}</div>
+		</time>
 	</div>
 
 	<!-- Title + actions -->
@@ -51,7 +54,7 @@
 				<span class="badge badge-danger">CANCELLED</span>
 			</div>
 			{{else}}
-			<p class="text-secondary text-sm">{{formatRelative .Event.StartsAt}}</p>
+			<p class="text-secondary text-sm"><time datetime="{{formatISO .Event.StartsAt}}" data-format="relative">{{formatRelative .Event.StartsAt}}</time></p>
 			{{end}}
 
 			<!-- Share hint -->
@@ -68,8 +71,8 @@
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
 				When
 			</div>
-			<p class="detail-value">{{formatDate .Event.StartsAt}}</p>
-			<p class="text-sm text-secondary">{{timeOnly .Event.StartsAt}} MST</p>
+			<p class="detail-value"><time datetime="{{formatISO .Event.StartsAt}}" data-format="date">{{formatDate .Event.StartsAt}}</time></p>
+			<p class="text-sm text-secondary"><time datetime="{{formatISO .Event.StartsAt}}" data-format="time">{{timeOnly .Event.StartsAt}}</time> MST</p>
 		</div>
 		{{if .Event.Location}}
 		<div class="detail-item">

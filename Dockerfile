@@ -30,6 +30,7 @@ USER app
 ENV HOSTD_ADDR=":8080"
 ENV HOSTD_DB_PATH="/data/fedmeetup.db"
 ENV HOSTD_PROTOCOL_DB="/data/protocol.db"
+ENV TZ="America/Los_Angeles"
 EXPOSE 8080
 
 ENTRYPOINT ["fedmeetup"]

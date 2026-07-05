@@ -111,6 +111,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.renderPage(w, "home", homeData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+			MetaDesc:  "Discover community events across the federation. Find meetups, workshops, and hackathons near you.",
+		},
 		Groups: groups, Events: displayEvents,
 		TodayEvents: today, WeekEvents: thisWeek, LaterEvents: later,
 		Query: query, DateFilter: dateFilter, TotalEvents: len(events),
@@ -127,7 +131,7 @@ func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
 
 	group, err := s.store.GetGroupByCanonicalName(name)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -163,6 +167,10 @@ func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.renderPage(w, "group", groupData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+			MetaDesc:  group.Description,
+		},
 		Group:          group,
 		GroupKey:       group.GroupKey,
 		UpcomingEvents: upcoming,
@@ -182,7 +190,7 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 
 	event, err := s.eventFromProduct(groupKey, eventID)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -215,6 +223,7 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 		pageBase: pageBase{
 			JSONLD:    template.JS(jsonld),
 			CSRFToken: csrfTokenFromRequest(r),
+			MetaDesc:  event.Description,
 		},
 		Event:     event,
 		Group:     group,
@@ -443,13 +452,13 @@ func (s *Server) handleCancelRsvp(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRsvpConfirm(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
 	rsvp, err := s.store.GetRsvpByToken(token)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -1167,7 +1176,7 @@ func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if order.OrderID == "" {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -1215,7 +1224,7 @@ func (s *Server) handleEventICS(w http.ResponseWriter, r *http.Request) {
 
 	event, err := s.eventFromProduct(groupKey, eventID)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -1310,7 +1319,7 @@ func (s *Server) handleGroupICS(w http.ResponseWriter, r *http.Request) {
 
 	group, err := s.store.GetGroupByCanonicalName(name)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -1383,7 +1392,7 @@ func (s *Server) handleGroupRSS(w http.ResponseWriter, r *http.Request) {
 
 	group, err := s.store.GetGroupByCanonicalName(name)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 

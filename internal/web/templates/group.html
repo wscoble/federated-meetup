@@ -86,17 +86,19 @@
 	{{range .PastEvents}}
 	<div class="card event-card opacity-90">
 		<div class="date-badge" style="background: var(--bg-subtle); color: var(--text-muted);">
-			<div class="month">{{monthShort .StartsAt}}</div>
-			<div class="day">{{dayOfMonth .StartsAt}}</div>
+			<time datetime="{{formatISO .StartsAt}}" data-format="short">
+				<div class="month">{{monthShort .StartsAt}}</div>
+				<div class="day">{{dayOfMonth .StartsAt}}</div>
+			</time>
 		</div>
 		<a href="/events/{{$.Group.GroupKey}}/{{.EventID}}" class="event-title">{{.Title}}</a>
-		<p class="event-meta">{{formatDate .StartsAt}}</p>
+		<p class="event-meta"><time datetime="{{formatISO .StartsAt}}" data-format="date">{{formatDate .StartsAt}}</time></p>
 		{{if .Location}}<p class="event-meta mt-2">{{.Location}}</p>{{end}}
 		<div class="event-footer">
 			{{if .Cancelled}}
 			<span class="badge badge-danger">Cancelled</span>
 			{{else}}
-			<span class="badge badge-neutral">{{formatRelative .StartsAt}}</span>
+			<span class="badge badge-neutral"><time datetime="{{formatISO .StartsAt}}" data-format="relative">{{formatRelative .StartsAt}}</time></span>
 			{{end}}
 		</div>
 	</div>

@@ -5,9 +5,22 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta name="color-scheme" content="light dark">
 	<title>{{block "title" .}}Federated Meetup{{end}}</title>
+	{{if .MetaDesc}}<meta name="description" content="{{.MetaDesc}}">{{end}}
+	<!-- Open Graph -->
+	<meta property="og:type" content="website">
+	<meta property="og:site_name" content="Federated Meetup">
+	<meta property="og:title" content="{{block "og_title" .}}Federated Meetup{{end}}">
+	{{if .MetaDesc}}<meta property="og:description" content="{{.MetaDesc}}">{{end}}
+	{{if .MetaImage}}<meta property="og:image" content="{{.MetaImage}}">{{end}}
+	<!-- Twitter -->
+	<meta name="twitter:card" content="summary">
+	<meta name="twitter:title" content="{{block "tw_title" .}}Federated Meetup{{end}}">
+	{{if .MetaDesc}}<meta name="twitter:description" content="{{.MetaDesc}}">{{end}}
 	<link rel="stylesheet" href="/static/styles.css">
 	<script src="/static/htmx.min.js" defer></script>
 	<script src="/static/theme.js" defer></script>
+	<script src="/static/timezone.js" defer></script>
+	<script src="/static/shortcuts.js" defer></script>
 	{{block "head" .}}{{end}}
 </head>
 <body>
@@ -33,7 +46,7 @@
 				<a href="/" aria-current="page">Discover</a>
 				<a href="/my-rsvps">My RSVPs</a>
 				{{block "nav_extra" .}}{{end}}
-				<button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+				<button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode (press T)">
 					<svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
 						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
 					</svg>

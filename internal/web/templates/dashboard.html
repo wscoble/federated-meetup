@@ -109,7 +109,7 @@
 	<div class="flex items-center justify-between gap-2 mb-4 flex-wrap">
 		<div>
 			<a href="/events/{{$.GroupKey}}/{{.EventID}}" class="font-semibold" style="font-size:1.1rem;">{{.Title}}</a>
-			<p class="text-sm text-muted mt-2">{{formatTime .StartsAt}}</p>
+			<p class="text-sm text-muted mt-2"><time datetime="{{formatISO .StartsAt}}" data-format="datetime">{{formatTime .StartsAt}}</time></p>
 		</div>
 		<div class="flex items-center gap-3 flex-wrap">
 			<a href="/dashboard/events/{{.EventID}}/attendees.csv" class="btn btn-outline btn-sm" target="_blank" rel="noopener" download>

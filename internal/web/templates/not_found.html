@@ -1,0 +1,19 @@
+{{template "base" .}}
+{{define "title"}}Page Not Found — Federated Meetup{{end}}
+{{define "content"}}
+<div class="empty-state" style="min-height: 50vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" style="width: 80px; height: 80px;">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+	</svg>
+	<h1 style="font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem;">404</h1>
+	<h3 style="margin-bottom: 0.5rem;">Page not found</h3>
+	<p>We couldn't find what you're looking for. The page may have moved or never existed.</p>
+	<div class="flex gap-2 justify-center" style="margin-top: 1rem;">
+		<a href="/" class="btn btn-primary">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+			Browse events
+		</a>
+		<a href="/my-rsvps" class="btn btn-outline">My RSVPs</a>
+	</div>
+</div>
+{{end}}

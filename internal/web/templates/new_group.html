@@ -19,7 +19,8 @@
 					<input type="text" id="display_name" name="display_name" required maxlength="256"
 						value="{{.PrefillName}}">
 					<p class="form-hint">The public name of your group, e.g. "Vegas Programmers".</p>
-				</div>
+					<p id="slug-preview" class="form-hint" style="display:none;">Your group URL will be: <code id="slug-url">/groups/your-group-name</code></p>
+					</div>
 			</div>
 			<div class="form-row">
 				<div>
@@ -53,4 +54,31 @@
 		</form>
 	</div>
 </div>
+<script>
+(function() {
+	var input = document.getElementById('display_name');
+	var preview = document.getElementById('slug-preview');
+	var urlEl = document.getElementById('slug-url');
+	if (!input || !preview || !urlEl) return;
+	function slugify(text) {
+		return text.toLowerCase()
+			.trim()
+			.replace(/[^a-z0-9\s-]/g, '')
+			.replace(/[\s_]+/g, '-')
+			.replace(/-+/g, '-')
+			.replace(/^-+|-+$/g, '');
+	}
+	function update() {
+		var slug = slugify(input.value);
+		if (slug) {
+			urlEl.textContent = '/groups/' + slug;
+			preview.style.display = '';
+		} else {
+			preview.style.display = 'none';
+		}
+	}
+	input.addEventListener('input', update);
+	update();
+})();
+</script>
 {{end}}
