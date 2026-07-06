@@ -3,23 +3,64 @@
 {{define "content"}}
 <div class="mb-6">
 	<h1 class="mb-2">My RSVPs</h1>
-	<p class="text-secondary text-sm">Enter your email to see all your RSVPs across events.</p>
+	{{if not (or .LinkSentTo .SessionOK .LinkInvalid)}}
+	<p class="text-secondary text-sm">Enter your email and we'll send you a one-time sign-in link. No password, no account.</p>
+	{{end}}
 </div>
 
-{{if not .Email}}
+{{/* State 1: no token, no link-sent, no link-invalid — email-entry form. */}}
+{{if and (not .LinkSentTo) (not .SessionOK) (not .LinkInvalid)}}
 <div class="card card-lg max-w-md">
-	<form method="GET" action="/my-rsvps">
+	<form method="POST" action="/my-rsvps/login">
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 		<div class="form-row">
 			<label for="email">Email</label>
-			<input type="email" id="email" name="email" required>
+			<input type="email" id="email" name="email" required autocomplete="email">
 		</div>
-		<button type="submit" class="btn btn-primary">View My RSVPs</button>
+		<button type="submit" class="btn btn-primary btn-full">Email me a sign-in link</button>
+	</form>
+	<p class="text-muted text-sm mt-3">For your security, the link is single-use and expires in 24 hours.</p>
+</div>
+{{end}}
+
+{{/* State 2: "check your email" — same page regardless of whether the email is registered. */}}
+{{if .LinkSentTo}}
+<div class="card card-lg max-w-md text-center">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:48px;height:48px;margin:0 auto 0.75rem;color:var(--accent);">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+	</svg>
+	<h2>Check your email</h2>
+	<p>If an account exists for that address, we've sent a one-time sign-in link to <span class="font-medium">{{.LinkSentTo}}</span>.</p>
+	<p class="text-muted text-sm mt-3">Don't see it? Check your spam folder, or <a href="/my-rsvps">try again</a>.</p>
+</div>
+{{end}}
+
+{{/* State 3: link invalid (bogus, expired, or already used) — soft hint + form. */}}
+{{if and .LinkInvalid (not .LinkSentTo) (not .SessionOK)}}
+<div class="card card-lg max-w-md">
+	<div class="alert alert-warning mb-4">
+		<p>This sign-in link is invalid or expired. It may have already been used, or the 24-hour window has passed.</p>
+	</div>
+	<form method="POST" action="/my-rsvps/login">
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+		<div class="form-row">
+			<label for="email">Email</label>
+			<input type="email" id="email" name="email" required autocomplete="email">
+		</div>
+		<button type="submit" class="btn btn-primary btn-full">Email me a new sign-in link</button>
 	</form>
 </div>
-{{else}}
+{{end}}
+
+{{/* State 4: session valid — render the RSVP list. */}}
+{{if .SessionOK}}
 <div class="flex items-center justify-between gap-2 mb-4 flex-wrap">
 	<p class="text-secondary text-sm">Showing RSVPs for <span class="font-medium">{{.Email}}</span></p>
-	<a href="/my-rsvps" class="btn btn-ghost btn-sm">← Check different email</a>
+	<form method="POST" action="/my-rsvps/logout" class="inline">
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+		<input type="hidden" name="token" value="">
+		<button type="submit" class="btn btn-ghost btn-sm">← Sign out</button>
+	</form>
 </div>
 
 {{if .Rsvps}}
@@ -29,7 +70,9 @@
 		<div class="flex items-start justify-between gap-2 flex-wrap">
 			<div>
 				<a href="/events/{{.GroupKey}}/{{.EventID}}" class="font-semibold" style="color:var(--accent);">{{.EventTitle}}</a>
+				{{if gt .StartsAt 0}}
 				<p class="text-sm text-muted mt-2"><time datetime="{{formatISO .StartsAt}}" data-format="datetime">{{formatTime .StartsAt}}</time></p>
+				{{end}}
 			</div>
 			<span class="badge {{if .Confirmed}}badge-success{{else}}badge-warning{{end}}">
 				{{if .Confirmed}}Confirmed{{else}}Pending{{end}}
@@ -55,9 +98,7 @@
 				{{if not (isPast .StartsAt)}}
 				<form method="POST" action="/my-rsvps/cancel" class="inline">
 					<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-					<input type="hidden" name="email" value="{{$.Email}}">
-					<input type="hidden" name="group_key" value="{{.GroupKey}}">
-					<input type="hidden" name="event_id" value="{{.EventID}}">
+					<input type="hidden" name="rsvp_token" value="{{.Token}}">
 					<button type="submit" class="btn btn-danger" onclick="return confirm('Cancel this RSVP?')">
 						Cancel RSVP
 					</button>
@@ -81,7 +122,7 @@
 	</a>
 </div>
 {{else}}
-<!-- Empty state -->
+<!-- Empty state — no RSVPs for this email -->
 <div class="card empty-state">
 	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
 		<path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>

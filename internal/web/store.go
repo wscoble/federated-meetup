@@ -96,6 +96,12 @@ func (s *Store) migrate() error {
 			group_key  TEXT NOT NULL DEFAULT '',
 			expires_at INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS my_rsvps_sessions (
+			token      TEXT PRIMARY KEY,
+			email      TEXT NOT NULL UNIQUE,
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL DEFAULT 0
+		)`,
 		`CREATE TABLE IF NOT EXISTS orders (
 			order_id         TEXT PRIMARY KEY,
 			group_key        TEXT NOT NULL DEFAULT '',
@@ -109,6 +115,7 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_events_start ON events_cache(starts_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_group ON events_cache(group_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_rsvps_event ON rsvps(event_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_my_rsvps_sessions_email ON my_rsvps_sessions(email)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -485,6 +492,119 @@ func (s *Store) MarkRsvpAttended(eventID, email string) error {
 		`UPDATE rsvps SET attended = 1 WHERE event_id = ? AND user_email = ?`,
 		eventID, email,
 	)
+	return err
+}
+
+// DeleteRsvpByToken removes the RSVP row matching the given rsvp_token.
+// Returns sql.ErrNoRows if no row matched. Used to burn the RSVP token
+// after a successful cancellation (so a replay returns 404, not silent
+// re-cancellation).
+func (s *Store) DeleteRsvpByToken(token string) error {
+	res, err := s.db.Exec(`DELETE FROM rsvps WHERE token = ?`, token)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ---- My-RSVPs magic-link sessions ----
+//
+// The anti-dox flow: a user enters their email at /my-rsvps/login, the
+// server issues a single-use session token bound to that email, and the
+// token is delivered via the inbox (the side channel the legitimate
+// owner controls). The token is required to view the user's RSVP list
+// — knowledge of the email alone is NOT a credential.
+//
+// The `email` column is UNIQUE so that re-issuing for the same email
+// overwrites the prior session (defends against "old link still works
+// after re-issue" attacks — see anti-dox test #8).
+//
+// See SECURITY.md, "Dox-by-attendance" (surface #1) and
+// "Magic-link replay" (surface #4).
+
+// DefaultMyRsvpsSessionTTL is the default lifetime of a my-rsvps
+// magic-link session token. Per SECURITY.md, the bound on the damage
+// from a leaked URL is the TTL.
+const DefaultMyRsvpsSessionTTL = 24 * time.Hour
+
+// MyRsvpsSession is a single magic-link session row.
+type MyRsvpsSession struct {
+	Token     string
+	Email     string
+	ExpiresAt int64
+	CreatedAt int64
+}
+
+// CreateMyRsvpsSession inserts (or overwrites, by email) a session
+// for the given email. If ttl is non-positive, DefaultMyRsvpsSessionTTL
+// is used. The email column is UNIQUE, so re-issuing for the same
+// email invalidates the prior session.
+func (s *Store) CreateMyRsvpsSession(token, email string, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = DefaultMyRsvpsSessionTTL
+	}
+	now := s.now().Unix()
+	expiresAt := s.now().Add(ttl).Unix()
+	_, err := s.db.Exec(
+		`INSERT INTO my_rsvps_sessions (token, email, expires_at, created_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(email) DO UPDATE SET
+		   token=excluded.token,
+		   expires_at=excluded.expires_at,
+		   created_at=excluded.created_at`,
+		token, email, expiresAt, now,
+	)
+	return err
+}
+
+// ConsumeMyRsvpsSession atomically reads and deletes the session for the
+// given token. Returns sql.ErrNoRows if no such session exists OR if
+// the session is expired.
+//
+// The DELETE...RETURNING form means: one SQL statement, one connection
+// acquisition, one round-trip. This eliminates the read-then-delete
+// TOCTOU race (where two concurrent requests could read the same
+// session) and avoids the connection-pool deadlock that the previous
+// two-call pattern caused when a test (or a real client) holds another
+// connection open across the request — modernc.org/sqlite is
+// connection-bound, so a held *sql.Rows would block the second
+// statement under SetMaxOpenConns(1).
+//
+// IMPORTANT: this method is destructive. Once it returns a non-error
+// result, the session row is gone. Callers must NOT re-call it.
+func (s *Store) ConsumeMyRsvpsSession(token string) (MyRsvpsSession, error) {
+	var sess MyRsvpsSession
+	err := s.db.QueryRow(
+		`DELETE FROM my_rsvps_sessions WHERE token = ?
+		 RETURNING token, email, expires_at, created_at`,
+		token,
+	).Scan(&sess.Token, &sess.Email, &sess.ExpiresAt, &sess.CreatedAt)
+	if err != nil {
+		return MyRsvpsSession{}, err
+	}
+	if sess.ExpiresAt > 0 && sess.ExpiresAt < s.now().Unix() {
+		// The DELETE already removed the row. We've consumed the
+		// session even though it was expired. Surface this as
+		// ErrNoRows to the caller; they don't need to know the row
+		// is gone — they just need to know the session is unusable.
+		return MyRsvpsSession{}, sql.ErrNoRows
+	}
+	return sess, nil
+}
+
+// DeleteMyRsvpsSession removes a session by token. Used by the
+// logout flow, which does NOT need to read the session — just
+// destroy it. For the read-then-burn flow (the magic-link handler)
+// use ConsumeMyRsvpsSession instead.
+func (s *Store) DeleteMyRsvpsSession(token string) error {
+	_, err := s.db.Exec(`DELETE FROM my_rsvps_sessions WHERE token = ?`, token)
 	return err
 }
 

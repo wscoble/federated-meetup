@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
@@ -22,6 +23,7 @@ import (
 	"github.com/wscoble/federated-meetup/internal/email"
 	"github.com/wscoble/federated-meetup/internal/host"
 	"github.com/wscoble/federated-meetup/internal/product"
+	"golang.org/x/time/rate"
 )
 
 // Server is the web frontend server. It wraps the host.Service (protocol),
@@ -35,6 +37,40 @@ type Server struct {
 	email   email.EmailSender
 	baseURL string                          // configured base URL for absolute links (e.g. magic-link emails)
 	ap      *activitypub.ActivityPubService // optional: ActivityPub delivery
+
+	// ipLimiters is a per-IP token-bucket map used to throttle
+	// /my-rsvps/login (and any other email-targeted endpoint added
+	// later) to prevent bulk enumeration / inbox-spam. See SECURITY.md
+	// "Email enumeration / harassment" (surface #3) and the anti-dox
+	// skill, Check 5.
+	ipLimitersMu sync.Mutex
+	ipLimiters   map[string]*ipBucket
+}
+
+// ipBucket wraps a rate.Limiter with its own mutex. The wrapping mutex
+// guards lazy-creation of buckets and the limiter's own internal mutex
+// is what serializes Allow() calls per bucket.
+type ipBucket struct {
+	mu     sync.Mutex
+	bucket *rate.Limiter
+}
+
+// ipAllow returns true if a request from the given IP is permitted
+// under the supplied rate/burst policy. Lazy-creates a bucket per IP.
+// An empty ip (test env, unix socket) is always allowed — the caller
+// is responsible for not exposing those paths in production.
+func (s *Server) ipAllow(ip string, r, burst float64) bool {
+	if ip == "" {
+		return true
+	}
+	s.ipLimitersMu.Lock()
+	b, ok := s.ipLimiters[ip]
+	if !ok {
+		b = &ipBucket{bucket: rate.NewLimiter(rate.Limit(r), int(burst))}
+		s.ipLimiters[ip] = b
+	}
+	s.ipLimitersMu.Unlock()
+	return b.bucket.Allow()
 }
 
 // NewServer constructs a web Server. The host and product services may be nil
@@ -50,13 +86,14 @@ func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store, em
 		emailSender = email.NewNoopSender()
 	}
 	return &Server{
-		host:    hostSvc,
-		product: prodSvc,
-		store:   store,
-		tmpls:   tmpls,
-		now:     time.Now,
-		email:   emailSender,
-		baseURL: baseURL,
+		host:       hostSvc,
+		product:    prodSvc,
+		store:      store,
+		tmpls:      tmpls,
+		now:        time.Now,
+		email:      emailSender,
+		baseURL:    baseURL,
+		ipLimiters: make(map[string]*ipBucket),
 	}, nil
 }
 
@@ -96,8 +133,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /rsvp/{token}", s.handleRsvpConfirm)
 	mux.HandleFunc("POST /rsvp/{token}/confirm", s.handleRsvpConfirmPost)
 
-	// My RSVPs
+	// My RSVPs (anti-dox magic-link flow — see SECURITY.md, surface #1)
 	mux.HandleFunc("GET /my-rsvps", s.handleMyRsvps)
+	mux.HandleFunc("POST /my-rsvps/login", s.handleMyRsvpsLogin)
+	mux.HandleFunc("POST /my-rsvps/logout", s.handleMyRsvpsLogout)
 	mux.HandleFunc("POST /my-rsvps/cancel", s.handleCancelRsvp)
 
 	// Organizer dashboard (auth-gated)
@@ -509,6 +548,22 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
+// generateHighEntropyToken generates a 64-char hex token (32 bytes of
+// crypto/rand → 256 bits of entropy). Used for magic-link session and
+// RSVP cancellation tokens, where the spec calls for "256-bit
+// entropy" (SECURITY.md, "Brute-force session tokens"). The shorter
+// generateToken above is kept for public/cosmetic IDs (event_id,
+// order_id, etc.) where a guess of the value has no security impact.
+func generateHighEntropyToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: time + counter, deterministic on nanosec but
+		// only reachable if the kernel's CSPRNG is broken.
+		return fmt.Sprintf("%032x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
 // validateString checks length bounds and UTF-8 validity (mirrors
 // internal/group.validateStringField).
 func validateString(name, value string, minLen, maxLen int) error {
@@ -619,7 +674,23 @@ type checkoutData struct {
 
 type myRsvpsData struct {
 	pageBase
+	// SessionOK is true when a valid magic-link token was presented and
+	// we are rendering the user's RSVP list. (Surface #1: dox-by-attendance.)
+	SessionOK bool
+	// Email is the email whose RSVPs we are rendering, populated only
+	// when SessionOK is true. The email is shown to the user so they
+	// can confirm they are looking at the right account.
 	Email string
+	// LinkSentTo is the email we just sent a magic link to on a POST
+	// to /my-rsvps/login. The same confirmation page is rendered
+	// regardless of whether the email is registered — no enumeration.
+	LinkSentTo string
+	// LinkInvalid is true when a token was supplied but did not
+	// validate (unknown, expired, or already used). The page shows a
+	// soft "link expired or invalid" hint and the email-entry form.
+	LinkInvalid bool
+	// Rsvps is the list of RSVPs for the authenticated email.
+	// Empty when SessionOK is false.
 	Rsvps []myRsvpView
 }
 

@@ -46,6 +46,19 @@ type OrganizerNotifyData struct {
 	EventDate string
 }
 
+// MyRsvpsLinkData is the data for the /my-rsvps magic-link email.
+//
+// SECURITY: the body MUST be content-free. The only recipient-specific
+// content allowed is the recipient's email (already in the To: header)
+// and the magic link. No event names, no group names, no RSVP details
+// — a third party intercepting the email must not learn what the
+// recipient has RSVPed to. See SECURITY.md "Email enumeration /
+// harassment" (surface #3) and the anti-dox skill Check 7.
+type MyRsvpsLinkData struct {
+	MagicLink string // absolute URL
+	ExpiresIn string // human-readable TTL, e.g. "24 hours"
+}
+
 // ---- Template definitions (plain text) ----
 
 const rsvpConfirmTpl = `Hi,
@@ -107,13 +120,37 @@ Event date: {{.EventDate}}
 — Federated Meetup
 `
 
+// myRsvpsLinkTpl is the /my-rsvps magic-link delivery email.
+//
+// Content-free by design. The recipient's email is in the To: header
+// and the magic link is the only thing gated by the email; the body
+// itself says nothing about what the recipient has RSVPed to. This
+// is Check 7 of the anti-dox skill: the side channel must not be
+// a data leak.
+const myRsvpsLinkTpl = `Hi,
+
+Someone (hopefully you) requested a sign-in link to view their RSVPs
+on Federated Meetup.
+
+If that was you, click the link below to view your RSVPs. The link
+will expire in {{.ExpiresIn}} and can be used only once.
+
+  {{.MagicLink}}
+
+If you did not request this, you can safely ignore this email —
+nothing was changed, and your account (if any) is unaffected.
+
+— Federated Meetup
+`
+
 // ---- Render functions ----
 
 var (
-	tplRsvpConfirm    = template.Must(template.New("rsvp_confirm").Parse(rsvpConfirmTpl))
-	tplRsvpConfirmed  = template.Must(template.New("rsvp_confirmed").Parse(rsvpConfirmedTpl))
-	tplEventReminder  = template.Must(template.New("event_reminder").Parse(eventReminderTpl))
+	tplRsvpConfirm     = template.Must(template.New("rsvp_confirm").Parse(rsvpConfirmTpl))
+	tplRsvpConfirmed   = template.Must(template.New("rsvp_confirmed").Parse(rsvpConfirmedTpl))
+	tplEventReminder   = template.Must(template.New("event_reminder").Parse(eventReminderTpl))
 	tplOrganizerNotify = template.Must(template.New("organizer_notify").Parse(organizerNotifyTpl))
+	tplMyRsvpsLink     = template.Must(template.New("my_rsvps_link").Parse(myRsvpsLinkTpl))
 )
 
 // RenderRsvpConfirm renders the RSVP confirmation (magic-link) email body.
@@ -150,6 +187,17 @@ func RenderOrganizerNotify(data OrganizerNotifyData) (subject, body string, err 
 		return "", "", fmt.Errorf("email: render organizer_notify: %w", err)
 	}
 	return fmt.Sprintf("New RSVP for %s from %s", data.EventTitle, data.Name), buf.String(), nil
+}
+
+// RenderMyRsvpsLink renders the /my-rsvps magic-link delivery email.
+// The body is content-free (no RSVP/event/group data) — see the
+// security note on MyRsvpsLinkData above.
+func RenderMyRsvpsLink(data MyRsvpsLinkData) (subject, body string, err error) {
+	var buf bytes.Buffer
+	if err := tplMyRsvpsLink.Execute(&buf, data); err != nil {
+		return "", "", fmt.Errorf("email: render my_rsvps_link: %w", err)
+	}
+	return "View your RSVPs on Federated Meetup", buf.String(), nil
 }
 
 // ---- Helpers ----

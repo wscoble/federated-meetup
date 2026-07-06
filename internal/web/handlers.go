@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,36 @@ import (
 	emailpkg "github.com/wscoble/federated-meetup/internal/email"
 	productrecurrence "github.com/wscoble/federated-meetup/internal/product"
 )
+
+// myRsvpsSessionKey is the query-string key for the /my-rsvps magic-link
+// session token. Surfaces in URLs — that's the design: the token is the
+// credential, the URL is the side channel, and the bound on damage is
+// the 24h TTL + single-use enforcement in the storage layer.
+const myRsvpsSessionKey = "token"
+
+// clientIP extracts the best-effort client IP from the request.
+// Honors CF-Connecting-IP (Cloudflare), then X-Forwarded-For (first
+// IP, if set), and finally r.RemoteAddr via net.SplitHostPort. If
+// splitting RemoteAddr fails, the raw value is returned so the rate
+// limiter can still key on it (worst case: per-connection rather than
+// per-client, which is only a problem if many users share a NAT).
+func clientIP(r *http.Request) string {
+	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
+		return strings.TrimSpace(v)
+	}
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		// First entry is the original client; comma-separated list.
+		if i := strings.Index(v, ","); i >= 0 {
+			return strings.TrimSpace(v[:i])
+		}
+		return strings.TrimSpace(v)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
 
 // ---- Public pages ----
 
@@ -391,59 +422,195 @@ func (s *Server) handlePurchaseTicket(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/checkout/"+order.OrderId, http.StatusSeeOther)
 }
 
-// ---- My RSVPs ----
+// ---- My RSVPs (anti-dox magic-link flow) ----
+//
+// The /my-rsvps endpoint is gated by a magic-link session token bound
+// to a specific email. Knowledge of the email alone is NOT a credential
+// — that was the original IDOR-by-email bug. The flow is:
+//
+//   1. GET  /my-rsvps              → email-entry form (no token).
+//   2. POST /my-rsvps/login {email} → issues a single-use session
+//                                     token, sends the magic link via
+//                                     the inbox, renders "check your
+//                                     email" (no enumeration).
+//   3. GET  /my-rsvps?token=X      → validates the session token,
+//                                     lists the user's RSVPs, then
+//                                     burns the session (single-use).
+//   4. POST /my-rsvps/logout       → drops the current session token
+//                                     and re-renders the form.
+//   5. POST /my-rsvps/cancel {rsvp_token} → burns the rsvp_token and
+//                                     cancels the matching RSVP.
+//
+// See SECURITY.md, surfaces #1 (dox-by-attendance), #3 (enumeration /
+// harassment), #4 (magic-link replay), #5 (CSRF), and the anti-dox
+// skill. All seven checks are addressed by this flow.
 
-// handleMyRsvps shows all RSVPs for the current user (by email query param).
+// handleMyRsvps renders the /my-rsvps page in one of four states:
+//   1. No token: email-entry form (CSRFToken populated).
+//   2. Token invalid / expired / already-used: form + "link invalid"
+//      hint (LinkInvalid: true).
+//   3. Token valid + RSVPs: list view (SessionOK: true, Email: X).
+//   4. POST /my-rsvps/login just ran: "check your email" (LinkSentTo).
 func (s *Server) handleMyRsvps(w http.ResponseWriter, r *http.Request) {
-	email := strings.TrimSpace(r.URL.Query().Get("email"))
-
-	var rsvps []myRsvpView
-	if email != "" {
-		// Get RSVPs from SQLite store
-		records, err := s.store.ListRsvpsByEmail(email)
-		if err == nil {
-			for _, rec := range records {
-				eventTitle := "Unknown event"
-				if event, err := s.eventFromProduct(rec.GroupKey, rec.EventID); err == nil {
-					eventTitle = event.Title
-				}
-				rsvps = append(rsvps, myRsvpView{
-					GroupKey:   rec.GroupKey,
-					EventID:    rec.EventID,
-					EventTitle: eventTitle,
-					StartsAt:   0,
-					Confirmed:  rec.Confirmed,
-					Token:      rec.Token,
-				})
-			}
-		}
-	}
-
-	s.renderPage(w, "my_rsvps", myRsvpsData{
+	data := myRsvpsData{
 		pageBase: pageBase{
 			CSRFToken: csrfTokenFromRequest(r),
 		},
-		Email: email,
-		Rsvps: rsvps,
-	})
-}
+	}
 
-// handleCancelRsvp cancels (deletes) a confirmed RSVP.
-func (s *Server) handleCancelRsvp(w http.ResponseWriter, r *http.Request) {
-	email := r.FormValue("email")
-	groupKey := r.FormValue("group_key")
-	eventID := r.FormValue("event_id")
-
-	if email == "" || groupKey == "" || eventID == "" {
-		http.Error(w, "email, group_key, and event_id required", http.StatusBadRequest)
+	token := r.URL.Query().Get(myRsvpsSessionKey)
+	if token == "" {
+		// State 1: email-entry form. Nothing else to set.
+		s.renderPage(w, "my_rsvps", data)
 		return
 	}
 
-	if err := s.store.CancelRsvp(groupKey, eventID, email); err != nil {
-		log.Printf("web: cancel RSVP error: %v", err)
+	// Consume the session atomically (read + burn in one round-trip).
+	// This is the correct ordering for a single-use session: the
+	// moment we authenticate the user, the session is burned. If
+	// rendering then fails, the user just requests a new link —
+	// which is the desired single-use semantic. The atomic
+	// DELETE...RETURNING also avoids the connection-pool deadlock
+	// that the previous read-then-delete pattern caused.
+	sess, err := s.store.ConsumeMyRsvpsSession(token)
+	if err != nil {
+		// State 2: token did not validate. The handler does NOT
+		// enumerate (it does not say "no such email" vs "expired" —
+		// both look the same to the attacker).
+		data.LinkInvalid = true
+		s.renderPage(w, "my_rsvps", data)
+		return
 	}
 
-	http.Redirect(w, r, "/my-rsvps?email="+email, http.StatusSeeOther)
+	// List the user's RSVPs, inflate event titles.
+	records, _ := s.store.ListRsvpsByEmail(sess.Email)
+	var views []myRsvpView
+	for _, rec := range records {
+		eventTitle := "Unknown event"
+		var startsAt int64
+		if event, err := s.eventFromProduct(rec.GroupKey, rec.EventID); err == nil {
+			eventTitle = event.Title
+			startsAt = event.StartsAt
+		}
+		views = append(views, myRsvpView{
+			GroupKey:   rec.GroupKey,
+			EventID:    rec.EventID,
+			EventTitle: eventTitle,
+			StartsAt:   startsAt,
+			Confirmed:  rec.Confirmed,
+			Token:      rec.Token,
+		})
+	}
+
+	data.SessionOK = true
+	data.Email = sess.Email
+	data.Rsvps = views
+	s.renderPage(w, "my_rsvps", data)
+}
+
+// handleMyRsvpsLogin issues a magic-link session for the given email
+// and sends the link via the inbox. The handler is intentionally
+// non-enumerating: it always renders the same "check your email" page
+// and never reveals whether the email is registered or whether the
+// email was actually sent.
+//
+// Rate-limited per IP (0.2 req/s, burst 5) to defeat bulk
+// enumeration / inbox-spam. The rate is per SECURITY.md "Email
+// enumeration / harassment" (surface #3).
+func (s *Server) handleMyRsvpsLogin(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !s.ipAllow(ip, 0.2, 5) {
+		http.Error(w, "too many requests, slow down", http.StatusTooManyRequests)
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	if err := validateString("email", email, 3, 256); err != nil {
+		// Validation failure is the same UX as success (no enumeration),
+		// but we do show the form again rather than the "check your
+		// email" page — an empty email is not a real identifier, so
+		// the user needs to fix the input.
+		s.renderPage(w, "my_rsvps", myRsvpsData{
+			pageBase: pageBase{CSRFToken: csrfTokenFromRequest(r)},
+		})
+		return
+	}
+
+	sessToken := generateHighEntropyToken()
+	if err := s.store.CreateMyRsvpsSession(sessToken, email, DefaultMyRsvpsSessionTTL); err != nil {
+		// Storage failure is logged but does not surface. Render the
+		// same page anyway (no enumeration) so the user can retry.
+		log.Printf("web: create my-rsvps session for %s: %v", email, err)
+	}
+
+	// Build the absolute magic-link URL and send the email. The body
+	// is content-free (no event names, no group names) per SECURITY.md
+	// surface #3 and the anti-dox Check 7. The email is in the
+	// recipient field only; it does NOT appear in the magic-link URL.
+	magicLink := fmt.Sprintf("%s/my-rsvps?%s=%s", s.absoluteBaseURL(r), myRsvpsSessionKey, sessToken)
+	subject, body, renderErr := emailpkg.RenderMyRsvpsLink(emailpkg.MyRsvpsLinkData{
+		MagicLink:  magicLink,
+		ExpiresIn:  "24 hours",
+	})
+	if renderErr != nil {
+		log.Printf("web: render my-rsvps link email: %v", renderErr)
+	} else if err := s.email.Send(r.Context(), email, subject, body); err != nil {
+		log.Printf("web: send my-rsvps link email to %s: %v", email, err)
+	}
+
+	// ALWAYS render the same "check your email" page. Whether the
+	// email is registered, the session was created, or the email was
+	// sent successfully — the user sees the same response.
+	s.renderPage(w, "my_rsvps", myRsvpsData{
+		pageBase:   pageBase{CSRFToken: csrfTokenFromRequest(r)},
+		LinkSentTo: email,
+	})
+}
+
+// handleMyRsvpsLogout deletes the current session token (form value
+// or query string) and re-renders the email-entry form. Idempotent.
+func (s *Server) handleMyRsvpsLogout(w http.ResponseWriter, r *http.Request) {
+	tok := r.FormValue(myRsvpsSessionKey)
+	if tok == "" {
+		tok = r.URL.Query().Get(myRsvpsSessionKey)
+	}
+	if tok != "" {
+		_ = s.store.DeleteMyRsvpsSession(tok)
+	}
+	s.renderPage(w, "my_rsvps", myRsvpsData{
+		pageBase: pageBase{CSRFToken: csrfTokenFromRequest(r)},
+	})
+}
+
+// handleCancelRsvp cancels (deletes) the RSVP identified by the
+// unguessable rsvp_token. The token is burned on use so a replay
+// returns 404. Email + group_key + event_id is NOT a credential
+// (see SECURITY.md, surface #2).
+func (s *Server) handleCancelRsvp(w http.ResponseWriter, r *http.Request) {
+	rsvpToken := r.FormValue("rsvp_token")
+	if rsvpToken == "" {
+		http.Error(w, "rsvp_token required", http.StatusBadRequest)
+		return
+	}
+
+	rsvp, err := s.store.GetRsvpByToken(rsvpToken)
+	if err != nil {
+		http.Error(w, "rsvp not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.store.CancelRsvp(rsvp.GroupKey, rsvp.EventID, rsvp.UserEmail); err != nil {
+		log.Printf("web: cancel RSVP %s/%s/%s: %v", rsvp.GroupKey, rsvp.EventID, rsvp.UserEmail, err)
+		http.Error(w, "failed to cancel", http.StatusInternalServerError)
+		return
+	}
+
+	// Burn the token. A replay will hit GetRsvpByToken → 404.
+	_ = s.store.DeleteRsvpByToken(rsvpToken)
+
+	// Redirect to the email-entry form (NOT back to a list of someone
+	// else's RSVPs; the email is not the credential anymore).
+	http.Redirect(w, r, "/my-rsvps", http.StatusSeeOther)
 }
 
 // ---- RSVP magic-link flow ----
@@ -510,10 +677,10 @@ func (s *Server) handleRsvpConfirmPost(w http.ResponseWriter, r *http.Request) {
 		groupName = g.DisplayName
 	}
 
-	cancelURL := fmt.Sprintf("%s/my-rsvps?email=%s", s.baseURL, rsvp.UserEmail)
-	if s.baseURL == "" {
-		cancelURL = fmt.Sprintf("/my-rsvps?email=%s", rsvp.UserEmail)
-	}
+	// Direct link to the RSVP management flow — the user types their
+	// email there and gets a fresh magic link. The cancel URL is no
+	// longer a per-user auto-login; the email is not the credential.
+	cancelURL := fmt.Sprintf("%s/my-rsvps", s.absoluteBaseURL(r))
 
 	subject, body, renderErr := emailpkg.RenderRsvpConfirmed(emailpkg.RsvpConfirmedData{
 		EventTitle:    eventTitle,
