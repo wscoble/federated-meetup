@@ -4,6 +4,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -37,6 +39,14 @@ type Server struct {
 	email   email.EmailSender
 	baseURL string                          // configured base URL for absolute links (e.g. magic-link emails)
 	ap      *activitypub.ActivityPubService // optional: ActivityPub delivery
+
+	// forceSecureCookies gates the Secure: true flag on session/CSRF
+	// cookies (C-5 in AUDIT-2026-07-06) and HSTS (H-6). Production sets
+	// it false (so production TLS termination guarantees the Secure
+	// flag is meaningful); dev/CI sets it true so cookies and HSTS are
+	// not emitted over plain HTTP. Wired from FEDMEETUP_INSECURE_COOKIES
+	// in the server constructor — see cmd/fedmeetup/main.go.
+	forceSecureCookies bool
 
 	// ipLimiters is a per-IP token-bucket map used to throttle
 	// /my-rsvps/login (and any other email-targeted endpoint added
@@ -86,15 +96,25 @@ func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store, em
 		emailSender = email.NewNoopSender()
 	}
 	return &Server{
-		host:       hostSvc,
-		product:    prodSvc,
-		store:      store,
-		tmpls:      tmpls,
-		now:        time.Now,
-		email:      emailSender,
-		baseURL:    baseURL,
-		ipLimiters: make(map[string]*ipBucket),
+		host:              hostSvc,
+		product:           prodSvc,
+		store:             store,
+		tmpls:             tmpls,
+		now:               time.Now,
+		email:             emailSender,
+		baseURL:           baseURL,
+		ipLimiters:        make(map[string]*ipBucket),
+		forceSecureCookies: shouldForceInsecureCookies(),
 	}, nil
+}
+
+// shouldForceInsecureCookies reports whether dev-mode cookie emission
+// (Secure: false, HSTS off) should be enabled. Default is false: any
+// deployment that has set up TLS termination should get Secure cookies.
+// Dev / CI / local-no-TLS sets FEDMEETUP_INSECURE_COOKIES=1.
+func shouldForceInsecureCookies() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FEDMEETUP_INSECURE_COOKIES")))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 // SetClock overrides the time source. Test-only.
@@ -546,6 +566,18 @@ func generateToken() string {
 		return fmt.Sprintf("%032x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// organizerTokenFingerprint returns a short, non-reversible identifier
+// for an organizer token. Safe to log for audit correlation. The token
+// itself is the organizer's only credential and must never be written
+// to logs (C-4 in AUDIT-2026-07-06). The 8-hex-char output gives ~32
+// bits of distinguishing power per group — enough to spot token reuse
+// or to grep "did this group ever get recreated" while remaining
+// safe to expose to a log aggregator.
+func organizerTokenFingerprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", sum[:4])
 }
 
 // generateHighEntropyToken generates a 64-char hex token (32 bytes of

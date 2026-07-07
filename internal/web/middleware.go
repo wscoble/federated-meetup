@@ -14,10 +14,22 @@ import (
 // script-src 'self' allows vendored htmx.min.js and theme.js.
 // style-src 'self' 'unsafe-inline' allows inline styles in event JSON-LD.
 // connect-src 'self' allows HTMX requests to same origin.
-const CSPHeader = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+const CSPHeader = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'"
+
+// hstsHeader is set on TLS responses to enforce HTTPS. Two-year max-age
+// plus includeSubDomains is the OWASP-recommended baseline; preload is
+// left OFF because preloading is a one-way ratchet that should only be
+// enabled after auditing every subdomain. See H-6 in AUDIT-2026-07-06.
+const hstsHeader = "max-age=63072000; includeSubDomains"
 
 // SessionCookieName is the cookie name for organizer sessions.
 const SessionCookieName = "fedmeetup_session"
+
+// forceSecureCookies is wired up by the server constructor from the
+// FEDMEETUP_INSECURE_COOKIES env var (1 = dev mode, cookies over HTTP).
+// See C-5 in AUDIT-2026-07-06 — the prior hard-coded Secure: false on
+// both session and CSRF cookies meant any HTTP leg leaked the session
+// credential. Production sets this to false; dev (no TLS) sets true.
 
 // CSRFCookieName is the cookie name for CSRF tokens (double-submit pattern).
 const CSRFCookieName = "fedmeetup_csrf"
@@ -41,6 +53,12 @@ func (s *Server) securityHeaders(h http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// HSTS only over TLS — see C-5/H-6 in AUDIT-2026-07-06.
+		// A dev server on http://localhost:8080 must NOT emit HSTS, or
+		// browsers will refuse to talk HTTP to that origin for two years.
+		if r.TLS != nil || s.forceSecureCookies {
+			w.Header().Set("Strict-Transport-Security", hstsHeader)
+		}
 		h.ServeHTTP(w, r)
 	})
 }
@@ -69,8 +87,8 @@ func (s *Server) csrfMiddleware(h http.Handler) http.Handler {
 				Name:     CSRFCookieName,
 				Value:    token,
 				Path:     "/",
-				HttpOnly: false, // must be readable by JS if needed; we use form fields
-				Secure:   false, // set to true behind TLS in production
+				HttpOnly: true,                            // H-1: cookie is for double-submit, JS never reads it
+				Secure:   !s.forceSecureCookies,           // C-5: Secure in production (TLS), off only in dev
 				SameSite: http.SameSiteLaxMode,
 				MaxAge:   86400 * 30, // 30 days
 			})
@@ -156,13 +174,13 @@ func (s *Server) isAuthenticated(r *http.Request) (string, bool) {
 }
 
 // setSessionCookie sets the organizer session cookie.
-func setSessionCookie(w http.ResponseWriter, token string) {
+func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false, // set to true behind TLS in production
+		Secure:   !s.forceSecureCookies, // C-5: Secure in production; off in dev (FEDMEETUP_INSECURE_COOKIES=1)
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400 * 7, // 7 days
 	})

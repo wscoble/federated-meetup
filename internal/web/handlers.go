@@ -831,7 +831,7 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setSessionCookie(w, sessionToken)
+	s.setSessionCookie(w, sessionToken)
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
@@ -929,8 +929,14 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		canonicalName = canonicalName + "-" + groupKey[:8]
 	}
 
-	// Generate organizer token (random 32-char hex).
+	// Generate organizer token (random 32-char hex). This is the
+	// organizer's only credential for the dashboard — it must NEVER
+	// be written to logs (C-4 in AUDIT-2026-07-06). The pre-fix code
+	// did `log.Printf("web: organizer token for %s: %s", ...)` which
+	// leaked the token to stdout / journal / log aggregators. We now
+	// only log a non-reversible fingerprint for audit correlation.
 	organizerToken := generateToken()
+	organizerTokenFP := organizerTokenFingerprint(organizerToken)
 
 	// Create group in product store.
 	if s.product != nil {
@@ -958,10 +964,13 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
 		return
 	}
-	setSessionCookie(w, sessionToken)
+	s.setSessionCookie(w, sessionToken)
 
-	log.Printf("web: group created: %s (%s) — organizer: %s <%s>", groupKey, displayName, organizerName, organizerEmail)
-	log.Printf("web: organizer token for %s: %s", groupKey, organizerToken)
+	log.Printf("web: group created: %s (%s) — organizer: %s <%s> (token fp=%s)",
+		groupKey, displayName, organizerName, organizerEmail, organizerTokenFP)
+	// SECURITY: the organizer token itself is never logged. The
+	// fingerprint above is a non-reversible hash suitable for audit
+	// correlation. See C-4 in AUDIT-2026-07-06.
 
 	// Redirect to dashboard for the new group.
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
