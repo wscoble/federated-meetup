@@ -34,6 +34,14 @@ const SessionCookieName = "fedmeetup_session"
 // CSRFCookieName is the cookie name for CSRF tokens (double-submit pattern).
 const CSRFCookieName = "fedmeetup_csrf"
 
+// maxPOSTBodyBytes caps the body size of any state-changing request
+// (POST / PUT / DELETE). At 64 KiB this is generous for the largest
+// form on the site (organizer event creation) and a hard floor for
+// the CSRF middleware's body-size DoS — see M-5 in AUDIT-2026-07-06.
+// Without this, an unauthenticated POST to /dashboard/login with a
+// 1 GiB body would be fully buffered by the form parser.
+const maxPOSTBodyBytes = 64 * 1024
+
 // CSRFHeaderName is the form field / header name for CSRF tokens.
 const CSRFHeaderName = "X-CSRF-Token"
 
@@ -98,6 +106,11 @@ func (s *Server) csrfMiddleware(h http.Handler) http.Handler {
 
 		// Only check CSRF on state-changing methods
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
+			// M-5: cap the body size BEFORE we touch ParseForm /
+			// formValue so an attacker can't OOM the daemon with a
+			// 1 GiB body. MaxBytesReader returns a 413 on overflow
+			// when the handler tries to read past the cap.
+			r.Body = http.MaxBytesReader(w, r.Body, maxPOSTBodyBytes)
 			if !s.validateCSRF(r) {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusForbidden)

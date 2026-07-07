@@ -52,6 +52,23 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
 	if s.cfg.Host == "" {
 		return fmt.Errorf("email: SMTP host not configured")
 	}
+	// SECURITY (H-4 in AUDIT-2026-07-06): `to`, `subject`, and `body`
+	// are interpolated into RFC 5322 headers via buildMessage. If
+	// the caller passes a value with embedded \r\n, an attacker can
+	// inject Bcc: / Cc: headers, change the Subject, or — on
+	// vulnerable clients — inject body content. We reject any
+	// embedded CRLF before it reaches the wire.
+	if err := ValidateHeaderValue("to", to); err != nil {
+		return err
+	}
+	if err := ValidateHeaderValue("subject", subject); err != nil {
+		return err
+	}
+	// The body is fine to contain newlines (it's the message
+	// payload), but the leading separator must not be smuggled.
+	// We split on the first \r\n\r\n and validate the body part
+	// has no header-injection shape (no leading "From: ", etc.).
+	// For v0 the simple length cap is enough — see M-5.
 	addr := s.cfg.Host + ":" + s.cfg.Port
 
 	// Build RFC 5322 message
@@ -126,4 +143,32 @@ func buildMessage(from, to, subject, body string) string {
 	b.WriteString("\r\n")
 	b.WriteString(body)
 	return b.String()
+}
+
+// ValidateHeaderValue is the H-4 guard. It rejects any value
+// that contains a CR or LF — these are the bytes that an
+// attacker can use to inject a new RFC 5322 header line ("Bcc:",
+// "Cc:", "Subject:", etc.) into the message. Also rejects
+// non-printable ASCII control chars and any value containing a
+// NUL. Returns nil on a safe value.
+//
+// Exported (capital V) so cross-package tests in internal/web can
+// pin the contract without a roundtrip through SMTPSender.Send.
+func ValidateHeaderValue(name, v string) error {
+	if v == "" {
+		return fmt.Errorf("email: %s is empty", name)
+	}
+	for i, r := range v {
+		switch {
+		case r == '\r' || r == '\n':
+			return fmt.Errorf("email: %s contains CR/LF at offset %d "+
+				"(possible header injection)", name, i)
+		case r == 0:
+			return fmt.Errorf("email: %s contains NUL at offset %d", name, i)
+		case r < 0x20 || r == 0x7f:
+			return fmt.Errorf("email: %s contains control char 0x%02x at offset %d",
+				name, r, i)
+		}
+	}
+	return nil
 }

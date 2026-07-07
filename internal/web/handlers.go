@@ -1288,8 +1288,15 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCheckIn marks an attendee as checked in for an event.
+//
+// SECURITY (C-3 in AUDIT-2026-07-06): the route only authenticated
+// the caller's group_key (from the session cookie) and then acted
+// on the form-supplied event_id. An organizer of group A could
+// check in any attendee of any event in any group. The fix is
+// to verify, after every store fetch, that the event actually
+// belongs to the authenticated group_key.
 func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.isAuthenticated(r)
+	groupKey, ok := s.isAuthenticated(r)
 	if !ok {
 		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
 		return
@@ -1301,6 +1308,16 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 
 	if eventID == "" || email == "" {
 		http.Error(w, "event_id and email required", http.StatusBadRequest)
+		return
+	}
+
+	// C-3 ownership check. The product store fetches by eventID
+	// only; the local SQLite cache is keyed on (groupKey, eventID).
+	// Both must agree, AND the event must actually belong to the
+	// authenticated group_key. We reject with 404 (not 403) so the
+	// existence of the event is not disclosed across groups.
+	if !s.eventBelongsToGroup(r, groupKey, eventID) {
+		http.Error(w, "event not found", http.StatusNotFound)
 		return
 	}
 
@@ -1451,6 +1468,9 @@ func icsEscape(s string) string {
 }
 
 // handleCancelEvent allows an organizer to cancel an event from the dashboard.
+//
+// SECURITY (C-3): see handleCheckIn. Same cross-group IDOR — fixed
+// by eventBelongsToGroup.
 func (s *Server) handleCancelEvent(w http.ResponseWriter, r *http.Request) {
 	groupKey, ok := s.isAuthenticated(r)
 	if !ok {
@@ -1464,9 +1484,15 @@ func (s *Server) handleCancelEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// C-3 ownership check. Reject cross-group cancel attempts.
+	if !s.eventBelongsToGroup(r, groupKey, eventID) {
+		http.Error(w, "event not found", http.StatusNotFound)
+		return
+	}
+
 	// Mark as cancelled in product store
 	if s.product != nil {
-		if e, ok := s.product.Store().GetEvent(eventID); ok {
+		if e, ok := s.product.Store().GetEvent(eventID); ok && e.GroupId == groupKey {
 			e.Cancelled = true
 			s.product.Store().PutEvent(e)
 		}
@@ -1645,6 +1671,11 @@ func xmlEscape(s string) string {
 
 // handleAttendeesCSV exports the attendee list for an event as CSV.
 // Used by organizers for check-in sheets and record-keeping.
+//
+// SECURITY (C-3): see handleCheckIn. Before the fix, an organizer
+// of group A could dump the attendee list (names + emails + check-in
+// status) for ANY event in ANY group by guessing or scraping the
+// 64-bit event_id. Fixed by eventBelongsToGroup.
 func (s *Server) handleAttendeesCSV(w http.ResponseWriter, r *http.Request) {
 	groupKey, ok := s.isAuthenticated(r)
 	if !ok {
@@ -1655,6 +1686,12 @@ func (s *Server) handleAttendeesCSV(w http.ResponseWriter, r *http.Request) {
 	eventID := r.PathValue("event_id")
 	if eventID == "" {
 		http.Error(w, "event_id required", http.StatusBadRequest)
+		return
+	}
+
+	// C-3 ownership check.
+	if !s.eventBelongsToGroup(r, groupKey, eventID) {
+		http.Error(w, "event not found", http.StatusNotFound)
 		return
 	}
 

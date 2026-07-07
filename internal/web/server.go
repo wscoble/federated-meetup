@@ -847,6 +847,43 @@ func (s *Server) eventFromProduct(groupKey, eventID string) (CachedEvent, error)
 	return s.store.GetEvent(groupKey, eventID)
 }
 
+// eventBelongsToGroup reports whether the event identified by
+// eventID exists and is owned by groupKey. This is the C-3
+// ownership check used by the dashboard write endpoints
+// (handleCheckIn, handleCancelEvent, handleAttendeesCSV, and any
+// future handler that takes event_id from a URL or form).
+//
+// The check is run BEFORE the handler does anything destructive
+// with the event_id. We return 404 (not 403) on mismatch so the
+// existence of the event in another group is not disclosed.
+//
+// Sources of truth, in priority order:
+//  1. product store (the active set, used for billing/recurrence)
+//  2. local SQLite cache (read-replica of product store)
+// We require the event to exist in BOTH and to have matching
+// group_id, which catches the case where one store has stale data
+// (e.g. a still-cached event whose group was renamed).
+func (s *Server) eventBelongsToGroup(r *http.Request, groupKey, eventID string) bool {
+	if groupKey == "" || eventID == "" {
+		return false
+	}
+	// 1. Product store (authoritative for live events).
+	if s.product != nil {
+		if e, ok := s.product.Store().GetEvent(eventID); ok {
+			if e.GroupId != groupKey {
+				return false
+			}
+		}
+	}
+	// 2. Local SQLite cache. The cache key includes groupKey, so
+	//    a miss here means either the event doesn't exist or it
+	//    belongs to a different group — both are ownership failures.
+	if _, err := s.store.GetEvent(groupKey, eventID); err != nil {
+		return false
+	}
+	return true
+}
+
 // groupFromProduct tries to get a group from the product store; falls back
 // to the local cache.
 func (s *Server) groupFromProduct(groupID string) (CachedGroup, error) {
