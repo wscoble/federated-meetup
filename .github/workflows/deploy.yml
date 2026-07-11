@@ -49,7 +49,7 @@ jobs:
 
       - name: Setup kubectl
         if: steps.kubecheck.outputs.has_kubeconfig == 'true'
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
 
       - name: Configure kubeconfig
         if: steps.kubecheck.outputs.has_kubeconfig == 'true'
