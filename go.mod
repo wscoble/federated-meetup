@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	connectrpc.com/connect v1.20.0
-	github.com/mark3labs/mcp-go v0.55.1
+	github.com/mark3labs/mcp-go v0.56.0
 	github.com/stripe/stripe-go/v76 v76.25.0
 	golang.org/x/crypto v0.53.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
