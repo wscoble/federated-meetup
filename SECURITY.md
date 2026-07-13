@@ -1,5 +1,7 @@
 # Security Policy
 
+For our user-facing commitments, see [PRIVACY.md](./PRIVACY.md) (privacy + anti-dox) and [TERMS.md](./TERMS.md) (user agreement). This document is auditor-facing and covers security reporting and infrastructure hardening.
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in federated-meetup:
