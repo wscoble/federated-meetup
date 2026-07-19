@@ -1,0 +1,13 @@
+{{template "base" .}}
+{{define "title"}}{{.PolicyTitle}} — Federated Meetup{{end}}
+{{define "content"}}
+<article class="policy-page">
+	<header class="policy-header">
+		<h1>{{.PolicyTitle}}</h1>
+		<p class="policy-meta">
+			<a href="/">← Back to Federated Meetup</a>
+		</p>
+	</header>
+	<pre class="policy-body">{{.PolicyBody}}</pre>
+</article>
+{{end}}

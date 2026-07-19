@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,24 @@ func clientIP(r *http.Request) string {
 // Supports ?when= filter: "today", "week", "all" (default: all).
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	groups, _ := s.store.ListGroups()
+
+	// Filter out test/sandbox groups from the public listing. The
+	// handleCreateGroup handler appends a 8-char hex suffix of the
+	// group key to the canonical name to ensure uniqueness, so any
+	// canonical name ending in `-<8 hex chars>` is a sandbox group
+	// (e.g., "scott-s-test-2c831140"). These are valid groups for
+	// the organizer who created them, but they don't belong on the
+	// public home page. The group page is still reachable by direct
+	// URL — only the listing is filtered.
+	var publicGroups []CachedGroup
+	for _, g := range groups {
+		if isSandboxGroup(g.CanonicalName) {
+			continue
+		}
+		publicGroups = append(publicGroups, g)
+	}
+	groups = publicGroups
+
 	events, _ := s.store.ListUpcomingEvents("", 50)
 
 	// Sync from product store if available
@@ -781,6 +800,27 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Look up the group's canonical name + display name for the
+	// welcome state link. Only paid on the welcome path; otherwise
+	// the dashboard works without it.
+	if r.URL.Query().Get("welcome") == "1" {
+		if cached, err := s.store.GetGroup(groupKey); err == nil {
+			s.renderPage(w, "dashboard", dashboardData{
+				pageBase: pageBase{
+					CSRFToken: csrfTokenFromRequest(r),
+				},
+				GroupKey:      groupKey,
+				CanonicalName: cached.CanonicalName,
+				DisplayName:   cached.DisplayName,
+				Welcome:       true,
+				Events:        dashEvents,
+				TotalRevenue:  &pb.Money{Amount: totalRevenueAmount, Currency: totalRevenueCurrency},
+				TotalRsvps:    totalRsvps,
+			})
+			return
+		}
+	}
+
 	s.renderPage(w, "dashboard", dashboardData{
 		pageBase: pageBase{
 			CSRFToken: csrfTokenFromRequest(r),
@@ -973,7 +1013,9 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	// correlation. See C-4 in AUDIT-2026-07-06.
 
 	// Redirect to dashboard for the new group.
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	// `welcome=1` triggers the first-run success state on the dashboard
+	// (see docs/09-ONBOARDING-IMPORT.md §5).
+	http.Redirect(w, r, "/dashboard?welcome=1", http.StatusSeeOther)
 }
 
 // canonicalizeName converts a display name to a URL-safe canonical name.
@@ -1732,4 +1774,70 @@ func csvEscape(s string) string {
 		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
 	}
 	return s
+}
+
+// ---- User-facing legal pages ----
+
+// handlePrivacy serves the privacy policy markdown at /privacy.
+// The markdown is rendered as a <pre> block — honest, readable, and
+// doesn't require a markdown parser dependency for v0. Self-hosters
+// override the source path via FEDMEETUP_PRIVACY_PATH.
+func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
+	s.servePolicy(w, r, "Privacy Policy", s.privacyPath)
+}
+
+// handleTerms serves the terms of service markdown at /terms.
+func (s *Server) handleTerms(w http.ResponseWriter, r *http.Request) {
+	s.servePolicy(w, r, "Terms of Service", s.termsPath)
+}
+
+// servePolicy reads the named file and renders it inside the base
+// template. If the file is missing or unreadable, it renders a clear
+// "policy not configured" message rather than a stack trace — the
+// self-host path will see this if they forget to set the env var.
+func (s *Server) servePolicy(w http.ResponseWriter, r *http.Request, title, path string) {
+	var body string
+	if path == "" {
+		body = "Policy file path is not configured. Set FEDMEETUP_PRIVACY_PATH and FEDMEETUP_TERMS_PATH environment variables."
+	} else {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			body = fmt.Sprintf("Policy file not found at %q. Set the appropriate environment variable or place the file at the binary's working directory.\n\nError: %v", path, err)
+		} else {
+			body = string(data)
+		}
+	}
+	s.renderPage(w, "policy", policyData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+		},
+		PolicyTitle: title,
+		PolicyBody:  body,
+	})
+}
+
+// isSandboxGroup reports whether a canonical name looks like a sandbox
+// group created via the /groups/new form. The pattern is a name ending
+// in a hyphen followed by 8+ hex characters (the auto-generated
+// uniqueness suffix from handleCreateGroup). These groups are valid
+// for their organizers but are filtered from public listings.
+func isSandboxGroup(canonical string) bool {
+	idx := strings.LastIndex(canonical, "-")
+	if idx < 0 || idx >= len(canonical)-1 {
+		return false
+	}
+	suffix := canonical[idx+1:]
+	if len(suffix) < 8 {
+		return false
+	}
+	for _, c := range suffix {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }

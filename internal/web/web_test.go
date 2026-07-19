@@ -838,11 +838,11 @@ func TestNewGroupFormRenders(t *testing.T) {
 	if !strings.Contains(body, "Create a Group") {
 		t.Fatal("group creation form should contain 'Create a Group'")
 	}
-	if !strings.Contains(body, "Group Name") {
-		t.Fatal("form should contain 'Group Name' label")
+	if !strings.Contains(body, "Group name") {
+		t.Fatal("form should contain 'Group name' label")
 	}
-	if !strings.Contains(body, "Organizer Email") {
-		t.Fatal("form should contain 'Organizer Email' label")
+	if !strings.Contains(body, "Your email") {
+		t.Fatal("form should contain 'Your email' label (the organizer email field)")
 	}
 }
 
@@ -861,8 +861,10 @@ func TestCreateGroup(t *testing.T) {
 		t.Fatalf("expected 303 redirect, got %d", w.Code)
 	}
 	loc := w.Header().Get("Location")
-	if loc != "/dashboard" {
-		t.Fatalf("expected redirect to /dashboard, got %s", loc)
+	// handleCreateGroup now redirects with ?welcome=1 to trigger the
+	// first-run success state on the dashboard (see docs/09-ONBOARDING-IMPORT.md §5).
+	if loc != "/dashboard?welcome=1" {
+		t.Fatalf("expected redirect to /dashboard?welcome=1, got %s", loc)
 	}
 
 	// Check session cookie was set

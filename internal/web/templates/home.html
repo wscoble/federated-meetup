@@ -3,15 +3,20 @@
 {{define "content"}}
 <!-- Hero -->
 <div class="hero">
-	<div>
-		<h1>Find your next event</h1>
-		<p>Discover community events across the federation. No account needed.</p>
-		<p class="hero-stats"><strong>{{.TotalGroups}}</strong> groups · <strong>{{.TotalEvents}}</strong> upcoming events</p>
+	<div class="hero-text">
+		<h1>Run a community. Federated, not extracted.</h1>
+		<p class="hero-subhead">No algorithm. No app to install. No promoted events. No tracking. Just your group, your data, your federation.</p>
+		<p class="hero-stats"><strong>{{.TotalGroups}}</strong> {{if eq .TotalGroups 1}}group{{else}}groups{{end}} · <strong>{{.TotalEvents}}</strong> upcoming {{if eq .TotalEvents 1}}event{{else}}events{{end}}</p>
 	</div>
-	<a href="/groups/new" class="btn btn-primary" aria-label="Create a new group">
-		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-		Create a Group
-	</a>
+	<div class="hero-actions">
+		<a href="/groups/new" class="btn btn-primary btn-lg" aria-label="Create a new group">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+			Create a Group
+		</a>
+		<a href="/groups/new?import=meetup" class="hero-secondary">
+			Already on meetup.com? <span class="hero-secondary-link">Import your group →</span>
+		</a>
+	</div>
 </div>
 
 <!-- Search bar -->

@@ -16,6 +16,37 @@
 </a>
 {{end}}
 {{define "content"}}
+{{if .Welcome}}
+<div class="welcome-banner" role="status">
+	<h2>Your group is live{{if .DisplayName}}, {{.DisplayName}}{{end}} 🎉</h2>
+	<p>You can find your organizer dashboard link in the email we just sent. Three things to do next:</p>
+	<div class="welcome-next-steps">
+		<a class="welcome-next-step" href="#create-event">
+			<span class="welcome-next-step-num">Step 1</span>
+			<span class="welcome-next-step-title">Create your first event</span>
+			<span class="welcome-next-step-desc">Title, time, location. The form is below.</span>
+		</a>
+		{{if .CanonicalName}}
+		<a class="welcome-next-step" href="/groups/{{.CanonicalName}}" target="_blank" rel="noopener">
+			<span class="welcome-next-step-num">Step 2</span>
+			<span class="welcome-next-step-title">See your public group page</span>
+			<span class="welcome-next-step-desc">Open in a new tab — this is what your members will see.</span>
+		</a>
+		{{else}}
+		<span class="welcome-next-step" style="opacity: 0.7; cursor: default;">
+			<span class="welcome-next-step-num">Step 2</span>
+			<span class="welcome-next-step-title">See your public group page</span>
+			<span class="welcome-next-step-desc">Loading your group URL…</span>
+		</span>
+		{{end}}
+		<a class="welcome-next-step" href="https://github.com/wscoble/federated-meetup#readme" target="_blank" rel="noopener">
+			<span class="welcome-next-step-num">Step 3</span>
+			<span class="welcome-next-step-title">Read the docs</span>
+			<span class="welcome-next-step-desc">Ticketing, federation, self-hosting — all explained.</span>
+		</a>
+	</div>
+</div>
+{{end}}
 <h1 class="mb-6">Organizer Dashboard</h1>
 
 <!-- Summary Stats -->
@@ -35,7 +66,7 @@
 </div>
 
 <!-- Create Event -->
-<div class="card card-lg mb-6">
+<div class="card card-lg mb-6" id="create-event">
 	<h2>Create Event</h2>
 	<form hx-post="/dashboard/events" hx-target="#create-result" hx-indicator="#create-spinner" class="space-y-4">
 		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">

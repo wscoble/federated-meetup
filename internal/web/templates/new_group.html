@@ -1,65 +1,114 @@
 {{template "base" .}}
 {{define "title"}}Create a Group{{end}}
 {{define "content"}}
-<div class="max-w-2xl">
-	<h1 class="mb-2">Create a Group</h1>
-	<p class="text-secondary text-sm mb-6">Start hosting events in your community. Fill in the details below to get started.</p>
+<div class="onboarding-page">
+	<nav class="onboarding-steps" aria-label="Onboarding progress">
+		<ol>
+			<li class="onboarding-step is-active" aria-current="step">
+				<span class="onboarding-step-num">1</span>
+				<span class="onboarding-step-label">Tell us about your group</span>
+			</li>
+			<li class="onboarding-step is-pending" aria-disabled="true">
+				<span class="onboarding-step-num">2</span>
+				<span class="onboarding-step-label">Create your first event</span>
+			</li>
+		</ol>
+	</nav>
 
-	<div class="card card-lg">
-		<form method="POST" action="/groups/new" class="space-y-4">
-			<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-			{{if .Error}}
-			<div class="alert alert-error">
-				<p class="font-medium">{{.Error}}</p>
-			</div>
-			{{end}}
-			<div class="form-row">
-				<div>
-					<label for="display_name">Group Name</label>
-					<input type="text" id="display_name" name="display_name" required maxlength="256"
-						value="{{.PrefillName}}">
-					<p class="form-hint">The public name of your group, e.g. "Vegas Programmers".</p>
-					<p id="slug-preview" class="form-hint" style="display:none;">Your group URL will be: <code id="slug-url">/groups/your-group-name</code></p>
-					</div>
-			</div>
-			<div class="form-row">
-				<div>
-					<label for="description">Description</label>
-					<textarea id="description" name="description" rows="3" maxlength="4096">{{.PrefillDesc}}</textarea>
-					<p class="form-hint">What your group is about. Visible on your group page.</p>
-				</div>
-			</div>
-			<div class="border-t pt-4">
-				<h2>Organizer Information</h2>
-				<div class="form-row form-row-2">
-					<div>
-						<label for="organizer_name">Organizer Name</label>
-						<input type="text" id="organizer_name" name="organizer_name" required maxlength="256"
-							value="{{.PrefillOrgName}}">
-					</div>
-					<div>
-						<label for="organizer_email">Organizer Email</label>
-						<input type="email" id="organizer_email" name="organizer_email" required maxlength="256"
-							value="{{.PrefillOrgEmail}}">
-					</div>
-				</div>
-				<p class="form-hint">You'll receive an organizer token to manage your group's dashboard.</p>
-			</div>
-			<div class="pt-4">
-				<button type="submit" class="btn btn-primary">
-					Create Group
-				</button>
-				<a href="/" class="btn btn-ghost">Cancel</a>
-			</div>
-		</form>
+	<header class="onboarding-header">
+		<h1>Create a Group</h1>
+		<p class="onboarding-sub">This takes about 30 seconds. We'll set up your group, send you an organizer dashboard link, and walk you through your first event next.</p>
+	</header>
+
+	{{if .Error}}
+	<div class="alert alert-error" role="alert">
+		<p><strong>Couldn't create your group:</strong> {{.Error}}</p>
 	</div>
+	{{end}}
+
+	<form method="POST" action="/groups/new" class="onboarding-form" novalidate>
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+		<fieldset class="onboarding-fieldset">
+			<legend>Your group</legend>
+
+			<div class="onboarding-field">
+				<label for="display_name">Group name</label>
+				<input type="text" id="display_name" name="display_name" required maxlength="256"
+					placeholder="e.g. Vegas Programmers"
+					value="{{.PrefillName}}"
+					autocomplete="organization"
+					autofocus>
+				<p class="onboarding-hint" id="display_name-hint">
+					<span id="slug-preview" hidden>Your group URL will be <code id="slug-url">/groups/your-group-name</code></span>
+				</p>
+			</div>
+
+			<div class="onboarding-field">
+				<label for="description">What it's about</label>
+				<textarea id="description" name="description" rows="3" maxlength="4096"
+					placeholder="A sentence or two. What brings people together? Who's it for?">{{.PrefillDesc}}</textarea>
+				<p class="onboarding-hint">Visible on your group's public page. Keep it short — you can edit it later.</p>
+			</div>
+		</fieldset>
+
+		<fieldset class="onboarding-fieldset">
+			<legend>About you (the organizer)</legend>
+
+			<div class="onboarding-row">
+				<div class="onboarding-field">
+					<label for="organizer_name">Your name</label>
+					<input type="text" id="organizer_name" name="organizer_name" required maxlength="256"
+						placeholder="Alex Rivera"
+						value="{{.PrefillOrgName}}"
+						autocomplete="name">
+				</div>
+				<div class="onboarding-field">
+					<label for="organizer_email">Your email</label>
+					<input type="email" id="organizer_email" name="organizer_email" required maxlength="256"
+						placeholder="you@example.com"
+						value="{{.PrefillOrgEmail}}"
+						autocomplete="email">
+					<p class="onboarding-hint">We send your organizer dashboard link here. Members never see it.</p>
+				</div>
+			</div>
+		</fieldset>
+
+		<aside class="onboarding-preview" aria-label="Preview of your group page">
+			<p class="onboarding-preview-label">Preview as you type</p>
+			<div class="card onboarding-preview-card">
+				<div class="flex items-start justify-between gap-2">
+					<a href="#" class="font-semibold onboarding-preview-name" id="preview-name">Your group name</a>
+					<span class="badge badge-accent">Federated</span>
+				</div>
+				<p class="text-secondary text-sm mt-2 onboarding-preview-desc" id="preview-desc">Your description will appear here.</p>
+				<div class="mt-3 text-sm text-muted">
+					<span id="preview-slug">@your-group</span>
+				</div>
+			</div>
+		</aside>
+
+		<div class="onboarding-submit">
+			<button type="submit" class="btn btn-primary btn-lg">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+				Create my group
+			</button>
+			<p class="onboarding-hint onboarding-no-account">No password, no app. Just an organizer link sent to your email.</p>
+		</div>
+	</form>
 </div>
+
 <script>
 (function() {
-	var input = document.getElementById('display_name');
-	var preview = document.getElementById('slug-preview');
-	var urlEl = document.getElementById('slug-url');
-	if (!input || !preview || !urlEl) return;
+	var nameEl = document.getElementById('display_name');
+	var descEl = document.getElementById('description');
+	var slugPreview = document.getElementById('slug-preview');
+	var slugUrl = document.getElementById('slug-url');
+	var previewName = document.getElementById('preview-name');
+	var previewDesc = document.getElementById('preview-desc');
+	var previewSlug = document.getElementById('preview-slug');
+	if (!nameEl || !previewName) return;
+
 	function slugify(text) {
 		return text.toLowerCase()
 			.trim()
@@ -68,16 +117,28 @@
 			.replace(/-+/g, '-')
 			.replace(/^-+|-+$/g, '');
 	}
+
 	function update() {
-		var slug = slugify(input.value);
-		if (slug) {
-			urlEl.textContent = '/groups/' + slug;
-			preview.style.display = '';
+		var name = nameEl.value.trim();
+		var desc = descEl.value.trim();
+
+		// Update name + slug
+		previewName.textContent = name || 'Your group name';
+		var slug = slugify(name) || 'your-group';
+		previewSlug.textContent = '@' + slug;
+		if (name) {
+			slugPreview.hidden = false;
+			slugUrl.textContent = '/groups/' + slug;
 		} else {
-			preview.style.display = 'none';
+			slugPreview.hidden = true;
 		}
+
+		// Update description
+		previewDesc.textContent = desc || 'Your description will appear here.';
 	}
-	input.addEventListener('input', update);
+
+	nameEl.addEventListener('input', update);
+	descEl.addEventListener('input', update);
 	update();
 })();
 </script>

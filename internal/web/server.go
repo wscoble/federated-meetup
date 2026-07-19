@@ -40,6 +40,14 @@ type Server struct {
 	baseURL string                          // configured base URL for absolute links (e.g. magic-link emails)
 	ap      *activitypub.ActivityPubService // optional: ActivityPub delivery
 
+	// policyPaths point to the markdown files served at /privacy and /terms.
+	// Defaults are relative to the binary's working directory; self-hosters
+	// can override via FEDMEETUP_PRIVACY_PATH / FEDMEETUP_TERMS_PATH. Falls
+	// back to a generic "policies not configured" message if the file is
+	// missing or unreadable.
+	privacyPath string
+	termsPath   string
+
 	// forceSecureCookies gates the Secure: true flag on session/CSRF
 	// cookies (C-5 in AUDIT-2026-07-06) and HSTS (H-6). Production sets
 	// it false (so production TLS termination guarantees the Secure
@@ -96,16 +104,27 @@ func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store, em
 		emailSender = email.NewNoopSender()
 	}
 	return &Server{
-		host:              hostSvc,
-		product:           prodSvc,
-		store:             store,
-		tmpls:             tmpls,
-		now:               time.Now,
-		email:             emailSender,
-		baseURL:           baseURL,
-		ipLimiters:        make(map[string]*ipBucket),
+		host:               hostSvc,
+		product:            prodSvc,
+		store:              store,
+		tmpls:              tmpls,
+		now:                time.Now,
+		email:              emailSender,
+		baseURL:            baseURL,
+		ipLimiters:         make(map[string]*ipBucket),
 		forceSecureCookies: shouldForceInsecureCookies(),
+		privacyPath:        envOr("FEDMEETUP_PRIVACY_PATH", "PRIVACY.md"),
+		termsPath:          envOr("FEDMEETUP_TERMS_PATH", "TERMS.md"),
 	}, nil
+}
+
+// envOr returns the value of the named environment variable, or fallback
+// if unset / empty.
+func envOr(name, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // shouldForceInsecureCookies reports whether dev-mode cookie emission
@@ -175,6 +194,10 @@ func (s *Server) Routes() http.Handler {
 
 	// Prometheus metrics endpoint
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
+
+	// User-facing legal/policy pages
+	mux.HandleFunc("GET /privacy", s.handlePrivacy)
+	mux.HandleFunc("GET /terms", s.handleTerms)
 
 	return s.metricsMiddleware(s.withMiddleware(mux))
 }
@@ -681,6 +704,9 @@ type dashboardEvent struct {
 type dashboardData struct {
 	pageBase
 	GroupKey      string
+	CanonicalName string
+	DisplayName   string
+	Welcome       bool
 	Events        []dashboardEvent
 	TotalRevenue  *pb.Money
 	TotalRsvps    int
@@ -691,6 +717,12 @@ type rsvpPageData struct {
 	RSVP       RSVPRecord
 	EventTitle string
 	Confirmed  bool
+}
+
+type policyData struct {
+	pageBase
+	PolicyTitle string
+	PolicyBody  string
 }
 
 type loginData struct {
