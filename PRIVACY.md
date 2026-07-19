@@ -106,8 +106,12 @@ Scope DataCollection:
   ## Data we collect
   If data_kind is "rsvp-name" and data_kind is "rsvp-email":
     Then purpose is "deliver-event-confirmation-and-reminder"
-    And retention is "until-event-plus-30-days-then-deleted"
-    And on_event_cancellation: deleted_immediately
+    And retention is "until-event-plus-30-days-then-removed-from-active-views"
+    And on_event_cancellation: marked_cancelled_and_retained_in_signed_log; user-visible-copy-removed-from-active-views-after-30-days
+    # Note (2026-07-19): the protocol's state log is append-only and replicated
+    # across mirrors (02-PROTOCOL.md §3.1, §5.0, §9); "deletion" here means removal
+    # from active UI and downstream exports, not erasure from the signed transition
+    # history. See §"Right to deletion" below for the full scope.
 
   If data_kind is "organizer-name" and data_kind is "organizer-email":
     Then purpose is "organizer-authentication-and-dashboard-access"
@@ -163,7 +167,7 @@ Scope DataSharing:
 
   If recipient is "federated-instance" and data_kind is "event-metadata":
     Then sharing is permitted-if-user-consented
-    (ActivityPub federation: events are public by default. RSVPs are not federated in v0.)
+    (Federation note: RSVPs are signed transitions and are replicated to mirrors and peer hosts serving the group per 02-PROTOCOL.md §3.1, §5.0, §9. The RSVP payload contains the user's identity and event reference; it does not contain email or other contact PII by default. Self-hosters and mirror operators see the same RSVP data the primary host sees.)
 
   If recipient is "payment-processor" and data_kind is "purchase-info":
     Then sharing is to "stripe" only
@@ -204,10 +208,11 @@ Scope UserRights:
 
   ## Right to deletion
   If request is "delete-my-data":
-    Then response is delete_all_data_held_about requester
+    Then response is remove-from-member-lists-and-active-views
     And completed within 30 days
     And exception is "data-required-for-active-event" (held until event concludes)
     And exception is "data-required-for-legal-obligation" (held per law)
+    And note: "the signed transition history (append-only, replicated across mirrors per 02-PROTOCOL.md §3.1 and §9) is retained per protocol; user-facing data is purged within 30 days from Greybeard-operated hosts and mirrors under our control. Data on third-party hosts/mirrors is subject to that operator's policy."
 
   ## Right to correction
   If request is "correct-my-data":
@@ -277,7 +282,7 @@ Scope Cookies:
 
 ## 7. International transfers and federation
 
-Federated Meetup instances can be self-hosted anywhere. If you use an instance operated by Greybeard, your data is stored in the region that instance operates in.
+Federated Meetup instances can be self-hosted anywhere. If you use an instance operated by Greybeard, your data is stored in the region that instance operates in. Note (2026-07-19): per 02-PROTOCOL.md §9, group state may be replicated to mirrors operated by third parties, whose residency is outside Greybeard's control. Stewards may restrict mirror peers per group policy; consult your group's steward set for the current mirror list.
 
 ```
 Scope DataResidency:

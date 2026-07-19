@@ -135,7 +135,7 @@ Scope AcceptableUse:
 
   If action is "federate-with-other-instances":
     Then action is permitted
-    (Federation is the point. ActivityPub is enabled by default for v0.)
+    (Federation is the point. Federation uses a private WireGuard mesh between hosts and open ConnectRPC for clients per 02-PROTOCOL.md §5.0. ActivityPub is not used.)
 ```
 
 **In plain English — you can:**
