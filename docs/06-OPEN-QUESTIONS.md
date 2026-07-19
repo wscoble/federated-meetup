@@ -40,9 +40,17 @@
 
 ### 6. Fork-cost tuning
 
+> **SUPERSEDED 2026-07-18** — 02-PROTOCOL §3.0 and §3.0.1 reject rate-gated forks; the `BRANCH_CREATE` / `FORK` split replaces this. See "No fork-rate gate" in 02 §3.0 L43 and the `BRANCH_CREATE` vs `FORK` distinction in §3.0.1. The fork-cost "lever" described below is no longer the mechanism; branching is cheap by design, and the expensive sovereign split is `FORK`. This section is retained for historical context only.
+
 - **What's open:** The actual values for fork cost parameters — fork threshold, advance-notice requirement, rationale-length minimum, and cool-down period.
 - **Why it matters:** Fork cost is the mechanism that prevents trivial fork spam while keeping fork accessible as the group-sovereignty escape hatch. Too cheap and groups are unstable; too expensive and the sovereignty guarantee is hollow. The current design ships a single tunable function (the lever) with placeholder values.
 - **What blocks resolution:** Real usage data. The plan is: ship the lever, instrument it, run tabletop exercises with realistic group dynamics, and tune from observed behavior. Do not reach for a fixed number until we have data from live groups.
+
+<details><summary>Context (pre-2026-06-27 design)</summary>
+
+The "fork cost" framing below predates the 2026-06-27 branch architecture (02 §3.0). Under the current design, the cheap-vs-expensive distinction is encoded structurally: `BRANCH_CREATE` is the cheap fork (inherits keypair, steward set, threshold; isolated state machine), and `FORK` is the expensive sovereign split (new keypair, new stewards, new threshold, new group identity). There is no rate gate on branching — see "No fork-rate gate" in 02 §3.0.
+
+</details>
 
 ### 7. Steward set growth via REMOVE_STEWARD bypass
 

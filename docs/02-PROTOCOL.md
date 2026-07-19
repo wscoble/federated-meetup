@@ -96,6 +96,14 @@ Hosts and clients may add custom transition types for product features, but thos
 
 These are product concerns. Hosts and clients may define their own formats and exchange them as opaque blobs within the state. Cross-host compatibility is a goal but not a protocol requirement.
 
+### 3.3 Canonical event identifiers
+
+An event is uniquely identified by the tuple `(group_key, branch_id, event_id)`. The dedup key across hosts is the same tuple — two hosts serving the same group and exposing feeds (RSS/Atom/JSON) will emit the same event under the same key, so a crawler or AI agent that sees the event from both hosts can deduplicate on `(group_key, branch_id, event_id)` without further coordination.
+
+A recurring event (a series with multiple occurrences sharing the same `event_id`) adds `occurrence_unix` to the tuple, giving `(group_key, branch_id, event_id, occurrence_unix)`. `occurrence_unix` is the Unix timestamp of the specific occurrence; it is set by the host that first observed the event and is stable across propagation.
+
+The `(group_key, branch_id, event_id, occurrence_unix)` tuple is signed by the host that first observed the event (the host whose steward threshold signed the `CREATE_EVENT` / `UPDATE_EVENT` transition) and propagated to other hosts in the transition stream. Duplicate events arriving from other hosts — same tuple, different source — are dropped by the receiver. This closes the dedup gap noted in `06-OPEN-QUESTIONS.md` §17: the dedup key is canonical and protocol-defined, not a client-side heuristic.
+
 ## 4. Forks
 
 A fork creates a new group whose initial state is a snapshot of the parent group's state at a chosen block-height. The fork is its own sovereign group, with its own keypair, its own stewards, its own state machine. The fork and the parent are siblings, not parent-child. The protocol records the fork lineage, but lineage does not confer authority.
@@ -115,6 +123,8 @@ The federation has **two distinct transport surfaces**. This is load-bearing. Co
 **Client → Host: open protobuf over ConnectRPC.** Clients (web apps, mobile apps, scripts) speak ConnectRPC against the host's public HTTP/2 endpoint. The wire format is the open protobuf standard in `proto/federated_meetup/v1/`. Anyone can implement a client; we ship a Go reference client as open source. Hosts expose this surface; the surface is reachable from the public internet (over TLS).
 
 **Host → Host: private WireGuard mesh.** Federation traffic between hosts flows over a userspace WireGuard overlay. The overlay IP space is private to the federation; nothing about the federation service is addressable from the public internet. This is what makes the federation actually federated: the host-to-host surface has no public attack surface.
+
+> **Clarification on the public surface.** `08-DISCOVERY.md` §3.1 exposes `federation_peers` (a list of peer *client* URLs, e.g. `https://phoenixdevs.org`) on the public `/.well-known/federation` endpoint. These are Layer 3 client-facing URLs used for bootstrapping peer discovery by crawlers and AI agents — they tell a client "here are other hosts you can talk to as a client." The federation mesh itself (Layer 1, the WireGuard overlay, host-to-host transition replication) remains private. Exposing a peer's client URL is not the same as exposing the mesh.
 
 The two transports speak different protocols over different layers:
 
@@ -324,6 +334,8 @@ The protocol does not require a single canonical directory. There can be many. A
 
 This is the model that makes the protocol "free as in speech" at the discovery layer. No one party controls the name space. Different directories can have different policies (e.g., a directory that requires verification for a `vegas-programmers` name, vs. an open directory that lets anyone claim any name).
 
+> **Scope note.** The protocol's directory is name→key resolution. Richer directory services (search, recommendations, semantic/embedding-based discovery, geographic filtering) are a host/product concern and out of protocol scope per §6.2. The directory extensions documented in `08-DISCOVERY.md` §3.5 are host-layer services, not protocol requirements.
+
 ## 8. The reputation layer
 
 The protocol supports a reputation layer through the `ATTEST` transition. An attestation is a signed message from one user identity to another, with a schema and a payload.
@@ -363,6 +375,19 @@ These are not in the spec yet:
 - The exact reputation-aggregation protocols
 
 These are open because they need to be implemented, tested, and broken before they can be specified. The protocol can ship with placeholders and a roadmap for filling them in.
+
+#### Cross-references: items tracked elsewhere
+
+The five items above are open protocol questions. The following items appear in §5.4.6 and §5.4.7 as "not yet implemented" defenses; they are not duplicated in §11 because their resolution is tracked in `06-OPEN-QUESTIONS.md`:
+
+- **Steward set growth via REMOVE_STEWARD bypass** (§5.4.6) — tracked in `06-OPEN-QUESTIONS.md` §7.
+- **Merkle state root collision** (§5.4.6) — tracked in `06-OPEN-QUESTIONS.md` §8 (quantum-computing forward-compat via SHA-3-256 swap-in).
+- **Fork/migrate races** (§5.4.6) — split-brain via two concurrent MIGRATE transitions. Tracked in `06-OPEN-QUESTIONS.md` §9.
+- **Compromised wg host** (§5.4.6) — passive observation defense is via §5.1 key separation; active defense (slash-via-attest). Tracked in `06-OPEN-QUESTIONS.md` §10.
+- **Gossip-level equivocation pipeline** (§5.4.6) — end-to-end "gossip evidence + slash via REMOVE_STEWARD" not yet wired. Tracked in `06-OPEN-QUESTIONS.md` §11.
+- **Branch pruning policy** (§5.4.7) — production hosts SHOULD prune branches with no recent activity. Tracked in `06-OPEN-QUESTIONS.md` §12.
+
+Readers looking for the full status of any of these should consult the cross-referenced sections of `06-OPEN-QUESTIONS.md`, not this section.
 
 ## 12. What the protocol is not
 
