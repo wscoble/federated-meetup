@@ -241,6 +241,7 @@
 		</div>
 	</div>
 	<div id="attendee-table-{{.EventID}}" class="overflow-x-auto">
+		{{$eventID := .EventID}}
 		<table class="data-table">
 			<thead>
 				<tr>
@@ -261,17 +262,17 @@
 				<td>
 					{{if not .Attended}}
 					<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline"
-						hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$.EventID}}" hx-swap="outerHTML">
+						hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$eventID}}" hx-swap="outerHTML">
 						<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-						<input type="hidden" name="event_id" value="{{$.EventID}}">
+						<input type="hidden" name="event_id" value="{{$eventID}}">
 						<input type="hidden" name="email" value="{{.Email}}">
 						<button type="submit" class="btn btn-primary btn-sm">Check In</button>
 					</form>
 					{{else}}
 					<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline"
-						hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$.EventID}}" hx-swap="outerHTML">
+						hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$eventID}}" hx-swap="outerHTML">
 						<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-						<input type="hidden" name="event_id" value="{{$.EventID}}">
+						<input type="hidden" name="event_id" value="{{$eventID}}">
 						<input type="hidden" name="email" value="{{.Email}}">
 						<input type="hidden" name="action" value="uncheck">
 						<button type="submit" class="btn btn-outline btn-sm">Uncheck</button>

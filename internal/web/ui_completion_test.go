@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	pb "github.com/wscoble/federated-meetup/proto/federated_meetup/product/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ---- Attendance check-in UI tests ----
@@ -316,13 +319,24 @@ func TestVideoRoomTemplateRenders(t *testing.T) {
 
 	groupKey, eventID := seedTestData(t, srv)
 
-	// Set event start time to now so room is open
+	// Set event start time to now so room is open — update both stores
+	now := srv.now().Unix()
 	srv.store.UpsertEvent(CachedEvent{
 		GroupKey:    groupKey,
 		EventID:     eventID,
 		Title:       "Test Event",
 		Description: "A test event",
-		StartsAt:    srv.now().Unix(),
+		StartsAt:    now,
+		Location:    "Test Location",
+		Capacity:    50,
+	})
+	// Update the product store event too (handleVideoRoom reads from product store)
+	srv.product.Store().PutEvent(&pb.Event{
+		EventId:     eventID,
+		GroupId:     groupKey,
+		Title:       "Test Event",
+		Description: "A test event",
+		StartsAt:    timestamppb.New(srv.now()),
 		Location:    "Test Location",
 		Capacity:    50,
 	})
