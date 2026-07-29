@@ -1,0 +1,117 @@
+{{template "base" .}}
+{{define "title"}}Video Call — {{.EventTitle}}{{end}}
+{{define "head"}}
+<script src="/static/video.js" defer></script>
+{{end}}
+{{define "content"}}
+<!-- Breadcrumb -->
+<nav class="breadcrumb" aria-label="Breadcrumb">
+	<a href="/events/{{.GroupKey}}/{{.EventID}}">{{.EventTitle}}</a>
+	<span class="sep" aria-hidden="true">›</span>
+	<span class="current">Video Call</span>
+</nav>
+
+<div class="video-room">
+	<!-- Room header -->
+	<div class="video-room-header flex items-center justify-between gap-3 flex-wrap mb-4">
+		<div>
+			<h1>{{.EventTitle}}</h1>
+			<p class="text-sm text-secondary">{{.GroupName}} · Video Call</p>
+		</div>
+		<div id="call-status" class="call-status connecting">Connecting…</div>
+	</div>
+
+	<!-- Participant count + large group warning -->
+	<div class="mb-4">
+		<span id="participant-list" class="badge badge-neutral">1 in call</span>
+	</div>
+
+	{{if .TooManyParticipants}}
+	<!-- Tier 2 fallback: SFU not yet implemented -->
+	<div class="card card-lg video-fallback">
+		<div class="video-fallback-icon">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+			</svg>
+		</div>
+		<h2>Large group video calls coming soon</h2>
+		<p class="text-secondary mt-2">This group has more than 8 participants, which exceeds the current peer-to-peer mesh limit.</p>
+		<p class="text-muted text-sm mt-2">We're building an SFU (Selective Forwarding Unit) mode using Pion WebRTC to support groups of 9-20 people. Check back soon!</p>
+		<a href="/events/{{.GroupKey}}/{{.EventID}}" class="btn btn-outline mt-4">← Back to event</a>
+	</div>
+	{{else}}
+	<!-- Video grid -->
+	<div id="video-grid" class="video-grid">
+		<!-- Video tiles are dynamically inserted by video.js -->
+	</div>
+
+	<!-- Controls bar -->
+	<div class="video-controls">
+		<button id="btn-mute" class="btn btn-secondary video-btn" title="Mute" aria-label="Toggle microphone">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+			</svg>
+			<span class="btn-label">Mute</span>
+		</button>
+		<button id="btn-cam" class="btn btn-secondary video-btn" title="Disable camera" aria-label="Toggle camera">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+			</svg>
+			<span class="btn-label">Camera</span>
+		</button>
+		<button id="btn-screen" class="btn btn-secondary video-btn" title="Share screen" aria-label="Toggle screen share">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+			</svg>
+			<span class="btn-label">Share</span>
+		</button>
+
+		{{if .IsLeader}}
+		<button id="btn-mute-all" class="btn btn-secondary video-btn" title="Mute all participants" aria-label="Mute all"
+			onclick="videoMuteAll()">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M17 14v5m0-5l-2 2m2 2l2-2M7 10v4a5 5 0 005 5M7 10H5a2 2 0 01-2-2V6a2 2 0 012-2h2m0 4l3.5-3.5"/>
+			</svg>
+			<span class="btn-label">Mute All</span>
+		</button>
+		{{end}}
+
+		<button id="btn-leave" class="btn btn-danger video-btn video-btn-leave" title="Leave call" aria-label="Leave call">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+			</svg>
+			<span class="btn-label">Leave</span>
+		</button>
+	</div>
+	{{end}}
+</div>
+
+<!-- Config injected for video.js -->
+<script>
+window.VIDEO_CONFIG = {
+	groupKey: "{{.GroupKey}}",
+	peerId: "{{.PeerID}}",
+	peerName: "{{.PeerName}}",
+	wsUrl: "{{.WSUrl}}",
+	leaveUrl: "/events/{{.GroupKey}}/{{.EventID}}",
+	isLeader: {{.IsLeader}}
+};
+
+{{if .IsLeader}}
+function videoMuteAll() {
+	// Send mute_all via existing WebSocket
+	// video.js listens for 'mute_all' messages
+	if (window.ws) return; // handled by video.js sendSignal
+	// This is a hint — actual mute-all is sent through video.js's ws
+}
+// Override to send mute_all through video.js's WebSocket
+(function() {
+	var origInit = window.VIDEO_CONFIG;
+	window.videoMuteAll = function() {
+		// Dispatch a custom event that video.js listens for
+		window.dispatchEvent(new CustomEvent('video-mute-all'));
+	};
+})();
+{{end}}
+</script>
+{{end}}

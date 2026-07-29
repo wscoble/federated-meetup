@@ -67,6 +67,9 @@ import (
 	"github.com/wscoble/federated-meetup/internal/group"
 	"github.com/wscoble/federated-meetup/internal/host"
 	"github.com/wscoble/federated-meetup/internal/mcp"
+	"github.com/wscoble/federated-meetup/internal/notify"
+	"github.com/wscoble/federated-meetup/internal/notify/push"
+	"github.com/wscoble/federated-meetup/internal/notify/sms"
 	"github.com/wscoble/federated-meetup/internal/payment"
 	"github.com/wscoble/federated-meetup/internal/product"
 	"github.com/wscoble/federated-meetup/internal/types"
@@ -232,6 +235,86 @@ func main() {
 	webSrv, err := web.NewServer(svc, prodSvc, webStore, emailSender, cfg.baseURL)
 	if err != nil {
 		log.Fatalf("web server: %v", err)
+	}
+
+	// ---- Notification system ----
+	// Initialize multi-channel notifications: push (VAPID), email, SMS.
+	// All providers are optional — the system degrades gracefully.
+	var pushMgr *push.Manager
+	var notifier *notify.Notifier
+	var notifyQ *notify.Queue
+	var prefsStore *notify.PrefsStore
+	var notifyProc *notify.Processor
+
+	// Get the underlying *sql.DB from the web store for notification tables.
+	notifyDB := webStore.DB()
+
+	// Push: always initialize (generates VAPID keys if needed).
+	vapidSubject := "mailto:" + getEnv("HOSTD_VAPID_SUBJECT", "admin@"+cfg.baseURL)
+	pushMgr, err = push.NewManager(notifyDB, vapidSubject)
+	if err != nil {
+		log.Printf("fedmeetup: push init failed (push disabled): %v", err)
+		pushMgr = nil
+	} else {
+		log.Printf("fedmeetup: web push enabled (VAPID public key: %s...)", pushMgr.PublicKey()[:16])
+	}
+
+	// SMS: initialize from env vars if configured.
+	var smsSender notify.SMSSender
+	smsProvider := sms.NewFromEnv()
+	if smsProvider != nil {
+		smsSender = smsProvider
+		log.Printf("fedmeetup: SMS notifications enabled")
+	} else {
+		log.Printf("fedmeetup: SMS not configured (set TWILIO_* or TELNYX_* env vars)")
+	}
+
+	// Notifier: combines push, email, SMS with graceful degradation.
+	// The email sender is adapted to the notify.EmailSender interface.
+	notifier = notify.NewNotifier(
+		web.WrapPushSender(pushMgr),
+		web.WrapEmailSender(emailSender),
+		smsSender,
+	)
+
+	// Notification queue (SQLite-backed).
+	notifyQ, err = notify.NewQueue(notifyDB)
+	if err != nil {
+		log.Printf("fedmeetup: notification queue init failed: %v", err)
+		notifyQ = nil
+	} else {
+		log.Printf("fedmeetup: notification queue enabled")
+	}
+
+	// Preferences store.
+	prefsStore, err = notify.NewPrefsStore(notifyDB)
+	if err != nil {
+		log.Printf("fedmeetup: notification prefs init failed: %v", err)
+		prefsStore = nil
+	} else {
+		log.Printf("fedmeetup: notification preferences enabled")
+	}
+
+	// Background queue processor (runs every 30s).
+	if notifyQ != nil && notifier != nil {
+		notifyProc = notify.NewProcessor(notifyQ, notify.ProcessorConfig{
+			Interval:  30 * time.Second,
+			BatchSize: 50,
+			Resolver: func(ctx context.Context, userEmail string) (notify.UserProfile, error) {
+				return webSrv.ResolveUserForNotify(ctx, userEmail)
+			},
+		})
+	}
+
+	// Wire notification system into the web server.
+	webSrv.SetNotificationSystem(pushMgr, notifier, notifyQ, prefsStore, notifyProc)
+
+	// Start the background processor.
+	if notifyProc != nil {
+		notifyCtx, notifyCancel := context.WithCancel(context.Background())
+		defer notifyCancel()
+		notifyProc.Start(notifyCtx, notifier)
+		log.Printf("fedmeetup: notification queue processor started (interval=30s)")
 	}
 
 	// Seed demo data if the product store is empty (idempotent).

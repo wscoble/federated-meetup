@@ -167,16 +167,39 @@ func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Load initial messages for the group page.
+	messages, hasMore, _ := s.store.ListMessages(group.GroupKey, 0, 10)
+	var msgIDs []int64
+	for _, m := range messages {
+		msgIDs = append(msgIDs, m.ID)
+	}
+	reactionsMap, _ := s.store.GetMessageReactionsMap(msgIDs, "")
+	var msgViews []messageViewData
+	for _, m := range messages {
+		replies, _ := s.store.GetReplies(m.ID)
+		msgViews = append(msgViews, messageViewData{
+			Message:   m,
+			Replies:   replies,
+			Reactions: reactionsMap[m.ID],
+			GroupKey:  group.GroupKey,
+			CSRFToken: csrfTokenFromRequest(r),
+		})
+	}
+	msgCount, _ := s.store.CountMessages(group.GroupKey)
+
 	s.renderPage(w, "group", groupData{
 		pageBase: pageBase{
 			CSRFToken: csrfTokenFromRequest(r),
 			MetaDesc:  group.Description,
 		},
-		Group:          group,
-		GroupKey:       group.GroupKey,
-		UpcomingEvents: upcoming,
-		PastEvents:     past,
-		PastEventCount: len(past),
+		Group:           group,
+		GroupKey:        group.GroupKey,
+		UpcomingEvents:  upcoming,
+		PastEvents:      past,
+		PastEventCount:  len(past),
+		Messages:        msgViews,
+		MessageCount:    msgCount,
+		HasMoreMessages: hasMore,
 	})
 }
 
@@ -529,6 +552,10 @@ func (s *Server) handleRsvpConfirmPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.renderFragment(w, "rsvp_confirmed_fragment", fragmentData{})
+
+	// Enqueue multi-channel notification for RSVP confirmation.
+	s.notifyRsvpConfirmation(rsvp.UserEmail, eventTitle, eventStartsAt, eventLocation, groupName,
+		fmt.Sprintf("%s/my-rsvps?email=%s", s.baseURL, rsvp.UserEmail))
 }
 
 // ---- Organizer dashboard ----
@@ -622,7 +649,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Events:       dashEvents,
 		TotalRevenue: &pb.Money{Amount: totalRevenueAmount, Currency: totalRevenueCurrency},
 		TotalRsvps:   totalRsvps,
+		CareAlerts:   s.fetchCareAlerts(groupKey),
 	})
+}
+
+// fetchCareAlerts returns members who haven't attended 3+ consecutive events.
+func (s *Server) fetchCareAlerts(groupKey string) []MemberCareAlert {
+	alerts, err := s.store.GetMembersNeedingCare(groupKey, 3)
+	if err != nil {
+		return nil
+	}
+	return alerts
 }
 
 // handleLogin renders the organizer login form.
@@ -1058,6 +1095,9 @@ func (s *Server) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 		GroupKey: groupKey,
 		EventID:  firstEventID,
 	})
+
+	// Enqueue notifications to group members about the new event.
+	s.notifyEventCreation(groupKey, firstEventID, title, startTimes[0].Unix(), location)
 }
 
 // handleCreateTicket creates a new ticket type for an event.
@@ -1112,8 +1152,9 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCheckIn marks an attendee as checked in for an event.
+// Returns an HTMX fragment (attendee_row) for partial update.
 func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.isAuthenticated(r)
+	groupKey, ok := s.isAuthenticated(r)
 	if !ok {
 		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
 		return
@@ -1122,25 +1163,185 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 	// The route pattern uses {group_key} but we need event_id from the form
 	eventID := r.FormValue("event_id")
 	email := r.FormValue("email")
+	action := r.FormValue("action") // "checkin" (default) or "uncheck"
 
 	if eventID == "" || email == "" {
-		http.Error(w, "event_id and email required", http.StatusBadRequest)
+		s.renderFragment(w, "error_fragment", fragmentData{Error: "event_id and email required"})
 		return
 	}
 
-	// Update check-in status in the product store
-	if s.product != nil {
-		if rsvp, ok := s.product.Store().GetRsvp(eventID, email); ok {
-			rsvp.Attended = true
-			s.product.Store().UpdateRsvp(rsvp)
+	if action == "uncheck" {
+		_ = s.store.UnmarkRsvpAttended(groupKey, eventID, email)
+		log.Printf("web: attendee unchecked: %s for event %s", email, eventID)
+	} else {
+		// Update check-in status in the product store
+		if s.product != nil {
+			if rsvp, ok := s.product.Store().GetRsvp(eventID, email); ok {
+				rsvp.Attended = action != "uncheck"
+				s.product.Store().UpdateRsvp(rsvp)
+			}
 		}
+		_ = s.store.MarkRsvpAttendedByGroupKey(groupKey, eventID, email)
+		log.Printf("web: attendee checked in: %s for event %s", email, eventID)
 	}
 
-	// Also update in SQLite
-	_ = s.store.MarkRsvpAttended(eventID, email)
+	// Re-fetch RSVPs and re-render the attendee table fragment
+	rsvps, _ := s.store.ListRsvpsForEvent(groupKey, eventID)
+	var attendees []attendeeView
+	checkedIn := 0
+	for _, rec := range rsvps {
+		attendees = append(attendees, attendeeView{
+			Email:    rec.UserEmail,
+			Name:     rec.UserName,
+			Attended: rec.Attended,
+		})
+		if rec.Attended {
+			checkedIn++
+		}
+	}
+	rsvpCount := len(rsvps)
+	s.renderFragment(w, "attendee_table", attendanceCheckInData{
+		GroupKey:    groupKey,
+		EventID:     eventID,
+		Attendees:   attendees,
+		RsvpCount:   rsvpCount,
+		CheckedIn:   checkedIn,
+		CSRFToken:   csrfTokenFromRequest(r),
+	})
+}
 
-	log.Printf("web: attendee checked in: %s for event %s", email, eventID)
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+// handleBulkCheckIn marks all confirmed RSVPs for an event as attended.
+// Returns an HTMX fragment.
+func (s *Server) handleBulkCheckIn(w http.ResponseWriter, r *http.Request) {
+	groupKey, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	eventID := r.FormValue("event_id")
+	if eventID == "" {
+		s.renderFragment(w, "error_fragment", fragmentData{Error: "event_id required"})
+		return
+	}
+
+	_ = s.store.BulkMarkAttended(groupKey, eventID)
+	log.Printf("web: bulk check-in for event %s (group %s)", eventID, groupKey)
+
+	// Re-fetch RSVPs and re-render the attendee table fragment
+	rsvps, _ := s.store.ListRsvpsForEvent(groupKey, eventID)
+	var attendees []attendeeView
+	checkedIn := 0
+	for _, rec := range rsvps {
+		attendees = append(attendees, attendeeView{
+			Email:    rec.UserEmail,
+			Name:     rec.UserName,
+			Attended: rec.Attended,
+		})
+		if rec.Attended {
+			checkedIn++
+		}
+	}
+	rsvpCount := len(rsvps)
+	s.renderFragment(w, "attendee_table", attendanceCheckInData{
+		GroupKey:    groupKey,
+		EventID:     eventID,
+		Attendees:   attendees,
+		RsvpCount:   rsvpCount,
+		CheckedIn:   checkedIn,
+		CSRFToken:   csrfTokenFromRequest(r),
+	})
+}
+
+// handleAttendanceHistory renders the per-group attendance history page.
+func (s *Server) handleAttendanceHistory(w http.ResponseWriter, r *http.Request) {
+	groupKey, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	history, _ := s.store.GetAttendanceHistory(groupKey)
+	alerts, _ := s.store.GetMembersNeedingCare(groupKey, 3)
+
+	// Get group display name
+	groupName := groupKey
+	if g, err := s.store.GetGroup(groupKey); err == nil && g.DisplayName != "" {
+		groupName = g.DisplayName
+	}
+
+	s.renderPage(w, "attendance_history", attendanceHistoryData{
+		pageBase: pageBase{
+			CSRFToken: csrfTokenFromRequest(r),
+		},
+		GroupKey:   groupKey,
+		GroupName:  groupName,
+		History:    history,
+		CareAlerts:  alerts,
+	})
+}
+
+// handleSendRsvpReminders sends RSVP follow-up reminder emails to members
+// who haven't RSVP'd for an event. Triggered by the organizer from the dashboard.
+func (s *Server) handleSendRsvpReminders(w http.ResponseWriter, r *http.Request) {
+	groupKey, ok := s.isAuthenticated(r)
+	if !ok {
+		http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
+		return
+	}
+
+	eventID := r.FormValue("event_id")
+	if eventID == "" {
+		s.renderFragment(w, "error_fragment", fragmentData{Error: "event_id required"})
+		return
+	}
+
+	// Get event details
+	event, err := s.eventFromProduct(groupKey, eventID)
+	if err != nil {
+		s.renderFragment(w, "error_fragment", fragmentData{Error: "event not found"})
+		return
+	}
+
+	// Get group display name
+	groupName := groupKey
+	if g, err := s.groupFromProduct(groupKey); err == nil && g.DisplayName != "" {
+		groupName = g.DisplayName
+	}
+
+	// Find members who haven't RSVP'd
+	members, _ := s.store.ListMembersWithoutRSVP(groupKey, eventID)
+
+	// Build event URL
+	base := s.absoluteBaseURL(r)
+	eventURL := fmt.Sprintf("%s/events/%s/%s", base, groupKey, eventID)
+
+	sent := 0
+	for _, m := range members {
+		subject, body, renderErr := emailpkg.RenderRsvpReminder(emailpkg.RsvpReminderData{
+			EventTitle:    event.Title,
+			EventDate:     emailpkg.FormatEventDate(event.StartsAt),
+			EventLocation: event.Location,
+			GroupName:     groupName,
+			EventURL:     eventURL,
+		})
+		if renderErr != nil {
+			log.Printf("web: render rsvp_reminder email: %v", renderErr)
+			continue
+		}
+		if err := s.email.Send(r.Context(), m.UserEmail, subject, body); err != nil {
+			log.Printf("web: send rsvp_reminder to %s: %v", m.UserEmail, err)
+			continue
+		}
+		sent++
+	}
+
+	log.Printf("web: RSVP reminders sent: %d for event %s (group %s)", sent, eventID, groupKey)
+	s.renderFragment(w, "rsvp_reminder_sent", fragmentData{
+		Title:    event.Title,
+		GroupKey: groupKey,
+		EventID:  eventID,
+	})
 }
 
 // ---- Checkout ----
@@ -1303,6 +1504,16 @@ func (s *Server) handleCancelEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("web: event cancelled: %s/%s", groupKey, eventID)
+
+	// Notify confirmed RSVPs about the cancellation.
+	eventTitle := "Event"
+	var startsAt int64
+	if ce, err := s.store.GetEvent(groupKey, eventID); err == nil {
+		eventTitle = ce.Title
+		startsAt = ce.StartsAt
+	}
+	s.notifyScheduleChange(groupKey, eventID, eventTitle, startsAt, "", "Event has been cancelled")
+
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 

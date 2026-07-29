@@ -88,6 +88,7 @@ func (s *Store) migrate() error {
 			token      TEXT NOT NULL DEFAULT '',
 			confirmed  INTEGER NOT NULL DEFAULT 0,
 			attended   INTEGER NOT NULL DEFAULT 0,
+			attended_at INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (group_key, event_id, user_email)
 		)`,
@@ -109,11 +110,47 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_events_start ON events_cache(starts_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_group ON events_cache(group_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_rsvps_event ON rsvps(event_id)`,
+		// Prayer requests
+		`CREATE TABLE IF NOT EXISTS prayer_requests (
+			id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_key             TEXT NOT NULL DEFAULT '',
+			submitted_by_email    TEXT NOT NULL DEFAULT '',
+			submitted_by_name     TEXT NOT NULL DEFAULT '',
+			title                 TEXT NOT NULL DEFAULT '',
+			body                  TEXT NOT NULL DEFAULT '',
+			category              TEXT NOT NULL DEFAULT 'general',
+			status                TEXT NOT NULL DEFAULT 'active',
+			is_anonymous          INTEGER NOT NULL DEFAULT 0,
+			created_at            INTEGER NOT NULL DEFAULT 0,
+			updated_at            INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS prayer_updates (
+			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+			prayer_request_id    INTEGER NOT NULL,
+			update_text          TEXT NOT NULL DEFAULT '',
+			status_change        TEXT NOT NULL DEFAULT '',
+			created_by           TEXT NOT NULL DEFAULT '',
+			created_at           INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY (prayer_request_id) REFERENCES prayer_requests(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_prayer_group ON prayer_requests(group_key)`,
+		`CREATE INDEX IF NOT EXISTS idx_prayer_status ON prayer_requests(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_prayer_updated ON prayer_requests(updated_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("exec %q: %w", stmt, err)
 		}
+	}
+	// Add messaging tables (defined in messages_store.go).
+	for _, stmt := range s.messageStmts() {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt, err)
+		}
+	}
+	// Migrate member-related tables
+	if err := s.migrateMembers(); err != nil {
+		return fmt.Errorf("migrate members: %w", err)
 	}
 	return nil
 }
@@ -328,14 +365,15 @@ func (s *Store) DeleteEvent(groupKey, eventID string) error {
 
 // RSVPRecord is a single RSVP stored locally.
 type RSVPRecord struct {
-	GroupKey  string
-	EventID   string
-	UserEmail string
-	UserName  string
-	Token     string
-	Confirmed bool
-	Attended  bool
-	CreatedAt int64
+	GroupKey   string
+	EventID    string
+	UserEmail  string
+	UserName   string
+	Token      string
+	Confirmed  bool
+	Attended   bool
+	AttendedAt int64 // unix timestamp, 0 if not attended
+	CreatedAt  int64
 }
 
 // CreateRsvp inserts a new RSVP with a magic-link token. Returns an error if
@@ -353,8 +391,8 @@ func (s *Store) CreateRsvp(r RSVPRecord) error {
 		r.CreatedAt = s.now().Unix()
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO rsvps (group_key, event_id, user_email, user_name, token, confirmed, attended, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rsvps (group_key, event_id, user_email, user_name, token, confirmed, attended, attended_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
 		 ON CONFLICT(group_key, event_id, user_email) DO UPDATE SET
 		   user_name=excluded.user_name,
 		   token=excluded.token,
@@ -371,15 +409,17 @@ func (s *Store) ConfirmRsvp(token string) (RSVPRecord, error) {
 	var r RSVPRecord
 	var confirmed int
 	var attended int
+	var attendedAt int64
 	err := s.db.QueryRow(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps WHERE token = ?`,
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, attended_at, created_at FROM rsvps WHERE token = ?`,
 		token,
-	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt)
+	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &attendedAt, &r.CreatedAt)
 	if err != nil {
 		return RSVPRecord{}, err
 	}
 	r.Confirmed = confirmed != 0
 	r.Attended = attended != 0
+	r.AttendedAt = attendedAt
 	if r.Confirmed {
 		return r, nil // already confirmed — idempotent
 	}
@@ -396,15 +436,17 @@ func (s *Store) GetRsvpByToken(token string) (RSVPRecord, error) {
 	var r RSVPRecord
 	var confirmed int
 	var attended int
+	var attendedAt int64
 	err := s.db.QueryRow(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps WHERE token = ?`,
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, attended_at, created_at FROM rsvps WHERE token = ?`,
 		token,
-	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt)
+	).Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &attendedAt, &r.CreatedAt)
 	if err != nil {
 		return RSVPRecord{}, err
 	}
 	r.Confirmed = confirmed != 0
 	r.Attended = attended != 0
+	r.AttendedAt = attendedAt
 	return r, nil
 }
 
@@ -421,7 +463,7 @@ func (s *Store) RsvpCount(groupKey, eventID string) (int, error) {
 // ListRsvpsForEvent returns all confirmed RSVPs for an event.
 func (s *Store) ListRsvpsForEvent(groupKey, eventID string) ([]RSVPRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, attended_at, created_at FROM rsvps
 		 WHERE group_key = ? AND event_id = ? AND confirmed = 1 ORDER BY created_at ASC`,
 		groupKey, eventID,
 	)
@@ -434,11 +476,13 @@ func (s *Store) ListRsvpsForEvent(groupKey, eventID string) ([]RSVPRecord, error
 		var r RSVPRecord
 		var confirmed int
 		var attended int
-		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt); err != nil {
+		var attendedAt int64
+		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &attendedAt, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Confirmed = confirmed != 0
 		r.Attended = attended != 0
+		r.AttendedAt = attendedAt
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -447,7 +491,7 @@ func (s *Store) ListRsvpsForEvent(groupKey, eventID string) ([]RSVPRecord, error
 // ListRsvpsByEmail returns all RSVPs (confirmed and unconfirmed) for a given email.
 func (s *Store) ListRsvpsByEmail(email string) ([]RSVPRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, created_at FROM rsvps
+		`SELECT group_key, event_id, user_email, user_name, token, confirmed, attended, attended_at, created_at FROM rsvps
 		 WHERE user_email = ? ORDER BY created_at DESC`,
 		email,
 	)
@@ -460,11 +504,13 @@ func (s *Store) ListRsvpsByEmail(email string) ([]RSVPRecord, error) {
 		var r RSVPRecord
 		var confirmed int
 		var attended int
-		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &r.CreatedAt); err != nil {
+		var attendedAt int64
+		if err := rows.Scan(&r.GroupKey, &r.EventID, &r.UserEmail, &r.UserName, &r.Token, &confirmed, &attended, &attendedAt, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Confirmed = confirmed != 0
 		r.Attended = attended != 0
+		r.AttendedAt = attendedAt
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -479,13 +525,194 @@ func (s *Store) CancelRsvp(groupKey, eventID, email string) error {
 	return err
 }
 
-// MarkRsvpAttended marks an RSVP as attended.
+// MarkRsvpAttended marks an RSVP as attended and records the timestamp.
 func (s *Store) MarkRsvpAttended(eventID, email string) error {
 	_, err := s.db.Exec(
-		`UPDATE rsvps SET attended = 1 WHERE event_id = ? AND user_email = ?`,
-		eventID, email,
+		`UPDATE rsvps SET attended = 1, attended_at = ? WHERE event_id = ? AND user_email = ?`,
+		s.now().Unix(), eventID, email,
 	)
 	return err
+}
+
+// MarkRsvpAttendedByGroupKey marks an RSVP as attended using the full key
+// (group_key, event_id, user_email) and records the timestamp.
+func (s *Store) MarkRsvpAttendedByGroupKey(groupKey, eventID, email string) error {
+	_, err := s.db.Exec(
+		`UPDATE rsvps SET attended = 1, attended_at = ? WHERE group_key = ? AND event_id = ? AND user_email = ?`,
+		s.now().Unix(), groupKey, eventID, email,
+	)
+	return err
+}
+
+// UnmarkRsvpAttended removes the attended flag and clears the timestamp.
+func (s *Store) UnmarkRsvpAttended(groupKey, eventID, email string) error {
+	_, err := s.db.Exec(
+		`UPDATE rsvps SET attended = 0, attended_at = 0 WHERE group_key = ? AND event_id = ? AND user_email = ?`,
+		groupKey, eventID, email,
+	)
+	return err
+}
+
+// BulkMarkAttended marks all confirmed RSVPs for an event as attended.
+func (s *Store) BulkMarkAttended(groupKey, eventID string) error {
+	_, err := s.db.Exec(
+		`UPDATE rsvps SET attended = 1, attended_at = ? WHERE group_key = ? AND event_id = ? AND confirmed = 1`,
+		s.now().Unix(), groupKey, eventID,
+	)
+	return err
+}
+
+// ---- Attendance history ----
+
+// AttendanceMemberRow is one row in the per-group attendance history table.
+type AttendanceMemberRow struct {
+	UserEmail     string
+	UserName      string
+	EventsAttended int
+	EventsMissed   int
+	LastAttendedAt int64 // unix timestamp, 0 if never
+}
+
+// GetAttendanceHistory returns per-member attendance stats for a group.
+// Only counts confirmed RSVPs for past (non-cancelled) events.
+func (s *Store) GetAttendanceHistory(groupKey string) ([]AttendanceMemberRow, error) {
+	rows, err := s.db.Query(`
+		SELECT
+			r.user_email,
+			MAX(r.user_name) AS user_name,
+			SUM(CASE WHEN r.attended = 1 THEN 1 ELSE 0 END) AS events_attended,
+			SUM(CASE WHEN r.attended = 0 THEN 1 ELSE 0 END) AS events_missed,
+			MAX(CASE WHEN r.attended = 1 THEN r.attended_at ELSE 0 END) AS last_attended_at
+		FROM rsvps r
+		INNER JOIN events_cache e ON r.group_key = e.group_key AND r.event_id = e.event_id
+		WHERE r.group_key = ? AND r.confirmed = 1 AND e.cancelled = 0
+		GROUP BY r.user_email
+		ORDER BY user_name ASC`,
+		groupKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AttendanceMemberRow
+	for rows.Next() {
+		var a AttendanceMemberRow
+		if err := rows.Scan(&a.UserEmail, &a.UserName, &a.EventsAttended, &a.EventsMissed, &a.LastAttendedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// MemberCareAlert is a member who hasn't attended the last N consecutive events.
+type MemberCareAlert struct {
+	UserEmail       string
+	UserName        string
+	ConsecutiveMissed int
+	LastAttendedAt   int64 // unix timestamp, 0 if never attended
+}
+
+// GetMembersNeedingCare returns members who haven't attended the last
+// `threshold` or more consecutive events they had a confirmed RSVP for.
+// A "miss" is a confirmed RSVP where attended=0 for a past event.
+// Default threshold is 3.
+func (s *Store) GetMembersNeedingCare(groupKey string, threshold int) ([]MemberCareAlert, error) {
+	if threshold <= 0 {
+		threshold = 3
+	}
+	// For each member, get their confirmed RSVPs for past non-cancelled events,
+	// ordered by event start time descending. Count consecutive misses from
+	// the most recent. If that count >= threshold, flag them.
+	rows, err := s.db.Query(`
+		SELECT r.user_email, r.user_name, r.attended, r.attended_at, e.starts_at
+		FROM rsvps r
+		INNER JOIN events_cache e ON r.group_key = e.group_key AND r.event_id = e.event_id
+		WHERE r.group_key = ? AND r.confirmed = 1 AND e.cancelled = 0
+		ORDER BY r.user_email, e.starts_at DESC`,
+		groupKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Group by user_email, compute consecutive misses from most recent.
+	type rsvpInfo struct {
+		attended   bool
+		attendedAt int64
+	}
+	memberRSVPs := map[string][]rsvpInfo{}
+	memberName := map[string]string{}
+	for rows.Next() {
+		var email, name string
+		var attended int
+		var attendedAt, startsAt int64
+		if err := rows.Scan(&email, &name, &attended, &attendedAt, &startsAt); err != nil {
+			return nil, err
+		}
+		memberRSVPs[email] = append(memberRSVPs[email], rsvpInfo{
+			attended:   attended != 0,
+			attendedAt: attendedAt,
+		})
+		memberName[email] = name
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var alerts []MemberCareAlert
+	for email, rsvps := range memberRSVPs {
+		// rsvps is ordered by starts_at DESC (most recent first).
+		consecutiveMissed := 0
+		var lastAttendedAt int64
+		for _, r := range rsvps {
+			if r.attended {
+				lastAttendedAt = r.attendedAt
+				break
+			}
+			consecutiveMissed++
+		}
+		if consecutiveMissed >= threshold {
+			alerts = append(alerts, MemberCareAlert{
+				UserEmail:         email,
+				UserName:          memberName[email],
+				ConsecutiveMissed: consecutiveMissed,
+				LastAttendedAt:    lastAttendedAt,
+			})
+		}
+	}
+	return alerts, nil
+}
+
+// ListMembersWithoutRSVP returns emails of members who have NOT RSVP'd
+// for a given event. This is computed from the set of all members who
+// have ever RSVP'd to any event in the group (as a proxy for the member
+// list, since there's no explicit membership table).
+func (s *Store) ListMembersWithoutRSVP(groupKey, eventID string) ([]RSVPRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT r2.user_email, r2.user_name
+		FROM rsvps r2
+		WHERE r2.group_key = ?
+		  AND r2.user_email NOT IN (
+		    SELECT r.user_email FROM rsvps r WHERE r.group_key = ? AND r.event_id = ?
+		  )`,
+		groupKey, groupKey, eventID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RSVPRecord
+	for rows.Next() {
+		var r RSVPRecord
+		if err := rows.Scan(&r.UserEmail, &r.UserName); err != nil {
+			return nil, err
+		}
+		r.GroupKey = groupKey
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ---- Organizer sessions ----

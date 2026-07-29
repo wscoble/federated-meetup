@@ -31,6 +31,81 @@
 </div>
 {{end}}
 
+{{define "prayer_item"}}
+<div id="prayer-{{.PrayerRequest.ID}}" class="card mb-4">
+	<!-- Prayer request header -->
+	<div class="flex items-start justify-between gap-2 mb-2 flex-wrap">
+		<div>
+			<h3 style="font-size: 1.05rem; margin: 0;">{{.PrayerRequest.Title}}</h3>
+			<p class="text-sm text-muted mt-1">
+				{{prayerSubmitterName .PrayerRequest .IsLeader}} · {{formatDaysAgo .PrayerRequest.CreatedAt}}
+			</p>
+		</div>
+		<div class="flex items-center gap-2 flex-wrap">
+			<span class="badge {{prayerCategoryBadgeClass .PrayerRequest.Category}}">{{prayerCategoryLabel .PrayerRequest.Category}}</span>
+			<span class="badge {{prayerStatusBadgeClass .PrayerRequest.Status}}">{{prayerStatusLabel .PrayerRequest.Status}}</span>
+		</div>
+	</div>
+
+	<!-- Prayer request body -->
+	{{if .PrayerRequest.Body}}
+	<p class="text-secondary leading-relaxed mb-3" style="white-space: pre-wrap;">{{.PrayerRequest.Body}}</p>
+	{{end}}
+
+	<!-- Updates timeline -->
+	{{if .PrayerRequest.Updates}}
+	<div class="prayer-updates mt-3 mb-3" style="border-left: 2px solid var(--border); padding-left: 1rem;">
+		{{range .PrayerRequest.Updates}}
+		<div class="prayer-update mb-2" style="padding: 0.5rem; background: var(--bg-subtle); border-radius: var(--radius);">
+			<p class="text-sm" style="margin: 0;">{{.UpdateText}}</p>
+			<p class="text-xs text-muted mt-1" style="margin: 0.25rem 0 0 0;">
+				{{if .CreatedBy}}{{.CreatedBy}} · {{end}}{{formatDaysAgo .CreatedAt}}
+				{{if .StatusChange}}{{if ne .StatusChange "none"}} · Status → {{prayerStatusLabel .StatusChange}}{{end}}{{end}}
+			</p>
+		</div>
+		{{end}}
+	</div>
+	{{end}}
+
+	<!-- Add update form (HTMX) -->
+	<details class="mt-2">
+		<summary style="cursor: pointer; font-weight: 500; font-size: 0.875rem; color: var(--text-secondary);">+ Add Update</summary>
+		<form hx-post="/groups/{{.GroupCanonical}}/prayer-list/{{.PrayerRequest.ID}}/update" hx-target="#prayer-{{.PrayerRequest.ID}}" hx-swap="outerHTML" class="mt-3" style="background: var(--bg-subtle); border-radius: var(--radius); padding: 1rem;">
+			<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+			<div class="form-row">
+				<div>
+					<label for="update-text-{{.PrayerRequest.ID}}">Update</label>
+					<textarea id="update-text-{{.PrayerRequest.ID}}" name="update_text" rows="2" required maxlength="4096" placeholder="Share an update on this prayer request..."></textarea>
+				</div>
+			</div>
+			<div class="form-row form-row-2">
+				<div>
+					<label for="update-status-{{.PrayerRequest.ID}}">Change Status</label>
+					<select id="update-status-{{.PrayerRequest.ID}}" name="status_change">
+						<option value="none">No change</option>
+						<option value="active">Active</option>
+						<option value="ongoing">Ongoing</option>
+						<option value="answered">Answered</option>
+						<option value="archived">Archived</option>
+					</select>
+				</div>
+				<div>
+					<label for="update-by-{{.PrayerRequest.ID}}">Your Name <span class="text-muted text-sm">(optional)</span></label>
+					<input type="text" id="update-by-{{.PrayerRequest.ID}}" name="created_by" maxlength="256" placeholder="Your name">
+				</div>
+			</div>
+			<button type="submit" class="btn btn-primary btn-sm mt-2">Add Update</button>
+		</form>
+	</details>
+</div>
+{{end}}
+
+{{define "prayer_error"}}
+<div class="alert alert-error">
+	<p class="font-medium">{{.Error}}</p>
+</div>
+{{end}}
+
 {{define "event_card"}}
 <div class="card event-card">
 	<!-- Date badge -->
@@ -75,5 +150,124 @@
 		{{end}}
 	</div>
 	{{end}}
+</div>
+{{end}}
+
+{{define "message_item"}}
+<div id="msg-{{.Message.ID}}" class="message-item">
+	<div class="message-header">
+		<span class="message-avatar" aria-hidden="true">{{initials .Message.AuthorName}}</span>
+		<span class="message-author">{{if .Message.AuthorName}}{{.Message.AuthorName}}{{else}}Anonymous{{end}}</span>
+		<span class="message-time text-muted"><time datetime="{{formatISO .Message.CreatedAt}}">{{formatMessageShort .Message.CreatedAt}}</time></span>
+	</div>
+	<div class="message-body">{{linkify .Message.Body}}</div>
+
+	<!-- Reactions -->
+	{{if .Reactions}}
+	<div class="message-reactions">
+		{{range .Reactions}}
+		<span class="reaction-badge {{if .Reacted}}reaction-active{{end}}">
+			<span class="reaction-emoji">{{.Emoji}}</span>
+			<span class="reaction-count">{{.Count}}</span>
+		</span>
+		{{end}}
+	</div>
+	{{end}}
+
+	<!-- Quick reaction buttons -->
+	<div class="message-actions">
+		{{range reactionEmojis}}
+		<form hx-post="/groups/{{$.GroupKey}}/messages/{{$.Message.ID}}/reactions" hx-target="#msg-{{$.Message.ID}}" hx-swap="outerHTML" class="reaction-form" style="display: inline;">
+			<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+			<input type="hidden" name="email" value="{{$.UserEmail}}">
+			<input type="hidden" name="emoji" value="{{.}}">
+			<button type="submit" class="btn-reaction" title="React with {{.}}">{{.}}</button>
+		</form>
+		{{end}}
+	</div>
+
+	<!-- Reply form (collapsible) -->
+	<details class="reply-form-wrapper">
+		<summary class="reply-toggle">Reply</summary>
+		<form hx-post="/groups/{{.GroupKey}}/messages" hx-target="#msg-{{.Message.ID}} .replies-container" hx-swap="beforeend" class="reply-form mt-2">
+			<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+			<input type="hidden" name="parent_message_id" value="{{.Message.ID}}">
+			<input type="hidden" name="email" value="{{.UserEmail}}">
+			<input type="text" name="name" value="" placeholder="Your name (optional)" maxlength="256" class="reply-name-input">
+			<textarea name="body" rows="2" required maxlength="8192" placeholder="Write a reply..." class="reply-textarea"></textarea>
+			<button type="submit" class="btn btn-primary btn-sm mt-1">Post Reply</button>
+		</form>
+	</details>
+
+	<!-- Replies (threaded, indented) -->
+	{{if .Replies}}
+	<div class="replies-container" style="margin-left: 1.5rem; border-left: 2px solid var(--border); padding-left: 0.75rem;">
+		{{range .Replies}}
+		<div id="msg-{{.ID}}" class="message-item reply-item" style="margin-bottom: 0.5rem;">
+			<div class="message-header">
+				<span class="message-avatar reply-avatar" aria-hidden="true">{{initials .AuthorName}}</span>
+				<span class="message-author">{{if .AuthorName}}{{.AuthorName}}{{else}}Anonymous{{end}}</span>
+				<span class="message-time text-muted"><time datetime="{{formatISO .CreatedAt}}">{{formatMessageShort .CreatedAt}}</time></span>
+			</div>
+			<div class="message-body">{{linkify .Body}}</div>
+		</div>
+		{{end}}
+	</div>
+	{{else}}
+	<div class="replies-container"></div>
+	{{end}}
+</div>
+{{end}}
+
+{{define "message_list"}}
+<div id="message-list">
+	{{if .SearchQ}}
+	<div class="mb-3 text-sm text-muted">Search results for "{{.SearchQ}}" — {{len .Messages}} message(s)</div>
+	{{end}}
+	{{if .Messages}}
+		{{range .Messages}}
+		{{template "message_item" .}}
+		{{end}}
+		{{if .HasMore}}
+		<div id="load-more-wrapper" class="text-center mt-4">
+			<button class="btn btn-outline btn-sm"
+				hx-get="/groups/{{.GroupKey}}/messages?cursor={{formatInt64 .Cursor}}&email={{.UserEmail}}"
+				hx-target="#load-more-wrapper"
+				hx-swap="outerHTML">
+				Load more
+			</button>
+		</div>
+		{{end}}
+	{{else}}
+	<div class="empty-state-card text-center" style="padding: 2rem;">
+		<p class="text-muted">No messages yet. Start the conversation below!</p>
+	</div>
+	{{end}}
+</div>
+{{end}}
+
+{{define "message_compose_form"}}
+<div class="message-compose">
+	<form hx-post="/groups/{{.GroupKey}}/messages" hx-target="#message-list" hx-swap="afterbegin" id="compose-form">
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+		<input type="hidden" name="email" value="{{.UserEmail}}">
+		<div class="form-row form-row-2">
+			<div>
+				<label for="msg-name">Your Name</label>
+				<input type="text" id="msg-name" name="name" value="{{.UserName}}" placeholder="Your name" maxlength="256">
+			</div>
+			<div>
+				<label for="msg-email">Email</label>
+				<input type="email" id="msg-email" name="email" value="{{.UserEmail}}" placeholder="you@example.com" required>
+			</div>
+		</div>
+		<div class="form-row">
+			<div>
+				<label for="msg-body">Message</label>
+				<textarea id="msg-body" name="body" rows="3" required maxlength="8192" placeholder="Share something with the group..."></textarea>
+			</div>
+		</div>
+		<button type="submit" class="btn btn-primary btn-sm">Post Message</button>
+	</form>
 </div>
 {{end}}

@@ -83,8 +83,12 @@ func TestRenderRsvpConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderRsvpConfirm: %v", err)
 	}
-	if !strings.Contains(subject, "Confirm your RSVP for Go Night") {
-		t.Fatalf("unexpected subject: %s", subject)
+	// PRIVACY §4d: subject must be content-free — no event name.
+	if subject != "Confirm your RSVP on Federated Meetup" {
+		t.Fatalf("subject = %q, want %q (content-free, no event name)", subject, "Confirm your RSVP on Federated Meetup")
+	}
+	if strings.Contains(subject, "Go Night") {
+		t.Fatal("subject must NOT contain event title (PRIVACY §4d)")
 	}
 	if !strings.Contains(body, "Go Night") {
 		t.Fatal("body should contain event title")
@@ -112,8 +116,12 @@ func TestRenderRsvpConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderRsvpConfirmed: %v", err)
 	}
-	if !strings.Contains(subject, "Your RSVP is confirmed for Rust vs Go") {
-		t.Fatalf("unexpected subject: %s", subject)
+	// PRIVACY §4d: subject must be content-free — no event name.
+	if subject != "Your RSVP is confirmed on Federated Meetup" {
+		t.Fatalf("subject = %q, want %q (content-free, no event name)", subject, "Your RSVP is confirmed on Federated Meetup")
+	}
+	if strings.Contains(subject, "Rust vs Go") {
+		t.Fatal("subject must NOT contain event title (PRIVACY §4d)")
 	}
 	if !strings.Contains(body, "Rust vs Go") {
 		t.Fatal("body should contain event title")
@@ -138,8 +146,12 @@ func TestRenderEventReminder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderEventReminder: %v", err)
 	}
-	if !strings.Contains(subject, "Reminder: Hackathon tomorrow at") {
-		t.Fatalf("unexpected subject: %s", subject)
+	// PRIVACY §4d: subject must be content-free — no event name.
+	if subject != "Reminder: your event is tomorrow on Federated Meetup" {
+		t.Fatalf("subject = %q, want %q (content-free, no event name)", subject, "Reminder: your event is tomorrow on Federated Meetup")
+	}
+	if strings.Contains(subject, "Hackathon") {
+		t.Fatal("subject must NOT contain event title (PRIVACY §4d)")
 	}
 	if !strings.Contains(body, "Hackathon") {
 		t.Fatal("body should contain event title")

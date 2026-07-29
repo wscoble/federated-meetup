@@ -47,6 +47,10 @@
 
 <!-- Subscribe links -->
 <div class="subscribe-links">
+	<a href="/groups/{{.Group.CanonicalName}}/prayer-list" class="btn btn-outline btn-sm">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+		Prayer Requests
+	</a>
 	<a href="/groups/{{.Group.CanonicalName}}/calendar.ics" class="btn btn-outline btn-sm" download>
 		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
 		Add to Calendar
@@ -114,4 +118,50 @@
 {{end}}
 
 {{end}}
+
+<!-- Group Chat / Messaging -->
+<hr class="section-divider mt-8 mb-6">
+<h2 class="section-header">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width: 1.2em; height: 1.2em; display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+	Group Chat
+</h2>
+
+<!-- Message search bar -->
+<div class="message-search-bar mb-4">
+	<form hx-get="/groups/{{.Group.CanonicalName}}/messages/search" hx-target="#message-list" hx-swap="outerHTML" class="flex gap-2">
+		<input type="text" name="q" placeholder="Search messages..." class="flex-1" style="flex: 1; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);">
+		<input type="hidden" name="email" value="">
+		<button type="submit" class="btn btn-outline btn-sm">Search</button>
+	</form>
+</div>
+
+<!-- Message compose form -->
+{{template "message_compose_form" .}}
+
+<!-- Message list -->
+<div id="message-list-container" class="mt-4">
+	{{if .Messages}}
+	<div id="message-list">
+		{{range .Messages}}
+		{{template "message_item" .}}
+		{{end}}
+		{{if .HasMoreMessages}}
+		<div id="load-more-wrapper" class="text-center mt-4">
+			<button class="btn btn-outline btn-sm"
+				hx-get="/groups/{{.Group.GroupKey}}/messages?cursor=0"
+				hx-target="#load-more-wrapper"
+				hx-swap="outerHTML">
+				Load more
+			</button>
+		</div>
+		{{end}}
+	</div>
+	{{else}}
+	<div id="message-list">
+		<div class="empty-state-card text-center" style="padding: 2rem;">
+			<p class="text-muted">No messages yet. Start the conversation above!</p>
+		</div>
+	</div>
+	{{end}}
+</div>
 {{end}}

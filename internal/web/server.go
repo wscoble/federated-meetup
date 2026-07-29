@@ -21,8 +21,30 @@ import (
 	"github.com/wscoble/federated-meetup/internal/activitypub"
 	"github.com/wscoble/federated-meetup/internal/email"
 	"github.com/wscoble/federated-meetup/internal/host"
+	"github.com/wscoble/federated-meetup/internal/notify"
+	"github.com/wscoble/federated-meetup/internal/notify/push"
 	"github.com/wscoble/federated-meetup/internal/product"
+	"github.com/wscoble/federated-meetup/internal/video"
 )
+const defaultAssetDir = "./data/assets"
+
+// maxAssetFileSize is the default maximum upload size (50 MB).
+const maxAssetFileSize = 50 * 1024 * 1024
+
+// allowedAssetExtensions is the allowlist of file extensions for uploads.
+var allowedAssetExtensions = map[string]bool{
+	"pdf":  true,
+	"doc":  true,
+	"docx": true,
+	"txt":  true,
+	"mp3":  true,
+	"m4a":  true,
+	"wav":  true,
+	"jpg":  true,
+	"png":  true,
+	"webp": true,
+	"epub": true,
+}
 
 // Server is the web frontend server. It wraps the host.Service (protocol),
 // product.Service (ticketing), and a local SQLite store.
@@ -35,6 +57,24 @@ type Server struct {
 	email   email.EmailSender
 	baseURL string                          // configured base URL for absolute links (e.g. magic-link emails)
 	ap      *activitypub.ActivityPubService // optional: ActivityPub delivery
+
+	// Notification system (optional — nil if not configured).
+	pushMgr  *push.Manager          // web push VAPID key management + subscription storage
+	notifier *notify.Notifier       // multi-channel notifier (push → email → SMS)
+	notifyQ  *notify.Queue           // SQLite-backed notification queue
+	prefs    *notify.PrefsStore      // per-user and per-group notification preferences
+	notifyProc *notify.Processor    // background queue processor
+
+	// assetDir is the base directory for storing group asset files.
+	// Default: ./data/assets. Files are stored under {assetDir}/{group_key}/.
+	assetDir string
+
+	// maxAssetSize is the maximum allowed file upload size in bytes.
+	maxAssetSize int64
+
+	// video signaling server for P2P video chat
+	videoHub  *video.RoomHub
+	videoSig  *video.SignalingServer
 }
 
 // NewServer constructs a web Server. The host and product services may be nil
@@ -50,13 +90,16 @@ func NewServer(hostSvc *host.Service, prodSvc *product.Service, store *Store, em
 		emailSender = email.NewNoopSender()
 	}
 	return &Server{
-		host:    hostSvc,
-		product: prodSvc,
-		store:   store,
-		tmpls:   tmpls,
-		now:     time.Now,
-		email:   emailSender,
-		baseURL: baseURL,
+		host:        hostSvc,
+		product:     prodSvc,
+		store:       store,
+		tmpls:       tmpls,
+		now:         time.Now,
+		email:       emailSender,
+		baseURL:     baseURL,
+		assetDir:    defaultAssetDir,
+		maxAssetSize: maxAssetFileSize,
+		videoHub:    video.NewRoomHub(),
 	}, nil
 }
 
@@ -70,6 +113,45 @@ func (s *Server) SetClock(now func() time.Time) {
 // delivery. When set, newly created events are delivered to remote followers.
 func (s *Server) SetActivityPubService(ap *activitypub.ActivityPubService) {
 	s.ap = ap
+}
+
+// SetNotificationSystem wires the multi-channel notification system into
+// the web server. All parameters are optional — nil values disable that
+// component. The push manager, if non-nil, enables the /push/subscribe
+// endpoint. The notifier enables multi-channel delivery. The queue and
+// processor enable background notification processing.
+func (s *Server) SetNotificationSystem(pushMgr *push.Manager, notifier *notify.Notifier, notifyQ *notify.Queue, prefs *notify.PrefsStore, proc *notify.Processor) {
+	s.pushMgr = pushMgr
+	s.notifier = notifier
+	s.notifyQ = notifyQ
+	s.prefs = prefs
+	s.notifyProc = proc
+}
+
+// PushEnabled returns true if web push notifications are configured.
+func (s *Server) PushEnabled() bool {
+	return s.pushMgr != nil
+}
+
+// PushPublicKey returns the VAPID public key for web push, or empty string
+// if push is not configured.
+func (s *Server) PushPublicKey() string {
+	if s.pushMgr == nil {
+		return ""
+	}
+	return s.pushMgr.PublicKey()
+}
+
+// SetAssetDir overrides the base directory for storing group asset files.
+// Default: ./data/assets.
+func (s *Server) SetAssetDir(dir string) {
+	s.assetDir = dir
+}
+
+// SetMaxAssetSize overrides the maximum file upload size in bytes.
+// Default: 50 MB.
+func (s *Server) SetMaxAssetSize(size int64) {
+	s.maxAssetSize = size
 }
 
 // Routes returns an http.Handler with all web routes registered.
@@ -108,14 +190,50 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /dashboard/events/{event_id}/tickets", s.handleCreateTicket)
 	mux.HandleFunc("POST /dashboard/events/{event_id}/cancel", s.handleCancelEvent)
 	mux.HandleFunc("POST /dashboard/events/{group_key}/checkin", s.handleCheckIn)
+	mux.HandleFunc("POST /dashboard/events/{group_key}/bulk-checkin", s.handleBulkCheckIn)
+	mux.HandleFunc("POST /dashboard/events/{group_key}/rsvp-reminders", s.handleSendRsvpReminders)
+	mux.HandleFunc("GET /dashboard/attendance", s.handleAttendanceHistory)
 	mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
 	mux.HandleFunc("GET /dashboard/events/{event_id}/attendees.csv", s.handleAttendeesCSV)
 
 	// Checkout
 	mux.HandleFunc("GET /checkout/{order_id}", s.handleCheckout)
 
+	// Group assets (file sharing)
+	mux.HandleFunc("GET /groups/{name}/assets", s.handleGroupAssets)
+	mux.HandleFunc("POST /groups/{name}/assets", s.handleAssetUpload)
+	mux.HandleFunc("GET /groups/{name}/assets/{id}", s.handleAssetDownload)
+	mux.HandleFunc("POST /groups/{name}/assets/{id}/delete", s.handleAssetDelete)
+	mux.HandleFunc("POST /groups/{name}/assets/{id}/description", s.handleAssetEditDescription)
+
+	// Prayer requests (group-scoped)
+	mux.HandleFunc("GET /groups/{name}/prayer-list", s.handlePrayerList)
+	mux.HandleFunc("POST /groups/{name}/prayer-list/submit", s.handlePrayerSubmit)
+	mux.HandleFunc("POST /groups/{name}/prayer-list/{id}/update", s.handlePrayerUpdate)
+	mux.HandleFunc("GET /groups/{name}/prayer-list/print", s.handlePrayerPrint)
+
+	// Group messaging (threaded chat)
+	mux.HandleFunc("POST /groups/{group_key}/messages", s.handlePostMessage)
+	mux.HandleFunc("GET /groups/{group_key}/messages", s.handleListMessages)
+	mux.HandleFunc("GET /groups/{group_key}/messages/search", s.handleSearchMessages)
+	mux.HandleFunc("POST /groups/{group_key}/messages/{id}/reactions", s.handleToggleReaction)
+
+	// Web push notifications
+	mux.HandleFunc("POST /push/subscribe", s.handlePushSubscribe)
+	mux.HandleFunc("POST /push/unsubscribe", s.handlePushUnsubscribe)
+	mux.HandleFunc("GET /push/vapid-public-key", s.handleVapidPublicKey)
+	mux.HandleFunc("GET /sw.js", s.handleServiceWorker)
+
+	// Notification preferences
+	mux.HandleFunc("GET /notifications/preferences", s.handleNotifyPrefs)
+	mux.HandleFunc("POST /notifications/preferences", s.handleSetNotifyPrefs)
+
 	// Prometheus metrics endpoint
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
+
+	// Video chat (P2P WebRTC)
+	mux.HandleFunc("GET /events/{group_key}/{event_id}/video", s.handleVideoRoom)
+	mux.HandleFunc("GET /ws/video/{group_key}", s.handleVideoWS)
 
 	return s.metricsMiddleware(s.withMiddleware(mux))
 }
@@ -163,6 +281,22 @@ func loadTemplates() (templateMap, error) {
 		"fillClass":      fillClass,
 		"toInt":          toInt,
 		"linkify":        linkify,
+		"assetCategoryLabel": assetCategoryLabel,
+		"assetCategoryIcon":  assetCategoryIcon,
+		"isAudioFile":         isAudioFile,
+		"formatFileSize":     formatFileSize,
+		// Prayer request template functions
+		"prayerCategoryLabel":     prayerCategoryLabel,
+		"prayerStatusLabel":       prayerStatusLabel,
+		"prayerStatusBadgeClass":  prayerStatusBadgeClass,
+		"prayerCategoryBadgeClass": prayerCategoryBadgeClass,
+		"formatDaysAgo":           formatDaysAgo,
+		"prayerSubmitterName":     prayerSubmitterDisplayName,
+		// Messaging template functions
+		"formatMessageShort": formatMessageShort,
+		"initials":           initials,
+		"reactionEmojis":    reactionEmojis,
+		"formatInt64":        formatInt64,
 	}
 
 	// Read base template
@@ -555,6 +689,25 @@ type groupData struct {
 	UpcomingEvents []CachedEvent
 	PastEvents     []CachedEvent
 	PastEventCount int
+	// Messaging
+	Messages       []messageViewData
+	MessageCount   int
+	HasMoreMessages bool
+	// Assets
+	Assets         []GroupAsset
+	AssetCategory  string
+	AssetSearch    string
+	IsAuthed       bool
+	UserEmail       string
+	UserName        string
+}
+
+type messageFormData struct {
+	GroupKey         string
+	CSRFToken        string
+	UserEmail        string
+	UserName        string
+	ParentMessageID int64
 }
 
 type ticketView struct {
@@ -567,10 +720,12 @@ type ticketView struct {
 
 type eventData struct {
 	pageBase
-	Event     CachedEvent
-	Group     CachedGroup
-	RsvpCount int
-	Tickets   []ticketView
+	Event          CachedEvent
+	Group          CachedGroup
+	RsvpCount      int
+	Tickets        []ticketView
+	VideoRoomOpen  bool
+	VideoInCall     int
 }
 
 type attendeeView struct {
@@ -597,6 +752,7 @@ type dashboardData struct {
 	Events        []dashboardEvent
 	TotalRevenue  *pb.Money
 	TotalRsvps    int
+	CareAlerts    []MemberCareAlert
 }
 
 type rsvpPageData struct {
@@ -638,6 +794,25 @@ type fragmentData struct {
 	GroupKey string
 	EventID  string
 	Error    string
+}
+
+// attendanceCheckInData is the template data for the HTMX attendee table fragment.
+type attendanceCheckInData struct {
+	GroupKey   string
+	EventID    string
+	Attendees  []attendeeView
+	RsvpCount  int
+	CheckedIn  int
+	CSRFToken  string
+}
+
+// attendanceHistoryData is the template data for the per-group attendance history page.
+type attendanceHistoryData struct {
+	pageBase
+	GroupKey   string
+	GroupName  string
+	History    []AttendanceMemberRow
+	CareAlerts []MemberCareAlert
 }
 
 // ---- JSON-LD generation ----

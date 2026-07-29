@@ -1,0 +1,130 @@
+{{define "prayer_print"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>{{.Group.DisplayName}} — Prayer List</title>
+	<style>
+		/* Print-friendly styles: clean, minimal, no UI chrome */
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		body {
+			font-family: Georgia, 'Times New Roman', serif;
+			line-height: 1.6;
+			color: #222;
+			max-width: 800px;
+			margin: 2rem auto;
+			padding: 0 1.5rem;
+		}
+		h1 {
+			font-size: 1.5rem;
+			margin-bottom: 0.25rem;
+			border-bottom: 2px solid #444;
+			padding-bottom: 0.5rem;
+		}
+		.group-name {
+			font-size: 0.9rem;
+			color: #666;
+			margin-bottom: 0.25rem;
+		}
+		.generated {
+			font-size: 0.8rem;
+			color: #999;
+			margin-bottom: 2rem;
+		}
+		.prayer-item {
+			margin-bottom: 1.5rem;
+			padding-bottom: 1rem;
+			border-bottom: 1px solid #ddd;
+			page-break-inside: avoid;
+		}
+		.prayer-title {
+			font-size: 1.1rem;
+			font-weight: bold;
+			margin-bottom: 0.25rem;
+		}
+		.prayer-meta {
+			font-size: 0.85rem;
+			color: #666;
+			margin-bottom: 0.5rem;
+		}
+		.prayer-body {
+			font-size: 0.95rem;
+			margin-bottom: 0.5rem;
+			white-space: pre-wrap;
+		}
+		.prayer-updates {
+			margin-left: 1.5rem;
+			margin-top: 0.5rem;
+			padding-left: 1rem;
+			border-left: 2px solid #ccc;
+		}
+		.update-entry {
+			font-size: 0.9rem;
+			margin-bottom: 0.5rem;
+			padding: 0.4rem;
+			background: #f5f5f5;
+			border-radius: 3px;
+		}
+		.update-meta {
+			font-size: 0.8rem;
+			color: #888;
+			margin-top: 0.2rem;
+		}
+		.badge {
+			display: inline-block;
+			font-size: 0.75rem;
+			font-weight: normal;
+			padding: 1px 6px;
+			border: 1px solid #ccc;
+			border-radius: 3px;
+			margin-right: 0.25rem;
+		}
+		.empty {
+			color: #999;
+			font-style: italic;
+			margin-top: 2rem;
+		}
+		@media print {
+			body { margin: 1rem; max-width: none; }
+			.prayer-item { page-break-inside: avoid; }
+		}
+	</style>
+</head>
+<body>
+	<h1>Prayer List</h1>
+	<p class="group-name">{{.Group.DisplayName}}</p>
+	<p class="generated">Generated {{formatDateShort .GeneratedAt}}</p>
+
+	{{if .PrayerRequests}}
+		{{range .PrayerRequests}}
+		<div class="prayer-item">
+			<div class="prayer-title">{{.PrayerRequest.Title}}</div>
+			<div class="prayer-meta">
+				{{if .PrayerRequest.IsAnonymous}}Anonymous{{else}}{{if .PrayerRequest.SubmittedByName}}{{.PrayerRequest.SubmittedByName}}{{else}}A member{{end}}{{end}}
+				· {{prayerCategoryLabel .PrayerRequest.Category}}
+				· {{prayerStatusLabel .PrayerRequest.Status}}
+			</div>
+			{{if .PrayerRequest.Body}}
+			<div class="prayer-body">{{.PrayerRequest.Body}}</div>
+			{{end}}
+			{{if .PrayerRequest.Updates}}
+			<div class="prayer-updates">
+				{{range .PrayerRequest.Updates}}
+				<div class="update-entry">
+					{{.UpdateText}}
+					<div class="update-meta">
+						{{if .CreatedBy}}{{.CreatedBy}} · {{end}}{{formatDateShort .CreatedAt}}
+						{{if .StatusChange}}{{if ne .StatusChange "none"}} · {{prayerStatusLabel .StatusChange}}{{end}}{{end}}
+					</div>
+				</div>
+				{{end}}
+			</div>
+			{{end}}
+		</div>
+		{{end}}
+	{{else}}
+		<p class="empty">No prayer requests at this time.</p>
+	{{end}}
+</body>
+</html>
+{{end}}
