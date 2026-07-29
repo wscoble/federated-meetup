@@ -14,7 +14,7 @@ import (
 // script-src 'self' allows vendored htmx.min.js and theme.js.
 // style-src 'self' 'unsafe-inline' allows inline styles in event JSON-LD.
 // connect-src 'self' allows HTMX requests to same origin.
-const CSPHeader = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+const CSPHeader = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:"
 
 // SessionCookieName is the cookie name for organizer sessions.
 const SessionCookieName = "fedmeetup_session"

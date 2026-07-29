@@ -1,0 +1,97 @@
+{{template "base" .}}
+{{define "title"}}Attendance History — {{.GroupName}}{{end}}
+{{define "nav_extra"}}
+<a href="/dashboard" >Dashboard</a>
+<form method="POST" action="/dashboard/logout" class="inline">
+	<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+	<button type="submit">Logout</button>
+</form>
+{{end}}
+{{define "content"}}
+<!-- Breadcrumb -->
+<nav class="breadcrumb" aria-label="Breadcrumb">
+	<a href="/dashboard">Dashboard</a>
+	<span class="sep" aria-hidden="true">›</span>
+	<span class="current">Attendance History</span>
+</nav>
+
+<h1 class="mb-2">Attendance History</h1>
+<p class="text-secondary text-sm mb-6">{{.GroupName}}</p>
+
+<!-- Care alerts -->
+{{if .CareAlerts}}
+<div class="card card-lg mb-6" style="border-color: var(--warning, #f59e0b);">
+	<h2 style="display: flex; align-items: center; gap: 0.5rem;">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width: 1.2em; height: 1.2em;"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+		Members Needing Care
+	</h2>
+	<p class="text-secondary text-sm mb-4">These members haven't attended the last 3+ consecutive events they RSVP'd to. Consider reaching out.</p>
+	<div class="overflow-x-auto">
+		<table class="data-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Email</th>
+					<th>Consecutive Misses</th>
+					<th>Last Attended</th>
+				</tr>
+			</thead>
+			<tbody>
+			{{range .CareAlerts}}
+			<tr>
+				<td>{{.UserName}}</td>
+				<td class="text-secondary">{{.UserEmail}}</td>
+				<td><span class="badge badge-warning">{{.ConsecutiveMissed}}</span></td>
+				<td class="text-secondary">{{if .LastAttendedAt}}<time datetime="{{formatISO .LastAttendedAt}}" data-format="date">{{formatDate .LastAttendedAt}}</time>{{else}}Never{{end}}</td>
+			</tr>
+			{{end}}
+			</tbody>
+		</table>
+	</div>
+</div>
+{{end}}
+
+<!-- Attendance stats per member -->
+{{if .History}}
+<div class="card card-lg">
+	<h2>Member Attendance Stats</h2>
+	<p class="text-secondary text-sm mb-4">Attendance across all past events for this group.</p>
+	<div class="overflow-x-auto">
+		<table class="data-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Email</th>
+					<th>Attended</th>
+					<th>Missed</th>
+					<th>Rate</th>
+					<th>Last Attended</th>
+				</tr>
+			</thead>
+			<tbody>
+			{{range .History}}
+			{{$total := add .EventsAttended .EventsMissed}}
+			<tr>
+				<td>{{.UserName}}</td>
+				<td class="text-secondary">{{.UserEmail}}</td>
+				<td><span class="badge badge-success">{{.EventsAttended}}</span></td>
+				<td><span class="badge badge-danger">{{.EventsMissed}}</span></td>
+				<td>{{formatPercent .EventsAttended $total}}</td>
+				<td class="text-secondary">{{if .LastAttendedAt}}<time datetime="{{formatISO .LastAttendedAt}}" data-format="date">{{formatDate .LastAttendedAt}}</time>{{else}}Never{{end}}</td>
+			</tr>
+			{{end}}
+			</tbody>
+		</table>
+	</div>
+</div>
+{{else}}
+<div class="card empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+	</svg>
+	<h3>No attendance data yet</h3>
+	<p>Once your events have passed and attendees are checked in, attendance stats will appear here.</p>
+	<a href="/dashboard" class="btn btn-primary btn-sm">Back to Dashboard</a>
+</div>
+{{end}}
+{{end}}

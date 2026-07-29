@@ -115,6 +115,18 @@
 	</div>
 </div>
 
+<!-- Video call section -->
+{{if not .Event.Cancelled}}
+<div class="card card-lg mb-6">
+	<h2>Video Call</h2>
+	<p class="text-secondary text-sm mb-4">Join the live video call for this event. The room opens 15 minutes before the start time.</p>
+	<a href="/events/{{.Event.GroupKey}}/{{.Event.EventID}}/video" class="btn btn-primary">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+		Join Video Call
+	</a>
+</div>
+{{end}}
+
 <!-- Description -->
 {{if .Event.Description}}
 <div class="card card-lg mb-6">

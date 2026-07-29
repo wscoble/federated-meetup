@@ -218,6 +218,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /groups/{group_key}/messages/search", s.handleSearchMessages)
 	mux.HandleFunc("POST /groups/{group_key}/messages/{id}/reactions", s.handleToggleReaction)
 
+	// Member management (group-scoped)
+	mux.HandleFunc("GET /groups/{name}/members", s.handleMembersList)
+	mux.HandleFunc("POST /groups/{name}/members/invite", s.handleMemberInvite)
+	mux.HandleFunc("POST /groups/{name}/members/{id}/role", s.handleMemberRoleChange)
+	mux.HandleFunc("POST /groups/{name}/members/{id}/remove", s.handleMemberRemove)
+
 	// Web push notifications
 	mux.HandleFunc("POST /push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("POST /push/unsubscribe", s.handlePushUnsubscribe)
@@ -234,6 +240,13 @@ func (s *Server) Routes() http.Handler {
 	// Video chat (P2P WebRTC)
 	mux.HandleFunc("GET /events/{group_key}/{event_id}/video", s.handleVideoRoom)
 	mux.HandleFunc("GET /ws/video/{group_key}", s.handleVideoWS)
+
+	// Scheduling: availability polls, waitlist, recurrence exceptions
+	mux.HandleFunc("POST /groups/{name}/events/{event_id}/poll", s.handleCreatePoll)
+	mux.HandleFunc("POST /groups/{name}/events/{event_id}/poll/vote", s.handleVoteOnPoll)
+	mux.HandleFunc("POST /groups/{name}/events/{event_id}/waitlist/join", s.handleJoinWaitlist)
+	mux.HandleFunc("POST /groups/{name}/events/{event_id}/waitlist/promote", s.handlePromoteFromWaitlist)
+	mux.HandleFunc("POST /groups/{name}/events/{event_id}/exceptions", s.handleAddRecurrenceException)
 
 	return s.metricsMiddleware(s.withMiddleware(mux))
 }
@@ -278,6 +291,7 @@ func loadTemplates() (templateMap, error) {
 		"formatPercent":  formatPercent,
 		"percentInt":     percentInt,
 		"div":            divInt,
+		"add":            addInt,
 		"fillClass":      fillClass,
 		"toInt":          toInt,
 		"linkify":        linkify,
@@ -297,6 +311,10 @@ func loadTemplates() (templateMap, error) {
 		"initials":           initials,
 		"reactionEmojis":    reactionEmojis,
 		"formatInt64":        formatInt64,
+		// Member management template functions
+		"memberRoleLabel":      memberRoleLabel,
+		"memberRoleBadgeClass": memberRoleBadgeClass,
+		"memberRoleString":     memberRoleString,
 	}
 
 	// Read base template
@@ -566,6 +584,11 @@ func divInt(n, d int) int {
 		return 0
 	}
 	return n / d
+}
+
+// addInt returns the sum of two integers.
+func addInt(a, b int) int {
+	return a + b
 }
 
 // linkify converts plain text into safe HTML: auto-links URLs and converts

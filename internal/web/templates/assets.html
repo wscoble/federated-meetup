@@ -1,0 +1,115 @@
+{{template "base" .}}
+{{define "title"}}{{.GroupName}} — Shared Files{{end}}
+{{define "content"}}
+<!-- Breadcrumb -->
+<nav class="breadcrumb" aria-label="Breadcrumb">
+	<a href="/">Discover</a>
+	<span class="sep" aria-hidden="true">/</span>
+	<a href="/groups/{{.CanonicalName}}">{{.GroupName}}</a>
+	<span class="sep" aria-hidden="true">/</span>
+	<span class="current">Shared Files</span>
+</nav>
+
+<h1 class="mb-2">Shared Files</h1>
+<p class="text-secondary text-sm mb-6">{{.GroupName}}</p>
+
+<!-- Upload form -->
+<div class="card card-lg mb-6">
+	<h2>Upload a File</h2>
+	<p class="text-secondary text-sm mb-4">Share study notes, audio recordings, documents, or images with your group.</p>
+	<form method="POST" action="/groups/{{.CanonicalName}}/assets" enctype="multipart/form-data" class="space-y-4">
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+		<div class="form-row">
+			<div>
+				<label for="asset-file">File</label>
+				<input type="file" id="asset-file" name="file" required>
+				<p class="form-hint">Allowed: PDF, DOC, DOCX, TXT, MP3, M4A, WAV, JPG, PNG, WEBP, EPUB (max 50 MB)</p>
+			</div>
+		</div>
+		<div class="form-row form-row-2">
+			<div>
+				<label for="asset-email">Your Email</label>
+				<input type="email" id="asset-email" name="email" placeholder="you@example.com" required>
+			</div>
+			<div>
+				<label for="asset-category">Category</label>
+				<select id="asset-category" name="category">
+					<option value="study-notes">Study Notes</option>
+					<option value="audio-recording">Audio Recording</option>
+					<option value="document">Document</option>
+					<option value="image">Image</option>
+					<option value="other" selected>Other</option>
+				</select>
+			</div>
+		</div>
+		<div class="form-row">
+			<div>
+				<label for="asset-description">Description <span class="text-muted">(optional)</span></label>
+				<textarea id="asset-description" name="description" rows="2" placeholder="Brief description of this file..."></textarea>
+			</div>
+		</div>
+		<button type="submit" class="btn btn-primary">Upload File</button>
+	</form>
+</div>
+
+<!-- Category filter -->
+<div class="filter-pills mb-4" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+	<a href="/groups/{{.CanonicalName}}/assets" class="filter-pill"{{if eq .AssetCategory ""}} aria-current="true"{{end}}>All</a>
+	<a href="/groups/{{.CanonicalName}}/assets?category=study-notes" class="filter-pill"{{if eq .AssetCategory "study-notes"}} aria-current="true"{{end}}>Study Notes</a>
+	<a href="/groups/{{.CanonicalName}}/assets?category=audio-recording" class="filter-pill"{{if eq .AssetCategory "audio-recording"}} aria-current="true"{{end}}>Audio</a>
+	<a href="/groups/{{.CanonicalName}}/assets?category=document" class="filter-pill"{{if eq .AssetCategory "document"}} aria-current="true"{{end}}>Documents</a>
+	<a href="/groups/{{.CanonicalName}}/assets?category=image" class="filter-pill"{{if eq .AssetCategory "image"}} aria-current="true"{{end}}>Images</a>
+	<a href="/groups/{{.CanonicalName}}/assets?category=other" class="filter-pill"{{if eq .AssetCategory "other"}} aria-current="true"{{end}}>Other</a>
+</div>
+
+<!-- File list -->
+{{if .Assets}}
+<div class="space-y-3">
+	{{range .Assets}}
+	<div class="card">
+		<div class="flex items-start justify-between gap-3 flex-wrap">
+			<div class="flex items-start gap-3" style="flex: 1; min-width: 0;">
+				<span class="asset-icon" style="font-size: 1.5rem;" aria-hidden="true">{{assetCategoryIcon .Category}}</span>
+				<div style="min-width: 0;">
+					<a href="/groups/{{$.CanonicalName}}/assets/{{.ID}}" class="font-medium" style="word-break: break-all;">{{.OriginalFilename}}</a>
+					<p class="text-sm text-muted mt-1">
+						<span class="badge badge-neutral">{{assetCategoryLabel .Category}}</span>
+						{{formatFileSize .SizeBytes}}
+						{{if .UploadedByEmail}}· uploaded by {{.UploadedByEmail}}{{end}}
+						· <time datetime="{{formatISO .CreatedAt}}" data-format="date">{{formatDate .CreatedAt}}</time>
+					</p>
+					{{if .Description}}
+					<p class="text-sm text-secondary mt-2">{{.Description}}</p>
+					{{end}}
+				</div>
+			</div>
+			<div class="flex items-center gap-2 flex-shrink-0">
+				<a href="/groups/{{$.CanonicalName}}/assets/{{.ID}}" class="btn btn-outline btn-sm" download>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+					Download
+				</a>
+				{{if $.IsAuthed}}
+				<form method="POST" action="/groups/{{$.CanonicalName}}/assets/{{.ID}}/delete" class="inline"
+					onclick="return confirm('Delete this file? This cannot be undone.')">
+					<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+					<button type="submit" class="btn btn-danger btn-sm">Delete</button>
+				</form>
+				{{end}}
+			</div>
+		</div>
+	</div>
+	{{end}}
+</div>
+{{else}}
+<div class="card empty-state">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+	</svg>
+	<h3>No files yet</h3>
+	<p>Upload the first file for this group using the form above.</p>
+</div>
+{{end}}
+
+<!-- Back to group -->
+<a href="/groups/{{.CanonicalName}}" class="btn btn-outline mt-6">← Back to {{.GroupName}}</a>
+{{end}}

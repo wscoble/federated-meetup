@@ -1,0 +1,55 @@
+{{template "base" .}}
+{{define "title"}}{{.Group.DisplayName}} — Members{{end}}
+{{define "content"}}
+<!-- Breadcrumb -->
+<nav class="breadcrumb" aria-label="Breadcrumb">
+	<a href="/">Discover</a>
+	<span class="sep" aria-hidden="true">/</span>
+	<a href="/groups/{{.Group.CanonicalName}}">{{.Group.DisplayName}}</a>
+	<span class="sep" aria-hidden="true">/</span>
+	<span class="current">Members</span>
+</nav>
+
+<div class="flex items-start justify-between gap-4 mb-4">
+	<div>
+		<h1 class="mb-0">Members</h1>
+		<p class="text-muted text-sm mt-2">{{.Group.DisplayName}}</p>
+	</div>
+</div>
+
+{{if .IsLeader}}
+<!-- Invite member form -->
+<div class="card mb-6">
+	<h2 style="font-size: 1.1rem; margin-bottom: 1rem;">Invite a Member</h2>
+	<form hx-post="/groups/{{.Group.CanonicalName}}/members/invite" hx-target="#members-list" hx-swap="outerHTML" class="space-y-4">
+		<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+		<div class="form-row form-row-2">
+			<div>
+				<label for="invite-email">Email</label>
+				<input type="email" id="invite-email" name="email" required maxlength="256" placeholder="friend@example.com">
+			</div>
+			<div>
+				<label for="invite-name">Display Name <span class="text-muted text-sm">(optional)</span></label>
+				<input type="text" id="invite-name" name="display_name" maxlength="256" placeholder="Their name">
+			</div>
+		</div>
+		<div class="form-row">
+			<div>
+				<label for="invite-role">Role</label>
+				<select id="invite-role" name="role">
+					<option value="member">Member</option>
+					<option value="co-leader">Co-Leader</option>
+					<option value="leader">Leader</option>
+				</select>
+			</div>
+		</div>
+		<button type="submit" class="btn btn-primary">Invite Member</button>
+	</form>
+</div>
+{{end}}
+
+<!-- Members list -->
+<div id="members-list">
+{{template "members_list" .}}
+</div>
+{{end}}

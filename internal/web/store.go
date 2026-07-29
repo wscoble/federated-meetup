@@ -152,7 +152,37 @@ func (s *Store) migrate() error {
 	if err := s.migrateMembers(); err != nil {
 		return fmt.Errorf("migrate members: %w", err)
 	}
+	// Migrate scheduling-related tables (polls, waitlist, exceptions).
+	if err := s.migrateScheduling(); err != nil {
+		return fmt.Errorf("migrate scheduling: %w", err)
+	}
+	// Migrate group assets table
+	if err := s.migrateAssets(); err != nil {
+		return fmt.Errorf("migrate assets: %w", err)
+	}
 	return nil
+}
+
+// migrateAssets creates the group_assets table if it does not exist.
+func (s *Store) migrateAssets() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS group_assets (
+		id                INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_key         TEXT NOT NULL DEFAULT '',
+		uploaded_by_email TEXT NOT NULL DEFAULT '',
+		filename          TEXT NOT NULL DEFAULT '',
+		original_filename TEXT NOT NULL DEFAULT '',
+		mime_type         TEXT NOT NULL DEFAULT '',
+		size_bytes        INTEGER NOT NULL DEFAULT 0,
+		category          TEXT NOT NULL DEFAULT 'other',
+		description       TEXT NOT NULL DEFAULT '',
+		stored_path       TEXT NOT NULL DEFAULT '',
+		created_at        INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return fmt.Errorf("exec group_assets: %w", err)
+	}
+	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_assets_group ON group_assets(group_key)`)
+	return err
 }
 
 // ---- Group cache ----

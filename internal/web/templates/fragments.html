@@ -246,6 +246,68 @@
 </div>
 {{end}}
 
+{{define "members_list"}}
+{{if .Members}}
+<div id="members-list">
+	<table class="table" style="width: 100%; border-collapse: collapse;">
+		<thead>
+			<tr style="text-align: left; border-bottom: 1px solid var(--border);">
+				<th style="padding: 0.5rem 0.75rem;">Name</th>
+				<th style="padding: 0.5rem 0.75rem;">Email</th>
+				<th style="padding: 0.5rem 0.75rem;">Role</th>
+				<th style="padding: 0.5rem 0.75rem;">Joined</th>
+				{{if .IsLeader}}<th style="padding: 0.5rem 0.75rem;">Actions</th>{{end}}
+			</tr>
+		</thead>
+		<tbody>
+			{{range .Members}}
+			<tr id="member-{{.UserEmail}}" style="border-bottom: 1px solid var(--border);">
+				<td style="padding: 0.5rem 0.75rem;">{{if .DisplayName}}{{.DisplayName}}{{else}}—{{end}}</td>
+				<td style="padding: 0.5rem 0.75rem;">{{.UserEmail}}</td>
+				<td style="padding: 0.5rem 0.75rem;">
+					<span class="badge {{memberRoleBadgeClass .Role}}">{{memberRoleLabel .Role}}</span>
+				</td>
+				<td style="padding: 0.5rem 0.75rem;">{{formatDateShort .JoinedAt}}</td>
+				{{if $.IsLeader}}
+				<td style="padding: 0.5rem 0.75rem;">
+					<div class="flex items-center gap-2 flex-wrap">
+						<form hx-post="/groups/{{$.Group.CanonicalName}}/members/{{.UserEmail}}/role" hx-target="#members-list" hx-swap="outerHTML" style="display: inline;">
+							<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+							<select name="role" onchange="this.form.submit()" style="padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);">
+								<option value="member" {{if eq (memberRoleString .Role) "member"}}selected{{end}}>Member</option>
+								<option value="co-leader" {{if eq (memberRoleString .Role) "co-leader"}}selected{{end}}>Co-Leader</option>
+								<option value="leader" {{if eq (memberRoleString .Role) "leader"}}selected{{end}}>Leader</option>
+							</select>
+						</form>
+						<form hx-post="/groups/{{$.Group.CanonicalName}}/members/{{.UserEmail}}/remove" hx-target="#members-list" hx-swap="outerHTML" style="display: inline;" hx-confirm="Remove this member from the group?">
+							<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+							<button type="submit" class="btn btn-outline btn-sm" style="color: var(--danger); border-color: var(--danger);">Remove</button>
+						</form>
+					</div>
+				</td>
+				{{end}}
+			</tr>
+			{{end}}
+		</tbody>
+	</table>
+</div>
+{{else}}
+<div id="members-list">
+	<div class="card empty-state">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+		<h3>No members yet</h3>
+		<p>This group doesn't have any members yet. Use the invite form above to add members.</p>
+	</div>
+</div>
+{{end}}
+{{end}}
+
+{{define "member_error"}}
+<div class="alert alert-error">
+	<p class="font-medium">{{.Error}}</p>
+</div>
+{{end}}
+
 {{define "message_compose_form"}}
 <div class="message-compose">
 	<form hx-post="/groups/{{.GroupKey}}/messages" hx-target="#message-list" hx-swap="afterbegin" id="compose-form">
@@ -269,5 +331,93 @@
 		</div>
 		<button type="submit" class="btn btn-primary btn-sm">Post Message</button>
 	</form>
+</div>
+{{end}}
+
+{{define "poll_created_fragment"}}
+<div class="alert alert-success">
+	<p class="font-medium">Availability poll created!</p>
+	<p class="text-sm text-secondary mt-2">Members can now vote on their preferred time.</p>
+</div>
+{{end}}
+
+{{define "vote_cast_fragment"}}
+<div class="alert alert-success">
+	<p class="font-medium">Vote recorded!</p>
+	<p class="text-sm text-secondary mt-2">Thanks for voting.</p>
+</div>
+{{end}}
+
+{{define "waitlist_joined_fragment"}}
+<div class="alert alert-success">
+	<p class="font-medium">Added to waitlist!</p>
+	<p class="text-sm text-secondary mt-2">We'll notify {{.Email}} when a spot opens up.</p>
+</div>
+{{end}}
+
+{{define "waitlist_promoted_fragment"}}
+<div class="alert alert-success">
+	<p class="font-medium">Promoted from waitlist!</p>
+	<p class="text-sm text-secondary mt-2">{{.Email}} has been notified and promoted to the RSVP list.</p>
+</div>
+{{end}}
+
+{{define "exception_added_fragment"}}
+<div class="alert alert-success">
+	<p class="font-medium">Recurrence exception added!</p>
+	<p class="text-sm text-secondary mt-2">The recurring event will skip this date.</p>
+</div>
+{{end}}
+
+{{define "attendee_table"}}
+<div id="attendee-table-{{.EventID}}" class="overflow-x-auto">
+	<table class="data-table">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Email</th>
+				<th>Status</th>
+				<th class="hidden-sm">Checked In</th>
+				<th>Action</th>
+			</tr>
+		</thead>
+		<tbody>
+		{{range .Attendees}}
+		<tr>
+			<td>{{.Name}}</td>
+			<td class="text-secondary">{{.Email}}</td>
+			<td>{{if .Attended}}<span class="badge badge-success">Checked In</span>{{else}}<span class="badge badge-accent">Going</span>{{end}}</td>
+			<td class="text-secondary hidden-sm">{{if .Attended}}Yes{{else}}No{{end}}</td>
+			<td>
+				{{if not .Attended}}
+				<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline"
+					hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$.EventID}}" hx-swap="outerHTML">
+					<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+					<input type="hidden" name="event_id" value="{{$.EventID}}">
+					<input type="hidden" name="email" value="{{.Email}}">
+					<button type="submit" class="btn btn-primary btn-sm">Check In</button>
+				</form>
+				{{else}}
+				<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline"
+					hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$.EventID}}" hx-swap="outerHTML">
+					<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+					<input type="hidden" name="event_id" value="{{$.EventID}}">
+					<input type="hidden" name="email" value="{{.Email}}">
+					<input type="hidden" name="action" value="uncheck">
+					<button type="submit" class="btn btn-outline btn-sm">Uncheck</button>
+				</form>
+				{{end}}
+			</td>
+		</tr>
+		{{end}}
+		</tbody>
+	</table>
+</div>
+{{end}}
+
+{{define "rsvp_reminder_sent"}}
+<div class="alert alert-success">
+	<p class="font-medium">RSVP reminders sent!</p>
+	<p class="text-sm text-secondary mt-2">Notified members who haven't RSVP'd for {{.Title}}.</p>
 </div>
 {{end}}

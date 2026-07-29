@@ -34,6 +34,14 @@
 	</div>
 </div>
 
+<!-- Attendance History link -->
+<div class="mb-6">
+	<a href="/dashboard/attendance" class="btn btn-outline btn-sm">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+		View Attendance History
+	</a>
+</div>
+
 <!-- Create Event -->
 <div class="card card-lg mb-6">
 	<h2>Create Event</h2>
@@ -217,14 +225,22 @@
 	{{if .Attendees}}
 	<div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
 		<h3>{{len .Attendees}} attendees</h3>
-		<span class="checkin-rate">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:12px;height:12px;">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-			</svg>
-			{{formatPercent .CheckedIn .RsvpCount}} check-in rate
-		</span>
+		<div class="flex items-center gap-3 flex-wrap">
+			<span class="checkin-rate">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:12px;height:12px;">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+				</svg>
+				{{formatPercent .CheckedIn .RsvpCount}} check-in rate
+			</span>
+			<form method="POST" action="/dashboard/events/{{$.GroupKey}}/bulk-checkin" class="inline"
+				hx-post="/dashboard/events/{{$.GroupKey}}/bulk-checkin" hx-target="#attendee-table-{{.EventID}}" hx-swap="outerHTML">
+				<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+				<input type="hidden" name="event_id" value="{{.EventID}}">
+				<button type="submit" class="btn btn-outline btn-sm">Bulk Check-In All</button>
+			</form>
+		</div>
 	</div>
-	<div class="overflow-x-auto">
+	<div id="attendee-table-{{.EventID}}" class="overflow-x-auto">
 		<table class="data-table">
 			<thead>
 				<tr>
@@ -244,14 +260,22 @@
 				<td class="text-secondary hidden-sm">{{if .Attended}}Yes{{else}}No{{end}}</td>
 				<td>
 					{{if not .Attended}}
-					<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline">
+					<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline"
+						hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$.EventID}}" hx-swap="outerHTML">
 						<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 						<input type="hidden" name="event_id" value="{{$.EventID}}">
 						<input type="hidden" name="email" value="{{.Email}}">
 						<button type="submit" class="btn btn-primary btn-sm">Check In</button>
 					</form>
 					{{else}}
-					<span class="text-muted text-xs">—</span>
+					<form method="POST" action="/dashboard/events/{{$.GroupKey}}/checkin" class="inline"
+						hx-post="/dashboard/events/{{$.GroupKey}}/checkin" hx-target="#attendee-table-{{$.EventID}}" hx-swap="outerHTML">
+						<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+						<input type="hidden" name="event_id" value="{{$.EventID}}">
+						<input type="hidden" name="email" value="{{.Email}}">
+						<input type="hidden" name="action" value="uncheck">
+						<button type="submit" class="btn btn-outline btn-sm">Uncheck</button>
+					</form>
 					{{end}}
 				</td>
 			</tr>
