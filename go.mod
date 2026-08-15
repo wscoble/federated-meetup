@@ -8,7 +8,7 @@ require (
 	github.com/stripe/stripe-go/v76 v76.25.0
 	golang.org/x/crypto v0.54.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.54.0
 )
 
