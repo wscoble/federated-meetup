@@ -3,7 +3,7 @@ module github.com/wscoble/federated-meetup
 go 1.25.5
 
 require (
-	connectrpc.com/connect v1.20.0
+	connectrpc.com/connect v1.21.0
 	github.com/mark3labs/mcp-go v0.55.1
 	github.com/stripe/stripe-go/v76 v76.25.0
 	golang.org/x/crypto v0.54.0
